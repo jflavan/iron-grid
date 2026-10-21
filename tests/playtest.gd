@@ -332,7 +332,7 @@ func _random_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
 			if not u.mech_data.has_moved:
-				bf._on_tile_clicked(u.mech_data.grid_pos, null)
+				_click_tile(bf, u.mech_data.grid_pos)
 				return
 		return
 	var options: Array = bf.grid_map.reachable_info.keys()
@@ -342,7 +342,7 @@ func _random_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 		bf._on_wait_refuel_requested()
 		return
 	stats["moves"] += 1
-	bf._on_tile_clicked(options[_rng.randi_range(0, options.size() - 1)], null)
+	_click_tile(bf, options[_rng.randi_range(0, options.size() - 1)])
 
 ## Greedy commander: take favourable fights, otherwise advance on the nearest
 ## objective not yet held (or the nearest enemy), entrenching if nothing useful is in reach.
@@ -351,7 +351,7 @@ func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
 			if not u.mech_data.has_moved:
-				bf._on_tile_clicked(u.mech_data.grid_pos, null)
+				_click_tile(bf, u.mech_data.grid_pos)
 				return
 		return # everyone has moved; auto-advance timer will start the AI phase
 
@@ -391,10 +391,15 @@ func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 
 	if best_pos != Vector2i(-1, -1) and best_score > 0.0:
 		stats["moves"] += 1
-		bf._on_tile_clicked(best_pos, null)
+		_click_tile(bf, best_pos)
 	else:
 		stats["waits"] += 1
 		bf._on_wait_refuel_requested()
+
+## Clicks a tile the way a real cursor does: the pointer hovers the tile (path preview) before the click lands.
+func _click_tile(bf: Battlefield, coords: Vector2i) -> void:
+	bf.grid_map.update_hover(bf.grid_map.grid_to_screen(coords, true))
+	bf._on_tile_clicked(coords, bf.grid_map.get_tile(coords))
 
 func _nearest(from: Vector2i, targets: Array[Vector2i]) -> float:
 	var best: float = 999.0

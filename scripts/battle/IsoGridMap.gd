@@ -36,7 +36,7 @@ func load_from_definition(map_def: MapDefinition) -> void:
 	grid_height = map_def.height
 	tiles.clear()
 	reachable_info.clear()
-	current_path_preview.clear()
+	current_path_preview = []
 	hovered_coords = Vector2i(-1, -1)
 	selected_coords = Vector2i(-1, -1)
 
@@ -124,7 +124,7 @@ func screen_to_grid(local_pos: Vector2) -> Vector2i:
 ## Allows moving onto an enemy node to trigger a Collision / Skirmish!
 func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dictionary:
 	reachable_info.clear()
-	current_path_preview.clear()
+	current_path_preview = []
 	if unit == null or unit.has_moved:
 		queue_redraw()
 		return reachable_info
@@ -213,7 +213,7 @@ func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dict
 
 func clear_highlights() -> void:
 	reachable_info.clear()
-	current_path_preview.clear()
+	current_path_preview = []
 	selected_coords = Vector2i(-1, -1)
 	queue_redraw()
 
@@ -222,9 +222,10 @@ func update_hover(local_mouse_pos: Vector2) -> void:
 	if new_hover != hovered_coords:
 		hovered_coords = new_hover
 		if reachable_info.has(hovered_coords):
-			current_path_preview = reachable_info[hovered_coords]["path"]
+			# Copy: the stored path is the same array a click hands to the movement animation
+			current_path_preview = reachable_info[hovered_coords]["path"].duplicate()
 		else:
-			current_path_preview.clear()
+			current_path_preview = []
 		tile_hovered.emit(hovered_coords, get_tile(hovered_coords))
 		queue_redraw()
 
