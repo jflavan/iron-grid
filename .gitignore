@@ -9,3 +9,7 @@
 data_*/
 mono_crash.*.json
 
+
+# Gas Town workspace files
+.gastown/
+.gastown-ignore
