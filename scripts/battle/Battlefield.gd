@@ -402,12 +402,14 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 		if result.attacker_won_clash:
 			var retreat_coords := unit_container.find_retreat_tile(_pending_target_coords, _pending_from_coords, grid_map)
 			if retreat_coords != Vector2i(-1, -1):
-				_pending_defender.mech_data.grid_pos = retreat_coords
-				_pending_defender.animate_move_along_screen_points(
-					[_pending_defender.position, grid_map.grid_to_screen(retreat_coords, true)],
+				# Capture locally: _pending_defender is cleared before the tween finishes
+				var retreating: MechUnit = _pending_defender
+				retreating.mech_data.grid_pos = retreat_coords
+				retreating.animate_move_along_screen_points(
+					[retreating.position, grid_map.grid_to_screen(retreat_coords, true)],
 					func():
-						if is_instance_valid(_pending_defender):
-							_pending_defender.position = grid_map.grid_to_screen(retreat_coords, true)
+						if is_instance_valid(retreating):
+							retreating.position = grid_map.grid_to_screen(retreat_coords, true)
 				)
 				_pending_attacker.mech_data.grid_pos = _pending_target_coords
 				_pending_attacker.position = grid_map.grid_to_screen(_pending_target_coords, true)
@@ -427,12 +429,14 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 		else:
 			# Defender repelled the assault -> Attacker falls back to its approach node
 			var fallback := _get_safe_fallback_coords(_pending_attacker, _pending_from_coords, _pending_start_coords)
-			_pending_attacker.mech_data.grid_pos = fallback
-			_pending_attacker.animate_move_along_screen_points(
-				[_pending_attacker.position, grid_map.grid_to_screen(fallback, true)],
+			# Capture locally: _pending_attacker is cleared before the tween finishes
+			var repelled: MechUnit = _pending_attacker
+			repelled.mech_data.grid_pos = fallback
+			repelled.animate_move_along_screen_points(
+				[repelled.position, grid_map.grid_to_screen(fallback, true)],
 				func():
-					if is_instance_valid(_pending_attacker):
-						_pending_attacker.position = grid_map.grid_to_screen(fallback, true)
+					if is_instance_valid(repelled):
+						repelled.position = grid_map.grid_to_screen(fallback, true)
 			)
 
 	_pending_attacker = null
@@ -473,7 +477,8 @@ func _begin_ai_phase() -> void:
 	GlobalState.add_log("--- SYNDICATE AI COMMAND PHASE INITIATED ---")
 
 	_ai_queue = unit_container.get_faction_units(MechData.Faction.AI)
-	_apply_turn_upkeep(_ai_queue, true)
+	# Mirror the player: no refuel/repair upkeep before a faction's first phase
+	_apply_turn_upkeep(_ai_queue, GlobalState.turn_number > 1)
 
 	var t := get_tree().create_timer(0.65)
 	t.timeout.connect(_process_next_ai_unit)
