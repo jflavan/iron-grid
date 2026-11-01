@@ -44,7 +44,7 @@ func _run(scene_path: String, out_path: String, state: String) -> void:
 			"gameover":
 				var gs := root.get_node("GlobalState")
 				gs.last_battle_winner = 0
-				gs.last_battle_reason = "All four bridgehead cities held through the Syndicate response phase."
+				gs.last_battle_reason = "All five Iron Bridge objectives held through the Syndicate response phase."
 				ui.trigger_game_over()
 	for i in 20:
 		await process_frame

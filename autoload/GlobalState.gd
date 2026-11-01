@@ -299,18 +299,20 @@ func _init_maps() -> void:
 	map1.height = 8
 	map1.briefing_text = (
 		"PITCHED BATTLE: Both forces converge on the industrial river valley of Sector 04. " +
-		"Two reinforced stone bridges carry the main transit roads across the river. " +
-		"Seize the central bridgehead cities or use the northern and southern mountain ridges to rain plunging fire onto enemies bogged down in the river fords."
+		"Two reinforced stone bridges carry the main transit roads across the river, and between them a fortified depot sits on the river island. " +
+		"Five objectives are in play: each side starts with its two bank bridgeheads, so the Central Island Depot decides the battle. Take it and hold it."
 	)
 	map1.tactical_tip = (
-		"TACTICAL ADVISORY: Rivers cost 4 Fuel and impose -15% ATK / -15% DEF / -10% EVA. " +
-		"Use Roads (1 Fuel) to rush Heavy Walkers into Central Cities (+25% DEF, +Fuel/EN/Repair), and position Quad Artillery on Elevation 3 Ridges!"
+		"TACTICAL ADVISORY: Every city here sits level with the roads, so a garrison can be stormed without an uphill penalty, and digging in alone won't hold the line. " +
+		"Rivers cost 4 Fuel and impose -15% ATK / -15% DEF / -10% EVA: cross on the bridges, or wade with a Falke. Concentrate your attacks on one target at a time."
 	)
+	# Every city sits level with the roads (height 1) and a neutral Central Island Depot stands
+	# between the bridges: five objectives can't split 2-2, so digging in can't run out the clock.
 	map1.terrain_codes = PackedStringArray([
 		"M M F P R R P F M M",
 		"F P P C R R C P P F",
 		"D D D D D D D D D D",
-		"P F P P R R P P F P",
+		"P F P P R C P P F P",
 		"P F P P R R P P F P",
 		"D D D D D D D D D D",
 		"F P P C R R C P P F",
@@ -318,19 +320,20 @@ func _init_maps() -> void:
 	])
 	map1.elevation_rows = PackedStringArray([
 		"3 3 2 1 0 0 1 2 3 3",
-		"2 1 1 2 0 0 2 1 1 2",
+		"2 1 1 1 0 0 1 1 1 2",
 		"1 1 1 1 1 1 1 1 1 1",
-		"1 2 1 1 0 0 1 1 2 1",
+		"1 2 1 1 0 1 1 1 2 1",
 		"1 2 1 1 0 0 1 1 2 1",
 		"1 1 1 1 1 1 1 1 1 1",
-		"2 1 1 2 0 0 2 1 1 2",
+		"2 1 1 1 0 0 1 1 1 2",
 		"3 3 2 1 0 0 1 2 3 3"
 	])
 	map1.objectives = [
 		{ "pos": Vector2i(3, 1), "label": "North West Bridgehead", "owner": 0 },
 		{ "pos": Vector2i(6, 1), "label": "North East Bridgehead", "owner": 1 },
 		{ "pos": Vector2i(3, 6), "label": "South West Bridgehead", "owner": 0 },
-		{ "pos": Vector2i(6, 6), "label": "South East Bridgehead", "owner": 1 }
+		{ "pos": Vector2i(6, 6), "label": "South East Bridgehead", "owner": 1 },
+		{ "pos": Vector2i(5, 3), "label": "Central Island Depot", "owner": -1 }
 	]
 	map1.spawns = [
 		# Player Coalition Forces (West Side)
