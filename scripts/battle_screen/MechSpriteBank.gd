@@ -1,0 +1,88 @@
+class_name MechSpriteBank
+extends RefCounted
+
+## Loads the generated mech sprite sheets (assets/battle/mechs) and their JSON metadata.
+## Sheets are one row of pose cells, drawn facing right; anchors are given in the rest pose and
+## shifted here by each pose's body offset (and gun recoil for gun/turret-mounted points).
+
+const MECH_DIR := "res://assets/battle/mechs/"
+const FACTION_NAMES := ["coalition", "syndikat"]
+
+static var _meta_cache: Dictionary = {}
+static var _tex_cache: Dictionary = {}
+
+static func meta_for(chassis: String) -> Dictionary:
+	if not _meta_cache.has(chassis):
+		var text := FileAccess.get_file_as_string(MECH_DIR + chassis + ".json")
+		var parsed = JSON.parse_string(text)
+		if parsed == null:
+			push_error("MechSpriteBank: missing or invalid metadata for '%s'" % chassis)
+			parsed = {}
+		_meta_cache[chassis] = parsed
+	return _meta_cache[chassis]
+
+static func get_sheet(chassis: String, faction: int) -> Texture2D:
+	var key := "%s_%s" % [chassis, FACTION_NAMES[clampi(faction, 0, 1)]]
+	if not _tex_cache.has(key):
+		_tex_cache[key] = load(MECH_DIR + key + ".png") as Texture2D
+	return _tex_cache[key]
+
+static func cell_size(chassis: String) -> Vector2:
+	var m := meta_for(chassis)
+	return Vector2(float(m.get("w", 0)), float(m.get("h", 0)))
+
+static func has_pose(chassis: String, pose: String) -> bool:
+	return pose in meta_for(chassis).get("poses", [])
+
+static func frame_rect(chassis: String, pose: String) -> Rect2:
+	var m := meta_for(chassis)
+	var idx: int = maxi(0, (m.get("poses", []) as Array).find(pose))
+	var size := cell_size(chassis)
+	return Rect2(Vector2(idx * size.x, 0), size)
+
+static func idle_pose(chassis: String, t_ms: float) -> String:
+	var m := meta_for(chassis)
+	var frames: int = maxi(1, int(m.get("idle_frames", 6)))
+	var step: float = maxf(1.0, float(m.get("idle_ms", 150)))
+	return "idle%d" % (int(t_ms / step) % frames)
+
+static func pose_offset(chassis: String, pose: String) -> Vector2:
+	var o = meta_for(chassis).get("pose_off", {}).get(pose, [0, 0])
+	return Vector2(o[0], o[1])
+
+static func pose_gun(chassis: String, pose: String) -> float:
+	return float(meta_for(chassis).get("pose_gun", {}).get(pose, 0))
+
+## name: "feet" | "hull" | "glacis" | "viewport" | "stacks/<i>" | "muzzles/<card_id>" | "attach/<name>"
+static func anchor(chassis: String, name: String, pose: String, mirrored: bool) -> Vector2:
+	var anchors: Dictionary = meta_for(chassis).get("anchors", {})
+	var parts := name.split("/")
+	var raw = null
+	var grp := ""
+	if parts.size() == 1:
+		raw = anchors.get(name, null)
+	elif parts[0] == "stacks":
+		var stacks: Array = anchors.get("stacks", [])
+		var i := int(parts[1])
+		raw = stacks[i] if i < stacks.size() else null
+	elif parts[0] == "muzzles":
+		var mz = anchors.get("muzzles", {}).get(parts[1], null)
+		if mz != null:
+			raw = mz["p"]
+			grp = String(mz.get("grp", ""))
+	else:
+		raw = anchors.get(parts[0], {}).get(parts[1], null)
+	if raw == null:
+		raw = anchors.get("hull", [0, 0])
+	var p := Vector2(raw[0], raw[1])
+	if name != "feet":
+		var off := pose_offset(chassis, pose)
+		var gun := pose_gun(chassis, pose)
+		if grp == "gun":
+			off.x += gun
+		elif grp == "turret":
+			off.x += roundf(gun / 3.0)
+		p += off
+	if mirrored:
+		p.x = cell_size(chassis).x - p.x
+	return p
