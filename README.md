@@ -6,6 +6,10 @@
 
 *Tactical battlefield view: extruded 2.5D isometric terrain, movement range highlights, Dijkstra fuel path planning, and real-time telemetry HUD.*
 
+![FF6-style Battle Screen](screenshot_battle.png)
+
+*Battle screen: pixel-art walkers with articulated legs, a terrain backdrop chosen by the defender's tile, attack banners and the CRT command HUD.*
+
 ![Main Menu & AFW Codex](screenshot_main_menu.png)
 
 *Command HQ briefing console: 3 selectable battle theaters, satellite reconnaissance preview, and interactive Armored Walker Hangar Codex.*
@@ -29,6 +33,14 @@ Each turn cycles through three phases:
      - **Overmatch Capture**: Higher directional ranks flip adjacent enemy cards to the attacker's faction.
      - **Tactical Plus Overload**: Matching edge sums across two or more adjacent sides trigger a combo flip.
    - Controlled cards add their `Damage` and `Shield` ratings to the final hull exchange. If both units survive, the loser of the clash is dislodged and pushed back to an adjacent retreat tile.
+   - **Battle screen.** Each skirmish plays out on a side-view, FF6-style pixel-art battle screen. The game cuts from the grid to the two walkers facing off in front of a backdrop chosen by the defender's terrain, then cuts back.
+     - The approach direction decides which side each walker stands on, and the higher walker is drawn raised.
+     - The six card plays run in order. Each shows a banner with the card name, then its own animation:
+       - **Weapons:** the card's attack animation.
+       - **Armor and tactical cards:** the card's effect, then a quick follow-up shot.
+     - Bouncing damage numbers match the resolver exactly.
+     - Captured cards are reported as text, e.g. `OVERMATCH: 1 SYSTEM CAPTURED`. The 3×3 board itself isn't drawn.
+     - Commands are chosen automatically for now; interactive commands are a planned follow-up.
 3. **Syndicate AI Phase**:
    - Enemy walkers evaluate reachable tiles, approach vectors, high-ground advantages, fuel reserves, and objective priorities tailored to the map's strategic profile (`Pitched Battle`, `Fortified Defense`, or `Blitzkrieg Offense`).
 
@@ -103,7 +115,8 @@ Each turn cycles through three phases:
 | **`E`** | End Player Command Phase |
 | **`C`** | Reset & center camera on battlefield |
 | **`H`** | Toggle Tactical Field Manual & Terrain Chart |
-| **`Space` / `Enter`** | Skip / Confirm Skirmish Resolution outcome |
+| **`Space` / `Enter`** | Battle screen: skip to the result / confirm the result |
+| **`S`** | Battle screen: toggle 1× / 2× playback speed |
 | **`Esc`** | Deselect unit / Close modal |
 
 ---
@@ -119,9 +132,16 @@ iron-grid/
 ├── autoload/
 │   ├── GlobalState.gd              # Global turn/phase state, card/mech/map catalogs, combat log
 │   └── SoundManager.gd             # Procedural retro/dieselpunk WAV audio synthesizer
+├── assets/battle/                  # Generated pixel art (do not hand-edit; see Battle Art Pipeline)
+│   ├── mechs/                      # <chassis>[_variant]_<faction>.png pose sheets + <chassis>.json anchors
+│   ├── backdrops/                  # 360x152 terrain backdrops (plain, road, river, forest, city, mountain)
+│   ├── fx/                         # Slab, radio mast & rangefinder attachments per faction
+│   └── font/                       # 5x7 bitmap font
+├── tools/battle_sprites/           # Stdlib-only Python generator for everything in assets/battle
 ├── scenes/
 │   ├── MainMenu.tscn               # Command HQ briefing console, 3-map selector & Mech Hangar Codex
-│   └── Battlefield.tscn            # Root battle scene (GridMap, UnitContainer, Camera2D, UIOverlay)
+│   ├── Battlefield.tscn            # Root battle scene (GridMap, UnitContainer, Camera2D, UIOverlay)
+│   └── dev/BattlePreview.tscn      # Dev-only battle screen preview (every chassis, card, terrain)
 └── scripts/
     ├── data/
     │   ├── EquipmentCard.gd        # Triple Triad directional ranks & damage/shield card struct
@@ -135,13 +155,25 @@ iron-grid/
     │   ├── MechUnit.gd             # Procedural multi-part isometric mech renderer & animator
     │   ├── SkirmishEngine.gd       # Stats-vs-Stats + 3x3 Triple Triad card clash resolver
     │   └── AIController.gd         # Utility-based tactical AI decision engine
+    ├── battle_screen/
+    │   ├── BattleScreen.gd         # FF6-style resolution screen (SubViewport 360x225, scaled 4x)
+    │   ├── BattleStage.gd          # Phase machine + drawing: intro, 6 card beats, ending, result
+    │   ├── BattleTimeline.gd       # SkirmishResult -> presentation beats (no rule changes)
+    │   ├── WeaponAnims.gd          # Per-weapon attack animations
+    │   ├── SupportAnims.gd         # Armor/tactical effects, softened hits, attachments
+    │   ├── BattleFX.gd             # Pixel effect primitives (flashes, tracers, explosions, panels)
+    │   ├── BattleLayout.gd         # Side/elevation placement & terrain -> backdrop
+    │   ├── MechSpriteBank.gd       # Sprite sheet + anchor metadata loader
+    │   ├── PixelFont.gd            # 5x7 bitmap text & wrapping
+    │   └── BattlePreview.gd        # Dev preview controller
     └── ui/
         ├── MainMenu.gd             # War-room menu & interactive Mech Hangar Codex
-        ├── UIOverlay.gd            # In-game CRT telemetry HUD, terrain inspector & forecast
-        └── SkirmishModal.gd        # Animated Resolution Phase showdown screen
+        └── UIOverlay.gd            # In-game CRT telemetry HUD, terrain inspector & forecast
 └── tests/
     ├── Playtest.tscn               # Headless automated playtest entry scene
-    └── playtest.gd                 # Rule checks + full-mission playthroughs with per-frame invariants
+    ├── playtest.gd                 # Rule checks + full-mission playthroughs with per-frame invariants
+    ├── BattleScreenTests.tscn      # Battle screen unit tests (timeline, layout, anims, screen contract)
+    └── run_battle_tests.sh         # Headless runner for the battle screen tests
 ```
 
 ---
@@ -165,6 +197,22 @@ godot --path .
 godot --headless --path . res://tests/Playtest.tscn          # exit code = number of failures
 PLAYTEST_POLICIES=greedy PLAYTEST_VERBOSE=1 godot --headless --path . res://tests/Playtest.tscn
 ```
+
+## Battle Art Pipeline
+
+All battle screen art is generated pixel art. `tools/battle_sprites/generate.py` builds every chassis from shaded parts. The legs are a two-bone hip→knee→ankle IK rig, re-solved for every pose so the feet stay planted.
+
+The generator renders each pose and writes palette-swapped sheets for the Coalition and Syndikat factions. It also writes the backdrops, attachments and font. It uses only the Python standard library, and its output is deterministic.
+
+```bash
+python3 tools/battle_sprites/generate.py           # regenerate assets/battle
+python3 tools/battle_sprites/generate.py --check   # exit 1 if committed art differs from the generator
+python3 -m unittest discover -s tools/battle_sprites
+tests/run_battle_tests.sh                          # battle screen unit tests (headless)
+godot --path . res://scenes/dev/BattlePreview.tscn # browse chassis, cards, terrains and endings
+```
+
+After regenerating, run `godot --headless --path . --import` so Godot picks up the new PNGs.
 
 ## Balance Experiments
 
