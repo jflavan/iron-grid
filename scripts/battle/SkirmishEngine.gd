@@ -15,6 +15,11 @@ enum CommandType {
 }
 
 const MAX_BATTLE_ROUNDS: int = 10
+const ROUND1_ATTACKER_SPD_BONUS: int = 8
+const ROUND1_ENTRENCHED_SPD_BONUS: int = 6
+const ENTRENCHED_SPD_BONUS: int = 4
+const ENTRENCHED_EVA_BONUS: int = 5
+const ENTRENCHED_ACC_BONUS: int = 6
 
 class TurnStep extends RefCounted:
 	var step_index: int = 0
@@ -185,6 +190,11 @@ class BattleSession extends RefCounted:
 		atk_state = _make_combatant("atk", attacker, result.atk_effective_firepower, result.atk_effective_armor, from_tile, result.elev_diff)
 		def_state = _make_combatant("def", defender, result.def_effective_firepower, result.def_effective_armor, target_tile, -result.elev_diff)
 		_advance_round_queue_if_needed()
+		# The forecast's INITIATIVE line is the real round-1 queue, so the HUD can never disagree with play.
+		var round1 := _round_initiative_speeds()
+		result.atk_effective_speed = round1[0]
+		result.def_effective_speed = round1[1]
+		result.first_striker = turn_queue[0]
 
 	func _make_combatant(
 		side: String,
@@ -208,9 +218,9 @@ class BattleSession extends RefCounted:
 		st.base_crit = clampi(m.crit_chance + maxi(0, my_elev_adv) * 5, 4, 50)
 		st.base_acc = 94 + my_elev_adv * 4
 		if side == "def" and m.is_entrenched:
-			st.base_spd += 4
-			st.base_eva += 5
-			st.base_acc += 6
+			st.base_spd += ENTRENCHED_SPD_BONUS
+			st.base_eva += ENTRENCHED_EVA_BONUS
+			st.base_acc += ENTRENCHED_ACC_BONUS
 		return st
 
 	func get_combatant(side: String) -> CombatantState:
@@ -235,13 +245,19 @@ class BattleSession extends RefCounted:
 			_conclude_battle()
 			return
 		result.rounds_fought = round_number
-		# Round 1 gives Initiating Attacker +8 Speed bonus (offset if Defender is Entrenched: +4 base +6 Round 1 = +10)
-		var atk_spd := atk_state.get_effective_speed() + (8 if round_number == 1 else 0)
-		var def_spd := def_state.get_effective_speed() + (6 if round_number == 1 and result.defender.is_entrenched else 0)
-		if atk_spd > def_spd or (atk_spd == def_spd and not result.defender.is_entrenched):
+		var spd := _round_initiative_speeds()
+		if spd[0] > spd[1] or (spd[0] == spd[1] and not result.defender.is_entrenched):
 			turn_queue = ["atk", "def"]
 		else:
 			turn_queue = ["def", "atk"]
+
+	## Initiative speeds [atk, def] for the current round. Round 1 gives the initiating Attacker an
+	## +8 SPD assault bonus; an Entrenched Defender answers with +6 SPD on top of its +4 base (= +10).
+	func _round_initiative_speeds() -> Array[int]:
+		var atk_spd := atk_state.get_effective_speed() + (ROUND1_ATTACKER_SPD_BONUS if round_number == 1 else 0)
+		var def_spd := def_state.get_effective_speed() + (ROUND1_ENTRENCHED_SPD_BONUS if round_number == 1 and result.defender.is_entrenched else 0)
+		var speeds: Array[int] = [atk_spd, def_spd]
+		return speeds
 
 	## Chooses an intelligent AI command for `side` (used for Syndicate AI, Player Auto-Pilot, and Forecast).
 	func choose_ai_command(side: String) -> Dictionary:
@@ -270,6 +286,8 @@ class BattleSession extends RefCounted:
 		var hp_ratio := float(actor.hp) / float(maxi(1, actor.max_hp))
 		var holding_vital_objective: bool = (side == "def" and result.target_tile != null and result.target_tile.is_objective)
 		var can_escape_tile: bool = (side == "atk" or can_defender_retreat)
+		# A guard still raised here has not been spent (guards last until the enemy's next action
+		# resolves), so it really will halve the next incoming hit and belongs in the estimate.
 		var enemy_est := estimate_attack_damage(target, actor, null)
 		var in_lethal_danger: bool = (hp_ratio <= 0.38 or (actor.hp <= enemy_est + 6 and target.hp > actor.hp + 10))
 		if not deterministic_mode and round_number >= 2 and in_lethal_danger and target.hp > best_weapon_dmg and not holding_vital_objective and can_escape_tile and not actor.used_support_ids.has("retreat_attempted"):
@@ -324,9 +342,6 @@ class BattleSession extends RefCounted:
 		var side: String = turn_queue.pop_front()
 		var actor := get_combatant(side)
 		var target := get_opponent(side)
-
-		# Clear actor's defending stance at the start of its new turn
-		actor.defending = false
 
 		var step := TurnStep.new()
 		step.step_index = _step_counter
@@ -387,6 +402,11 @@ class BattleSession extends RefCounted:
 					step.escape_failed = true
 					step.status_text = "RETREAT BLOCKED!"
 					step.description = "%s attempted to retreat, but %s cut off escape!" % [actor.mech.callsign, target.mech.callsign]
+
+		# A DEFEND guard absorbs exactly one enemy action. It is spent here, once the opponent has
+		# acted, rather than at the guarding unit's next turn start: when initiative order flips
+		# between rounds the guarding unit acts twice in a row, and clearing early would waste it.
+		target.defending = false
 
 		step.energy_after = actor.en
 		step.atk_hp_after = atk_state.hp
@@ -616,10 +636,7 @@ static func _init_result_modifiers(
 
 	res.def_effective_firepower = maxi(10, int(round(float(defender.firepower) * (1.0 + float(target_tile.get_attack_modifier_pct() + res.def_elev_mod_pct) / 100.0))))
 	res.def_effective_armor = maxi(8, int(round(float(defender.armor_rating) * (1.0 + float(res.def_total_mod_pct) / 100.0))))
-
-	res.atk_effective_speed = attacker.speed + 8
-	res.def_effective_speed = defender.speed + (10 if defender.is_entrenched else 0)
-	res.first_striker = "atk" if res.atk_effective_speed > res.def_effective_speed or (res.atk_effective_speed == res.def_effective_speed and not defender.is_entrenched) else "def"
+	# Initiative (atk/def_effective_speed, first_striker) is filled in by BattleSession from its round-1 queue.
 
 	var elev_label := "LEVEL GROUND"
 	if res.elev_diff > 0:
@@ -634,14 +651,17 @@ static func _init_result_modifiers(
 	return res
 
 ## Creates a live interactive BattleSession for BattleScreen.
+## `p_seed` >= 0 seeds every hit/crit/variance/retreat roll so a battle can be replayed exactly
+## (Battlefield passes GlobalState.next_battle_seed(); -1 keeps the shipping unseeded behaviour).
 static func create_session(
 	attacker: MechData,
 	defender: MechData,
 	from_tile: GridTileData,
 	target_tile: GridTileData,
-	can_defender_retreat: bool = true
+	can_defender_retreat: bool = true,
+	p_seed: int = -1
 ) -> BattleSession:
-	return BattleSession.new(attacker, defender, from_tile, target_tile, false, -1, can_defender_retreat)
+	return BattleSession.new(attacker, defender, from_tile, target_tile, false, p_seed, can_defender_retreat)
 
 ## Computes a fast, deterministic tactical forecast before committing to an engagement.
 static func compute_forecast(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData) -> Dictionary:

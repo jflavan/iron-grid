@@ -190,7 +190,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 
 ## Dotted ballistic arc from the actor's basic weapon to the target (Elevation Ballistics).
 static func draw_plot_arc(stage: BattleStage, a: Dictionary, d: Dictionary, k: float) -> void:
-	var weapon: String = MechSpriteBank.meta_for(a["chassis"]).get("basic_weapon", "")
+	var weapon: String = (a["data"] as MechData).basic_weapon_id
 	var m := stage.point(a, "muzzles/" + weapon)
 	var tgt := stage.point(d, "hull")
 	var arc: float = WeaponAnims.PROFILES.get(weapon, {}).get("arc", 20.0)

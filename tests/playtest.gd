@@ -247,6 +247,7 @@ func _play_mission(map_idx: int, policy: String) -> void:
 	var map_def: MapDefinition = bf.current_map_def
 	var stats := { "moves": 0, "waits": 0, "skirmishes": 0, "max_turn": 1 }
 	_rng.seed = hash(policy) + map_idx
+	GlobalState.set_battle_seed(hash(policy) + map_idx)  # every battle roll in this mission replays exactly
 	var last_skirmish_shown := false
 
 	for frame in MAX_FRAMES_PER_MISSION:

@@ -10,7 +10,7 @@ Anchors are in the rest pose (offset [0,0], gun 0) and unmirrored.
 
 # ---- KPZ-09 Sturmjäger: medium assault walker (approved mockup design) ----
 VANGUARD = {
-    "w": 112, "h": 100, "idle_ms": 150, "basic_weapon": "kwk_88",
+    "w": 112, "h": 100, "idle_ms": 150,
     "legs": [
         {"hip": [42, 57], "knee": [41, 77], "ankle": [32, 94], "tw": 6, "sw": 5, "kr": 5, "k": "rear",
          "foot": [[18, 94], [42, 94], [45, 99], [15, 99]]},
@@ -48,7 +48,7 @@ VANGUARD = {
 
 # ---- Sturm-V Brenner: heavy urban brawler (approved mockup design) ----
 MOLOCH = {
-    "w": 128, "h": 116, "idle_ms": 210, "basic_weapon": "thermite_lance",
+    "w": 128, "h": 116, "idle_ms": 210,
     "idle": [[0, 0], [0, 1], [1, 2], [1, 4], [1, 3], [0, 1]],
     "legs": [
         {"hip": [38, 72], "knee": [43, 88], "ankle": [36, 107], "tw": 8, "sw": 7.5, "kr": 7, "k": "rear",
@@ -101,7 +101,7 @@ MOLOCH["anchors"]["bricks"] = [56, 30]
 
 # ---- VK-100 Siegebreaker: super-heavy dreadnought, 210mm Mörser + quad flak ----
 GOLIATH = {
-    "w": 136, "h": 120, "idle_ms": 240, "basic_weapon": "flak_38",
+    "w": 136, "h": 120, "idle_ms": 240,
     "idle": [[0, 0], [0, 1], [1, 2], [1, 4], [1, 3], [0, 1]],
     "legs": [
         {"hip": [46, 80], "knee": [51, 96], "ankle": [42, 112], "tw": 10, "sw": 9, "kr": 8, "k": "rear",
@@ -142,7 +142,7 @@ GOLIATH = {
 
 # ---- Sd.Kfz-22 Spähfalke: light recon strider, 50mm autocannon, gyro thrusters ----
 FALKE = {
-    "w": 96, "h": 92, "idle_ms": 130, "basic_weapon": "autocannon_50",
+    "w": 96, "h": 92, "idle_ms": 130,
     "legs": [
         {"hip": [38, 48], "knee": [41, 67], "ankle": [30, 86], "tw": 4.5, "sw": 4, "kr": 4, "k": "rear",
          "foot": [[20, 86], [40, 86], [42, 91], [18, 91]]},
@@ -184,7 +184,7 @@ def _pad(ax, ay):
 
 
 DONNER = {
-    "w": 128, "h": 96, "idle_ms": 170, "basic_weapon": "rocket_pod",
+    "w": 128, "h": 96, "idle_ms": 170,
     "idle": [[0, 0], [0, 1], [0, 2], [1, 3], [0, 2], [0, 1]],
     "legs": [
         {"hip": [78, 46], "knee": [98, 30], "ankle": [110, 88], "tw": 3.5, "sw": 3, "kr": 3.5, "k": "rear", "forward": "up",
@@ -229,7 +229,7 @@ DONNER = {
 
 # ---- Befehls-IV Kaiserstuhl: command walker, 105mm StuH, ECM dish, radio mast ----
 KOMMANDANT = {
-    "w": 112, "h": 106, "idle_ms": 160, "basic_weapon": "assault_105",
+    "w": 112, "h": 106, "idle_ms": 160,
     "legs": [
         {"hip": [40, 64], "knee": [44, 82], "ankle": [36, 100], "tw": 7, "sw": 6, "kr": 6, "k": "rear",
          "foot": [[22, 100], [50, 100], [54, 105], [18, 105]]},

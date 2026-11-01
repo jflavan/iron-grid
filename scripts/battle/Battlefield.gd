@@ -389,7 +389,7 @@ func _trigger_skirmish_resolution(attacker: MechUnit, defender: MechUnit, start_
 	BalanceProbe.record_skirmish(attacker.mech_data, defender.mech_data, from_tile, target_tile)
 	var can_def_retreat := (unit_container.find_retreat_tile(target_coords, from_coords, grid_map) != Vector2i(-1, -1))
 	var session := SkirmishEngine.create_session(
-		attacker.mech_data, defender.mech_data, from_tile, target_tile, can_def_retreat
+		attacker.mech_data, defender.mech_data, from_tile, target_tile, can_def_retreat, GlobalState.next_battle_seed()
 	)
 	ui_overlay.show_skirmish_session(session)
 

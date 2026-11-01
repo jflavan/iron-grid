@@ -53,6 +53,7 @@ func _run_one(map_idx: int, policy: String, variant: String) -> void:
 	var map_def: MapDefinition = bf.current_map_def
 	var stats := { "moves": 0, "waits": 0, "skirmishes": 0, "max_turn": 1 }
 	_rng.seed = hash(policy) + map_idx
+	GlobalState.set_battle_seed(hash(policy) + map_idx)  # every battle roll in this mission replays exactly
 	TacticalBot.jitter = 30.0
 	if policy.begins_with("tactical:"):
 		TacticalBot.jitter = 30.0

@@ -1,5 +1,11 @@
 # FF6-Style Battle Screen Implementation Plan
 
+> **Status (2026-11-01):** this plan describes the presentation-only first pass. The interactive
+> command phase has since landed (PR #8) and a few details below are superseded: support turns are
+> pure (no follow-up shot, so the `needs_followup` beat key and `test_followup_flags` were removed),
+> and the basic gun per chassis is defined once, in `autoload/GlobalState.gd`
+> (`MechData.basic_weapon_id`), rather than in the sprite JSON. Everything else still applies.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace `SkirmishModal` with a side-view, FF6-style pixel-art battle screen. It plays back the existing `SkirmishResult` unchanged.

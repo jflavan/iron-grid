@@ -84,7 +84,6 @@ class GeneratorTests(unittest.TestCase):
             base = name.split("_")[0]
             for card in weapons[base]:
                 self.assertIn(card, meta["anchors"]["muzzles"], name)
-            self.assertIn(meta["basic_weapon"], weapons[base])
         with open(os.path.join(self.tmp, "mechs", "moloch.json")) as f:
             self.assertEqual(json.load(f)["variants"], {"spent": "moloch_spent"})
         with open(os.path.join(self.tmp, "mechs", "donner_braced.json")) as f:

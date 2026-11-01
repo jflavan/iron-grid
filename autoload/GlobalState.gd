@@ -25,10 +25,31 @@ var chassis_catalog: Dictionary = {}
 var maps: Array[MapDefinition] = []
 var combat_log: Array[String] = []
 
+## Master seed for live battle dice. -1 (the shipping default) leaves every battle unseeded.
+## When >= 0, each battle gets its own seed derived from this one and a running counter, so a
+## whole mission's hit/crit/variance/retreat rolls replay exactly. Tests set it per mission; the
+## BATTLE_SEED environment variable sets it for a hand-played session.
+var battle_seed: int = -1
+var _battle_seed_counter: int = 0
+
 func _ready() -> void:
+	var env_seed := OS.get_environment("BATTLE_SEED")
+	if env_seed.is_valid_int():
+		set_battle_seed(int(env_seed))
 	_init_ability_catalog()
 	_init_chassis_catalog()
 	_init_maps()
+
+func set_battle_seed(p_seed: int) -> void:
+	battle_seed = p_seed
+	_battle_seed_counter = 0
+
+## Seed for the next live BattleSession (-1 = unseeded).
+func next_battle_seed() -> int:
+	if battle_seed < 0:
+		return -1
+	_battle_seed_counter += 1
+	return absi(battle_seed * 7919 + _battle_seed_counter) % 2147483647
 
 func reset_battle_state() -> void:
 	current_phase = TurnPhase.PLAYER_PHASE
@@ -179,7 +200,7 @@ func _init_chassis_catalog() -> void:
 		MechData.Faction.PLAYER, Vector2i.ZERO,
 		155, 44, 46, 10, 1, 4,
 		"Towering fortress mech armed with a 210mm siege mortar. Nearly impervious in frontal duels, but slow and guzzles fuel off-road.",
-		12, 3, 8, 14, 3, "morser_210"
+		12, 3, 8, 14, 3, "flak_38"
 	)
 	goliath.abilities = [
 		ability_catalog["morser_210"].duplicate_ability(),
@@ -340,7 +361,7 @@ func _init_maps() -> void:
 		"Your defenders command the Eastern mountain plateau (Elevation 3-4). Hold the Citadel Cities until Turn 8 or annihilate the assault wave!"
 	)
 	map2.tactical_tip = (
-		"TACTICAL ADVISORY: Each level of Elevation advantage grants +12% Firepower, +10% Armor deflection & +6% Hit/Crit! " +
+		"TACTICAL ADVISORY: Each level of Elevation advantage grants +12% Firepower, +10% Armor deflection, +4% Hit/EVA & +5% Crit! " +
 		"Let enemy walkers burn fuel climbing the mountain switchbacks or wading the moat river, then counter-strike from Elevation 3-4!"
 	)
 	map2.terrain_codes = PackedStringArray([

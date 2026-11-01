@@ -4,8 +4,6 @@ extends RefCounted
 ## Translates SkirmishResult and live BattleSession TurnSteps into presentation beats for BattleStage.
 ## Supports both pre-resolved playback and live interactive turn-by-turn command selection.
 
-const WEAPON_CATEGORIES := ["ATTACK", "WEAPON", "BALLISTIC", "ARTILLERY", "THERMAL"]
-const SOFTENERS := ["krupp_plate", "gyro_thruster", "ablative_shield"]
 const ROW_ATTACK := 0
 const ROW_TECH := 1
 const ROW_DEFEND := 2
@@ -19,9 +17,6 @@ var end_energy: Dictionary = {}
 var coalition_side: String = "atk"
 var headline: String = ""
 var ending: String = "repelled"
-
-static func is_weapon(category: String) -> bool:
-	return category in WEAPON_CATEGORIES
 
 static func command_row_for_step(step: SkirmishEngine.TurnStep) -> int:
 	match step.command_type:
@@ -59,7 +54,6 @@ func append_step(step: SkirmishEngine.TurnStep, result: SkirmishEngine.SkirmishR
 		"ability_category": step.ability_category,
 		"command_row": command_row_for_step(step) if is_coalition else -1,
 		"is_support_only": step.is_support_only,
-		"needs_followup": false,
 		"damage": step.damage_dealt,
 		"is_miss": step.is_miss,
 		"is_crit": step.is_crit,

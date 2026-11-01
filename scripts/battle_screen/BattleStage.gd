@@ -40,6 +40,9 @@ const DESTROY_DUR := 2.2
 
 const CMD_BOX_RECT := Rect2(114, MENU_Y + 4, 80, 62)
 const TECH_BOX_RECT := Rect2(114, MENU_Y + 4, 242, 62)
+const MENU_ROW_H := 13
+const CMD_ROW0_TOP := MENU_Y + 10   # first ATTACK/TECH/DEFEND/RETREAT row (text sits 2px lower)
+const TECH_ROW0_TOP := MENU_Y + 18  # first ability row; the "TECH SYSTEMS" header sits above it
 
 var result: SkirmishEngine.SkirmishResult
 var session: SkirmishEngine.BattleSession = null
@@ -132,7 +135,6 @@ func skip_to_end() -> void:
 				timeline.append_step(step, result)
 			guard += 1
 		timeline.sync_ending_from_result(result)
-		session.apply_to_units()
 
 	hull_display = timeline.end_hull.duplicate()
 	true_hull = timeline.end_hull.duplicate()
@@ -256,46 +258,46 @@ func confirm_selection() -> void:
 		in_tech_submenu = false
 		_commit_session_turn(SkirmishEngine.CommandType.TECH, chosen.ability_id)
 
-func handle_mouse_motion(stage_pos: Vector2) -> void:
+## Row index of the menu item under `stage_pos`, or -1 when the point is outside the box, above
+## the first row (header / EN meter) or below the last one. floori keeps a point just above row 0
+## negative; int() would truncate -0.7 to row 0 and fire the first entry.
+func menu_row_at(stage_pos: Vector2) -> int:
 	if phase != "command_select":
+		return -1
+	var box: Rect2 = TECH_BOX_RECT if in_tech_submenu else CMD_BOX_RECT
+	if not box.has_point(stage_pos):
+		return -1
+	var row0_top: int = TECH_ROW0_TOP if in_tech_submenu else CMD_ROW0_TOP
+	var row_count: int = (coalition_mech()["data"] as MechData).abilities.size() if in_tech_submenu else COMMANDS.size()
+	var row := floori((stage_pos.y - float(row0_top)) / float(MENU_ROW_H))
+	return row if row >= 0 and row < row_count else -1
+
+func handle_mouse_motion(stage_pos: Vector2) -> void:
+	var row := menu_row_at(stage_pos)
+	if row < 0:
 		return
 	if in_tech_submenu:
-		if TECH_BOX_RECT.has_point(stage_pos):
-			var row := int((stage_pos.y - (MENU_Y + 18)) / 13.0)
-			var coa_data: MechData = coalition_mech()["data"]
-			var ab_count: int = coa_data.abilities.size()
-			if row >= 0 and row < ab_count and row != tech_cursor:
-				tech_cursor = row
-				queue_redraw()
-	else:
-		if CMD_BOX_RECT.has_point(stage_pos):
-			var row := int((stage_pos.y - (MENU_Y + 10)) / 13.0)
-			if row >= 0 and row < COMMANDS.size() and row != menu_cursor:
-				menu_cursor = row
-				queue_redraw()
+		if row != tech_cursor:
+			tech_cursor = row
+			queue_redraw()
+	elif row != menu_cursor:
+		menu_cursor = row
+		queue_redraw()
 
 func handle_mouse_click(stage_pos: Vector2) -> bool:
 	if phase != "command_select":
 		return false
-	if in_tech_submenu:
-		if TECH_BOX_RECT.has_point(stage_pos):
-			var row := int((stage_pos.y - (MENU_Y + 18)) / 13.0)
-			var coa_data: MechData = coalition_mech()["data"]
-			var ab_count: int = coa_data.abilities.size()
-			if row >= 0 and row < ab_count:
-				tech_cursor = row
-				confirm_selection()
-				return true
+	var row := menu_row_at(stage_pos)
+	if row >= 0:
+		if in_tech_submenu:
+			tech_cursor = row
 		else:
-			cancel_submenu()
-			return true
-	else:
-		if CMD_BOX_RECT.has_point(stage_pos):
-			var row := int((stage_pos.y - (MENU_Y + 10)) / 13.0)
-			if row >= 0 and row < COMMANDS.size():
-				menu_cursor = row
-				confirm_selection()
-				return true
+			menu_cursor = row
+		confirm_selection()
+		return true
+	if in_tech_submenu and not TECH_BOX_RECT.has_point(stage_pos):
+		cancel_submenu()
+		return true
 	return false
 
 func _trigger_auto_player_command() -> void:
@@ -308,19 +310,23 @@ func _trigger_auto_player_command() -> void:
 	in_tech_submenu = false
 	_commit_session_turn(int(cmd["command"]), String(cmd["ability_id"]))
 
+## Runs one live-session turn and appends its beat. Returns false when the session produced no
+## step (it had already concluded), in which case the stage should move on to the ending.
+## Unit HP/EN are written back once, by BattleScreen._finish(), when the whole fight is over.
+func _play_session_turn(cmd_type: int, ability_id: String) -> bool:
+	var step := session.execute_next_turn(cmd_type, ability_id)
+	if step != null:
+		timeline.append_step(step, result)
+	if session.is_finished:
+		timeline.sync_ending_from_result(result)
+	return step != null
+
 func _commit_session_turn(cmd_type: int, ability_id: String) -> void:
 	if session == null or session.is_finished:
 		return
-	var step := session.execute_next_turn(cmd_type, ability_id)
-	if step == null:
-		timeline.sync_ending_from_result(result)
-		session.apply_to_units()
+	if not _play_session_turn(cmd_type, ability_id):
 		_enter("ending")
 		return
-	timeline.append_step(step, result)
-	if session.is_finished:
-		timeline.sync_ending_from_result(result)
-		session.apply_to_units()
 	beat_idx = timeline.beats.size() - 1
 	_impact_done = false
 	phase_t = 0.0
@@ -370,38 +376,21 @@ func _next_phase() -> void:
 
 func _start_beat(i: int) -> void:
 	beat_idx = i
-	# If running a live interactive session and we need the next turn:
+	# Live interactive session that has run out of recorded beats: ask the session for the next turn.
 	if session != null and i >= timeline.beats.size():
-		if session.is_finished:
-			timeline.sync_ending_from_result(result)
-			session.apply_to_units()
-			_enter("ending")
-			return
-		var next_side := session.get_next_actor_side()
-		if next_side == "":
-			timeline.sync_ending_from_result(result)
-			session.apply_to_units()
-			_enter("ending")
-			return
+		var next_side := session.get_next_actor_side()  # "" once the session has concluded
 		if next_side == timeline.coalition_side and not auto_pilot:
 			in_tech_submenu = false
 			phase_t = 0.0
 			_enter("command_select")
 			SoundManager.play("ui_click")
 			return
-		else:
-			# AI turn (or Player Auto-Pilot): compute AI command and append beat
+		if next_side != "":
+			# AI turn (or Player Auto-Pilot): let the AI pick and append its beat
 			var cmd := session.choose_ai_command(next_side)
-			var step := session.execute_next_turn(int(cmd["command"]), String(cmd["ability_id"]))
-			if step == null:
-				timeline.sync_ending_from_result(result)
-				session.apply_to_units()
-				_enter("ending")
-				return
-			timeline.append_step(step, result)
-			if session.is_finished:
-				timeline.sync_ending_from_result(result)
-				session.apply_to_units()
+			_play_session_turn(int(cmd["command"]), String(cmd["ability_id"]))
+		elif session.is_finished:
+			timeline.sync_ending_from_result(result)
 
 	if i >= timeline.beats.size():
 		_enter("ending")

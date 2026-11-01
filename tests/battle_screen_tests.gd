@@ -20,6 +20,8 @@ func _ready() -> void:
 		"test_mouse_click_skips_then_confirms", "test_viewport_renders_only_while_active",
 		"test_white_sheets_are_pregenerated", "test_support_run_is_pure",
 		"test_crt_pixel_scale", "test_crt_glyph_coverage", "test_menu_mechs_never_overlap",
+		"test_menu_header_click_is_inert", "test_basic_weapon_single_source", "test_guard_survives_initiative_flip",
+		"test_forecast_initiative_matches_queue", "test_seeded_sessions_replay",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -130,7 +132,6 @@ func test_pure_support_turns() -> void:
 		if b["ability_id"] == "krupp_plate":
 			found_support = true
 			_check(b["is_support_only"] == true, "armor TECH is pure support (no follow-up shot)")
-			_check(b["needs_followup"] == false, "needs_followup is false for pure FF support turns")
 			_check(b["damage"] == 0, "armor TECH deals 0 damage on its own turn")
 			_check(b["command_row"] == BattleTimeline.ROW_TECH, "armor TECH points at TECH command row")
 			if i + 1 < tl.beats.size() and tl.beats[i + 1]["actor"] != b["actor"] and not tl.beats[i + 1]["is_support_only"]:
@@ -401,3 +402,119 @@ func test_menu_mechs_never_overlap() -> void:
 	var hangar_inner := float(MainMenu.HANGAR_W - 16)
 	_check(cell.x * 2.0 < hangar_inner, "hangar fits both liveries side by side without overlap (%s x2 vs %s)" % [cell.x, hangar_inner])
 	_check(cell.x <= UIOverlay.LEFT_W - 12, "HUD portrait frame fits the widest sprite (%s vs %s)" % [cell.x, UIOverlay.LEFT_W - 12])
+
+# ---------------------------------------------------------------- review regression tests
+func _flat_session(atk_chassis: String, def_chassis: String, deterministic: bool = true, p_seed: int = -1) -> SkirmishEngine.BattleSession:
+	var atk := GlobalState.create_mech_instance(atk_chassis, MechData.Faction.PLAYER, "ATK-1", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance(def_chassis, MechData.Faction.AI, "DEF-2", Vector2i(4, 2), "d")
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	return SkirmishEngine.BattleSession.new(atk, dfn, flat, flat, deterministic, p_seed)
+
+func test_menu_header_click_is_inert() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	var sess := _flat_session("vanguard", "moloch", false)
+	screen.start_session(sess)
+	screen.stage.advance(0.75)
+	_check(screen.stage.phase == "command_select", "session pauses for the player's command")
+	var st := screen.stage
+	# Main command box: the 6px strip above the ATTACK row must select nothing
+	_check(st.menu_row_at(Vector2(130, BattleStage.MENU_Y + 6)) == -1, "click above ATTACK row selects no command")
+	_check(st.menu_row_at(Vector2(130, BattleStage.MENU_Y + 10)) == 0, "top of ATTACK row is row 0")
+	_check(st.menu_row_at(Vector2(130, BattleStage.MENU_Y + 10 + 3 * 13)) == 3, "fourth row is RETREAT")
+	_check(st.menu_row_at(Vector2(130, BattleStage.MENU_Y + 10 + 4 * 13)) == -1, "below RETREAT selects nothing")
+	_check(not st.handle_mouse_click(Vector2(130, BattleStage.MENU_Y + 6)), "header click on main menu is not consumed")
+	_check(st.phase == "command_select" and sess.result.steps.is_empty(), "no command was committed by the header click")
+	# TECH sub-menu: the "TECH SYSTEMS [ESC]" header and EN meter line must not fire the first ability
+	st.menu_cursor = 1
+	st.confirm_selection()
+	_check(st.in_tech_submenu, "TECH sub-menu is open")
+	var en_before: int = sess.atk_state.en
+	_check(st.menu_row_at(Vector2(130, BattleStage.MENU_Y + 8)) == -1, "TECH header row selects no ability")
+	_check(st.menu_row_at(Vector2(130, BattleStage.MENU_Y + 18)) == 0, "first ability row is row 0")
+	st.handle_mouse_motion(Vector2(130, BattleStage.MENU_Y + 8))
+	_check(st.tech_cursor == 0 and st.in_tech_submenu, "hovering the header leaves the cursor alone")
+	var consumed := st.handle_mouse_click(Vector2(130, BattleStage.MENU_Y + 8))
+	_check(not consumed and st.in_tech_submenu and st.phase == "command_select", "header click neither fires an ability nor closes the sub-menu")
+	_check(sess.atk_state.en == en_before and sess.result.steps.is_empty(), "no EN was spent by the header click")
+	# Clicking a real ability row still works
+	st.handle_mouse_click(Vector2(130, BattleStage.MENU_Y + 18 + 13 + 4))
+	_check(st.phase == "support" and sess.result.steps.size() == 1 and sess.result.steps[0].ability_id == "krupp_plate", "clicking the second ability row fires Krupp Plate")
+	screen.queue_free()
+
+func test_basic_weapon_single_source() -> void:
+	for key in GlobalState.chassis_catalog:
+		var ch: MechData = GlobalState.chassis_catalog[key]
+		var weapon_ids: Array[String] = []
+		for ab: CombatAbility in ch.abilities:
+			if ab.is_weapon():
+				weapon_ids.append(ab.ability_id)
+		_check(ch.basic_weapon_id in weapon_ids, "%s basic gun %s is one of its weapon TECHs %s" % [key, ch.basic_weapon_id, weapon_ids])
+		var muzzles: Dictionary = MechSpriteBank.meta_for(key)["anchors"]["muzzles"]
+		_check(muzzles.has(ch.basic_weapon_id), "%s sprite sheet has a muzzle anchor for its basic gun %s" % [key, ch.basic_weapon_id])
+		_check(WeaponAnims.has_anim(ch.basic_weapon_id), "%s basic gun %s has a weapon animation" % [key, ch.basic_weapon_id])
+		_check(not MechSpriteBank.meta_for(key).has("basic_weapon"), "%s sprite metadata no longer carries a second basic_weapon definition" % key)
+
+func test_guard_survives_initiative_flip() -> void:
+	# Vanguard (SPD 22) attacks Kommandant (SPD 24): round 1 is [atk, def] thanks to the +8 assault bonus,
+	# round 2 flips to [def, atk]. The defender's round-1 DEFEND must still halve the attacker's round-2 shot.
+	var sess := _flat_session("vanguard", "kommandant")
+	_check(sess.get_next_actor_side() == "atk", "attacker opens round 1")
+	sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
+	sess.execute_next_turn(SkirmishEngine.CommandType.DEFEND)
+	_check(sess.def_state.defending, "defender is guarding after DEFEND")
+	_check(sess.get_next_actor_side() == "def", "initiative flips to the defender in round 2")
+	sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
+	_check(sess.def_state.defending, "guard is not cleared by the defender's own back-to-back turn")
+	var guarded_est := sess.estimate_attack_damage(sess.atk_state, sess.def_state, null)
+	var step := sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
+	_check(step.status_text == "GUARDED (-50%)", "attacker's round-2 shot is guarded (got '%s')" % step.status_text)
+	_check(step.damage_dealt <= guarded_est, "guarded shot deals the halved estimate at most (%d vs %d)" % [step.damage_dealt, guarded_est])
+	_check(not sess.def_state.defending, "guard is spent once the enemy has acted")
+	# The AI's retreat check sees the same guard the engine will apply, never a stale one
+	var sess2 := _flat_session("falke", "goliath")
+	sess2.execute_next_turn(SkirmishEngine.CommandType.DEFEND)
+	sess2.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
+	_check(not sess2.atk_state.defending, "guard is gone when the guarding unit's next turn comes after an enemy action")
+
+func test_forecast_initiative_matches_queue() -> void:
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var ridge := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.MOUNTAIN, 3)
+	for a in CHASSIS:
+		for d in CHASSIS:
+			for entrenched in [false, true]:
+				var atk := GlobalState.create_mech_instance(a, MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+				var dfn := GlobalState.create_mech_instance(d, MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+				dfn.is_entrenched = entrenched
+				var fc := SkirmishEngine.compute_forecast(atk, dfn, flat, ridge)
+				var sess := SkirmishEngine.BattleSession.new(atk, dfn, flat, ridge, true)
+				var expected := "ATTACKER" if sess.get_next_actor_side() == "atk" else "DEFENDER"
+				_check(fc["first_striker"] == expected, "%s vs %s%s: forecast INITIATIVE %s matches the real round-1 queue (%s)" % [a, d, " (entrenched)" if entrenched else "", fc["first_striker"], expected])
+				_check(sess.result.first_striker == sess.get_next_actor_side(), "%s vs %s: result.first_striker is the first actor" % [a, d])
+
+func test_seeded_sessions_replay() -> void:
+	var dmg := []
+	for run in 2:
+		var sess := _flat_session("moloch", "donner", false, 4242)
+		var seq: Array[int] = []
+		while not sess.is_finished and seq.size() < 64:
+			var side := sess.get_next_actor_side()
+			if side == "":
+				break
+			var cmd := sess.choose_ai_command(side)
+			var step := sess.execute_next_turn(int(cmd["command"]), String(cmd["ability_id"]))
+			seq.append(step.damage_dealt * 4 + (2 if step.is_crit else 0) + (1 if step.is_miss else 0))
+		dmg.append(seq)
+	_check(dmg[0] == dmg[1] and dmg[0].size() > 0, "two sessions with the same seed replay the same rolls")
+	GlobalState.set_battle_seed(17)
+	var first := [GlobalState.next_battle_seed(), GlobalState.next_battle_seed()]
+	GlobalState.set_battle_seed(17)
+	var again := [GlobalState.next_battle_seed(), GlobalState.next_battle_seed()]
+	_check(first == again and first[0] != first[1] and first[0] >= 0, "GlobalState hands out a reproducible, distinct seed per battle")
+	GlobalState.set_battle_seed(-1)
+	_check(GlobalState.next_battle_seed() == -1, "no master seed means unseeded battles")
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	_check(SkirmishEngine.create_session(atk, dfn, flat, flat, true, 7).rng.seed == 7, "create_session threads the seed into the session RNG")

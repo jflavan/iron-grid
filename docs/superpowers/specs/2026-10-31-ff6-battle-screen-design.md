@@ -1,5 +1,9 @@
 # FF6-Style Battle Screen: Design
 
+> **Status (2026-11-01):** the "later follow-up" this spec defers to has landed (PR #8): the command
+> menu is interactive, and ARMOR/TACTICAL turns are pure support turns with no follow-up shot (§5.4
+> item 1 and the follow-up-shot bullet in §9 are superseded). The basic gun per chassis lives in `autoload/GlobalState.gd`.
+
 **Date:** 2026-10-31
 **Status:** Draft, awaiting approval
 **Mockup reference:** [`2026-10-31-ff6-battle-screen-mockup.html`](2026-10-31-ff6-battle-screen-mockup.html). Open it in a browser. It's the approved v6 mockup: Open Plain backdrop, Sturmjäger vs Brenner, articulated idle, full 88mm attack. Click or press Space to pause, and use ← / → to step through it.

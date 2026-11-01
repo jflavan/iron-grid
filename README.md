@@ -25,16 +25,16 @@ Each turn cycles through three phases:
 1. **Player Command Phase**:
    - Select any friendly Armored Fighting Walker (AFW) to compute reachable movement nodes within its current **Diesel Fuel** budget (using Dijkstra pathfinding across terrain and elevation climbs).
    - Hover over reachable enemy nodes to inspect a real-time **Skirmish Engagement Forecast** detailing approach vectors, terrain/elevation modifiers, initiative order, and estimated hull damage.
-   - Move to secure strategic **Objective Cities**, press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF`, `+5 Fuel`, `+4 EN`), or move directly onto an enemy-occupied node to trigger a combat encounter.
+   - Move to secure strategic **Objective Cities**, press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF`, `+5 Fuel`, `+4 EN`, and `+8 Hull` when holding a City), or move directly onto an enemy-occupied node to trigger a combat encounter.
 2. **Skirmish Resolution Phase (Final Fantasy Turn-Based Battle)**:
    - When two opposing walkers occupy the same node, the game cuts from the isometric grid to a side-view **Final Fantasy-style Turn-Based Battle** against a terrain backdrop matching the contested sector.
-   - **Initiative & Rounds**: Combat runs in classic turn-based rounds determined by each walker's **Effective Speed (`SPD`)**, with a Round-1 Assault Initiative bonus (`+8 SPD`) for the initiating Attacker (offset by `+8 SPD` if the Defender is Entrenched).
+   - **Initiative & Rounds**: Combat runs in classic turn-based rounds determined by each walker's **Effective Speed (`SPD`)**, with a Round-1 Assault Initiative bonus (`+8 SPD`) for the initiating Attacker. An **Entrenched** Defender answers with `+10 SPD` in Round 1 (`+4` for the rest of the fight) plus `+5% EVA` and `+6% Hit`. The forecast's `INITIATIVE` line is read from the same Round-1 queue the battle uses.
    - **4-Command Battle Menu**:
      - **`ATTACK`**: Fires the chassis's primary standard weapon (`0 EN` cost).
      - **`TECH`**: Opens the chassis's 3 specialized **Combat Abilities** (`WEAPON`, `ARMOR`, and `TACTIC` modules) powered by **Reactor Energy (`EN`)**:
        - **Weapon TECHs**: Heavy ordnance, high-velocity AP shells, rocket salvos, and melee pile-bunkers with custom accuracy, critical hit bonuses, and armor penetration.
        - **Armor & Tactical TECHs**: Pure support/status turns that deploy physical shields (`Sloped Krupp Plate`, `Ferro-Bunker Bulkhead`, `Quad Anchor Struts`, `Reactive Shield Wall`), boost offensive/evasive telemetry (`Gyro-Flank Thrusters`, `Optical Rangefinder`, `Elevation Ballistics`, `Command Uplink`), or jam enemy targeting (`Enigma ECM Scrambler`).
-     - **`DEFEND`**: Braces hull plating (`-50%` incoming damage until the unit's next turn) and vents reactor coils (`+2 EN`).
+     - **`DEFEND`**: Braces hull plating (`-50%` damage from the enemy's next action; the guard is spent once the enemy has acted, so it survives an initiative flip) and vents reactor coils (`+2 EN`).
      - **`RETREAT`**: Attempts an emergency combat disengagement based on relative Speed (`SPD`). If successful, the battle ends immediately and the retreating unit withdraws to an open adjacent sector.
    - Each encounter continues until one walker is destroyed (`0 HULL`), one side successfully retreats, or the 10-round safety limit is reached (dislodging the loser of the exchange).
 3. **Syndicate AI Phase**:
@@ -54,37 +54,39 @@ Each turn cycles through three phases:
 | **Transit Road** | `ROD` | `1` | `+5%` | `0%` | `+0%` | Fastest transit artery for heavy dreadnoughts |
 | **Open Plain** | `PLN` | `2` | `0%` | `+5%` | `+0%` | Standard open maneuvering ground |
 | **Fortified City** | `CTY` | `2` | `+10%` | `+25%` | `+10%` | Repairs **+12 Hull**, restores **+4 Fuel** & **+3 EN** at turn start |
-| **Trench Timber** | `TRN` | `3` | `+5%` | `+15%` | `+12%` | Prepared defensive cover and ambush concealment |
+| **Trench Timber** | `TRN` | `3` | `+5%` | `+15%` | `+8%` | Prepared defensive cover and ambush concealment |
 | **River Ford** | `RIV` | `4` | `-15%` | `-15%` | `-10%` | Bogged down & exposed (`Falke` amphibious gear reduces cost) |
-| **Mountain Crag** | `MTN` | `5` | `+15%` | `+30%` | `+15%` | Commanding rock bastion (`Donner` quad legs reduce climb cost) |
+| **Mountain Crag** | `MTN` | `5` | `+15%` | `+30%` | `+10%` | Commanding rock bastion (`Donner` quad legs reduce climb cost) |
 
 ### Elevation (`0m` – `400m`)
 - **Climbing Fuel Surcharge**: Moving uphill costs `+1 Fuel` per `100m` elevation level gained.
-- **High Ground Plunging Fire**: Attacking from higher elevation down onto a defender grants **+12% Firepower**, **+10% Armor deflection**, and **+6% Hit Accuracy** per elevation level differential.
-- **Uphill Assault Penalty**: Attacking uphill suffers **-10% Firepower** and **-6% Hit Accuracy** per level.
+- **High Ground Plunging Fire**: Whichever walker holds the higher tile gains **+4% Hit Accuracy**, **+4% Evasion** and **+5% Crit** per elevation level. Attacking downhill also grants **+12% Firepower** and **+10% Armor deflection** per level, while the defender below loses **8% Firepower and Armor** per level.
+- **Uphill Assault Penalty**: Attacking uphill suffers **-10% Firepower** and **-4% Hit Accuracy** per level, and the defender above gains **+12% Firepower and Armor** per level.
 
 ---
 
 ## Armored Fighting Walkers (6 Chassis Types)
 
+Stats are read from `autoload/GlobalState.gd`; `EN (+n)` is the reactor pool and its per-turn regen, `Fuel (+n/turn)` the diesel tank and its passive refuel. Each chassis's `ATTACK` fires its basic gun for `0 EN`.
+
 1. **KPZ-09 "Sturmjäger" (`VANGUARD` — Medium Assault Walker)**
-   - **Stats**: `110 Hull` | `10 EN (+2)` | `34 ATK` | `30 DEF` | `26 SPD` | `8% EVA` | `10% CRIT` | `13 Fuel (+5/turn)`
-   - **TECH Systems**: *88mm KwK AP-Shell*, *Sloped Krupp Plate*, *Twin MG-42 Salvo*
+   - **Stats**: `110 Hull` | `14 EN (+3)` | `34 ATK` | `30 DEF` | `22 SPD` | `8% EVA` | `10% CRIT` | `13 Fuel (+5/turn)`
+   - **Basic Gun**: *88mm KwK* — **TECH Systems**: *88mm KwK AP-Shell*, *Sloped Krupp Plate*, *Twin MG-42 Salvo*
 2. **VK-100 "Siegebreaker" (`GOLIATH` — Super-Heavy Dreadnought)**
-   - **Stats**: `155 Hull` | `12 EN (+2)` | `46 ATK` | `44 DEF` | `14 SPD` | `2% EVA` | `8% CRIT` | `10 Fuel (+4/turn)`
-   - **TECH Systems**: *210mm Siege Howitzer*, *Ferro-Bunker Bulkhead*, *Quad Flak-38 Battery*
+   - **Stats**: `155 Hull` | `14 EN (+3)` | `46 ATK` | `44 DEF` | `12 SPD` | `3% EVA` | `8% CRIT` | `10 Fuel (+4/turn)`
+   - **Basic Gun**: *Quad Flak-38* — **TECH Systems**: *210mm Siege Howitzer*, *Ferro-Bunker Bulkhead*, *Quad Flak-38 Battery*
 3. **Sd.Kfz-22 "Spähfalke" (`FALKE` — Light Recon Strider)**
-   - **Stats**: `85 Hull` | `10 EN (+3)` | `28 ATK` | `21 DEF` | `38 SPD` | `18% EVA` | `16% CRIT` | `17 Fuel (+6/turn)`
-   - **TECH Systems**: *50mm Rapid Autocannon*, *Gyro-Flank Thrusters*, *Optical Rangefinder*
+   - **Stats**: `85 Hull` | `16 EN (+4)` | `28 ATK` | `21 DEF` | `34 SPD` | `18% EVA` | `16% CRIT` | `17 Fuel (+6/turn)`
+   - **Basic Gun**: *50mm Autocannon* — **TECH Systems**: *50mm Rapid Autocannon*, *Gyro-Flank Thrusters*, *Optical Rangefinder*
 4. **SPG-88 "Spinne" (`DONNER` — Quadruped Mountain Walker)**
-   - **Stats**: `98 Hull` | `12 EN (+3)` | `43 ATK` | `26 DEF` | `22 SPD` | `8% EVA` | `12% CRIT` | `12 Fuel (+5/turn)`
-   - **TECH Systems**: *Nebelwerfer Rocket Pod*, *Elevation Ballistics*, *Quad Anchor Struts*
+   - **Stats**: `98 Hull` | `15 EN (+3)` | `43 ATK` | `26 DEF` | `18 SPD` | `7% EVA` | `12% CRIT` | `12 Fuel (+5/turn)`
+   - **Basic Gun**: *Nebelwerfer Rocket Pod* — **TECH Systems**: *Nebelwerfer Rocket Pod*, *Elevation Ballistics*, *Quad Anchor Struts*
 5. **Befehls-IV "Kaiserstuhl" (`KOMMANDANT` — Tactical Command Walker)**
-   - **Stats**: `120 Hull` | `14 EN (+3)` | `36 ATK` | `34 DEF` | `24 SPD` | `10% EVA` | `10% CRIT` | `14 Fuel (+5/turn)`
-   - **TECH Systems**: *Enigma ECM Scrambler*, *Command Uplink*, *105mm StuH Howitzer*
+   - **Stats**: `120 Hull` | `18 EN (+4)` | `36 ATK` | `34 DEF` | `24 SPD` | `10% EVA` | `12% CRIT` | `14 Fuel (+5/turn)`
+   - **Basic Gun**: *105mm StuH* — **TECH Systems**: *Enigma ECM Scrambler*, *Command Uplink*, *105mm StuH Howitzer*
 6. **Sturm-V "Brenner" (`MOLOCH` — Heavy Urban Brawler)**
-   - **Stats**: `135 Hull` | `11 EN (+2)` | `41 ATK` | `38 DEF` | `19 SPD` | `5% EVA` | `12% CRIT` | `12 Fuel (+5/turn)`
-   - **TECH Systems**: *Thermite Flame Lance*, *Hydraulic Pile-Bunker*, *Reactive Shield Wall*
+   - **Stats**: `135 Hull` | `14 EN (+3)` | `41 ATK` | `38 DEF` | `19 SPD` | `6% EVA` | `12% CRIT` | `12 Fuel (+5/turn)`
+   - **Basic Gun**: *Thermite Flame Lance* — **TECH Systems**: *Thermite Flame Lance*, *Hydraulic Pile-Bunker*, *Reactive Shield Wall*
 
 ---
 
@@ -195,6 +197,8 @@ godot --path .
 godot --headless --path . res://tests/Playtest.tscn          # exit code = number of failures
 PLAYTEST_POLICIES=greedy PLAYTEST_VERBOSE=1 godot --headless --path . res://tests/Playtest.tscn
 ```
+
+Every battle in a playtest or balance mission is seeded from the mission's policy and map, so a run replays exactly and a failure can be reproduced. To replay a hand-played session the same way, set `BATTLE_SEED=<int>` before launching the game; unset, live battles roll fresh dice.
 
 ```powershell
 # Windows PowerShell equivalent of the environment-variable form
