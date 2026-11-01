@@ -19,6 +19,7 @@ func _ready() -> void:
 		"test_pairings_play_to_result", "test_attachment_textures_cached",
 		"test_mouse_click_skips_then_confirms", "test_viewport_renders_only_while_active",
 		"test_white_sheets_are_pregenerated", "test_support_run_is_pure",
+		"test_crt_pixel_scale", "test_crt_glyph_coverage", "test_menu_mechs_never_overlap",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -308,3 +309,39 @@ func test_support_run_is_pure() -> void:
 			SupportAnims.run(st, a, d, card, t)
 		_check([a["sheet"], a["slab"], a["armed"]] == before, "%s animation does not mutate lasting state" % card)
 	screen.queue_free()
+
+# ---------------------------------------------------------------- shared CRT menu style (main menu / HUD)
+func test_crt_pixel_scale() -> void:
+	_check(CrtUI.pixel_scale(Vector2(1440, 900)) == 2, "1440x900 draws menus at 2x")
+	_check(CrtUI.pixel_scale(Vector2(2880, 1800)) == 4, "2880x1800 draws menus at 4x")
+	_check(CrtUI.pixel_scale(Vector2(1280, 720)) == 1, "a window smaller than 1440x900 falls back to 1x")
+	_check(CrtUI.pixel_scale(Vector2(100, 100)) == 1, "scale never drops below 1")
+	_check(CrtUI.virtual_size(Vector2(1441, 901), 2) == Vector2(720, 450), "virtual size floors to whole pixels")
+
+func test_crt_glyph_coverage() -> void:
+	var strings: Array[String] = []
+	for m: MapDefinition in GlobalState.maps:
+		strings.append_array([m.map_name, m.subtitle, m.briefing_text, m.tactical_tip, m.get_strategy_name(), m.get_victory_condition_text()])
+		for sp in m.spawns:
+			strings.append(String(sp["callsign"]))
+		for o in m.objectives:
+			strings.append(String(o["label"]))
+	for key in GlobalState.chassis_catalog:
+		var ch: MechData = GlobalState.chassis_catalog[key]
+		strings.append_array([ch.callsign, ch.unit_name, ch.chassis_class, ch.lore_blurb])
+		for c: EquipmentCard in ch.deck:
+			strings.append_array([c.card_name, c.category, c.description])
+	strings.append_array(UIOverlay.MANUAL_LINES)
+	var missing := {}
+	for s in strings:
+		for ch in CrtUI.sanitize(s):
+			if ch != " " and not PixelFont.has_glyph(ch):
+				missing[ch] = s
+	_check(missing.is_empty(), "every menu string has pixel-font glyphs after sanitize (missing: %s)" % [missing.keys()])
+	_check(CrtUI.sanitize("a|b~c") == "A/BC", "sanitize maps | to / and drops ~ (got %s)" % CrtUI.sanitize("a|b~c"))
+
+func test_menu_mechs_never_overlap() -> void:
+	var cell := CrtUI.max_mech_cell(CHASSIS)
+	var hangar_inner := float(MainMenu.HANGAR_W - 16)
+	_check(cell.x * 2.0 < hangar_inner, "hangar fits both liveries side by side without overlap (%s x2 vs %s)" % [cell.x, hangar_inner])
+	_check(cell.x <= UIOverlay.LEFT_W - 12, "HUD portrait frame fits the widest sprite (%s vs %s)" % [cell.x, UIOverlay.LEFT_W - 12])

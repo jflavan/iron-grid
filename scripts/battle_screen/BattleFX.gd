@@ -14,10 +14,10 @@ const SMOKE_MID := Color("#5a5048")
 const SMOKE_LIGHT := Color("#8a857c")
 const SHELL := Color("#c0c4c8")
 
-const CRT_FILL := Color("#0c100c")
-const CRT_SCAN := Color("#0f150f")
-const CRT_BORDER := Color("#3ad06a")
-const CRT_RULE := Color("#1d5a2f")
+const CRT_FILL := CrtUI.C_FILL
+const CRT_SCAN := CrtUI.C_SCAN
+const CRT_BORDER := CrtUI.C_BORDER
+const CRT_RULE := CrtUI.C_RULE
 
 static func blob(ci: CanvasItem, c: Vector2, r: int, col: Color) -> void:
 	for dy in range(-r, r + 1):
@@ -30,16 +30,7 @@ static func ellipse(ci: CanvasItem, c: Vector2, rw: int, rh: int, col: Color) ->
 		ci.draw_rect(Rect2(roundf(c.x) - w, roundf(c.y) + dy, w * 2, 1), col)
 
 static func panel(ci: CanvasItem, r: Rect2) -> void:
-	ci.draw_rect(r, CRT_FILL)
-	var y := 1
-	while y < int(r.size.y):
-		ci.draw_rect(Rect2(r.position.x, r.position.y + y, r.size.x, 1), CRT_SCAN)
-		y += 2
-	ci.draw_rect(Rect2(r.position, Vector2(r.size.x, 1)), CRT_BORDER)
-	ci.draw_rect(Rect2(r.position + Vector2(0, r.size.y - 1), Vector2(r.size.x, 1)), CRT_BORDER)
-	ci.draw_rect(Rect2(r.position, Vector2(1, r.size.y)), CRT_BORDER)
-	ci.draw_rect(Rect2(r.position + Vector2(r.size.x - 1, 0), Vector2(1, r.size.y)), CRT_BORDER)
-	ci.draw_rect(Rect2(r.position + Vector2(2, 2), Vector2(r.size.x - 4, 1)), CRT_RULE)
+	CrtUI.panel(ci, r)
 
 ## frame 0..2 (big -> small); dir = +1 fires to the right, -1 to the left; scale enlarges heavy guns.
 static func muzzle_flash(ci: CanvasItem, p: Vector2, frame: int, dir: int, scale: float = 1.0) -> void:

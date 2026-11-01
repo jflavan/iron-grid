@@ -13,13 +13,13 @@ const GROUND_Y := 141.0
 const FEET_X := {"left": 92.0, "right": 268.0}
 const MENU_Y := 153
 
-const C_LABEL := Color("#3ad06a")
-const C_NAME := Color("#e8b040")
-const C_NUM := Color("#e8e8d0")
-const C_CURSOR := Color("#ffe080")
-const C_GAUGE_BG := Color("#16301c")
-const C_FUEL := Color("#e0a030")
-const C_HULL := Color("#e04838")
+const C_LABEL := CrtUI.C_LABEL
+const C_NAME := CrtUI.C_NAME
+const C_NUM := CrtUI.C_NUM
+const C_CURSOR := CrtUI.C_CURSOR
+const C_GAUGE_BG := CrtUI.C_GAUGE_BG
+const C_FUEL := CrtUI.C_FUEL
+const C_HULL := CrtUI.C_HULL
 
 const COMMANDS := ["FIGHT", "WEAPON", "ARMOR", "TACTIC"]
 const CHASSIS_NAMES := {
