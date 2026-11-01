@@ -168,8 +168,8 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 		var energy_amt: int = m.passive_energy_regen
 		var tile := grid_map.get_tile(m.grid_pos)
 		if tile != null and tile.terrain_type == GridTileData.TerrainType.CITY:
-			refuel_amt += 4
-			energy_amt += 3
+			refuel_amt += MechData.CITY_FUEL
+			energy_amt += MechData.CITY_ENERGY
 			var healed: int = mini(BalanceProbe.upkeep[int(m.faction)], m.max_armor - m.current_armor)
 			m.current_armor += healed
 			BalanceProbe.upkeep_healed[int(m.faction)] += healed
@@ -183,9 +183,9 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 func _entrench_unit(m: MechData) -> int:
 	m.has_moved = true
 	m.is_entrenched = true
-	var gained_fuel: int = mini(5, m.max_fuel - m.current_fuel)
+	var gained_fuel: int = mini(MechData.WAIT_FUEL, m.max_fuel - m.current_fuel)
 	m.current_fuel += gained_fuel
-	m.current_energy = mini(m.max_energy, m.current_energy + 4)
+	m.current_energy = mini(m.max_energy, m.current_energy + MechData.WAIT_ENERGY)
 	var td := grid_map.get_tile(m.grid_pos)
 	BalanceProbe.entrench_actions[int(m.faction)] += 1
 	if td != null and td.terrain_type == GridTileData.TerrainType.CITY:

@@ -27,6 +27,8 @@ func _ready() -> void:
 		"test_miss_plays_no_impact", "test_seed_counter_resets_per_mission", "test_sure_kill_allows_for_variance",
 		"test_guard_cannot_stack", "test_status_text_lists_every_effect", "test_identical_walkers_share_forecast",
 		"test_apply_before_conclusion_is_ignored", "test_fast_forward_is_quiet",
+		"test_step_breakdown_sums", "test_strike_plan_goliath_mountain", "test_strike_plan_matches_reachable",
+		"test_strike_plan_beyond_range", "test_strike_plan_skips_occupied_launch_tiles", "test_strike_plan_advice_is_true",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -795,3 +797,142 @@ func test_fast_forward_is_quiet() -> void:
 	_check(screen.stage.numbers.is_empty(), "fast-forwarding to the next prompt leaves no stacked damage numbers")
 	_check(not screen.stage._fast_forwarding, "fast-forward flag is cleared afterwards")
 	screen.queue_free()
+
+# ---------------------------------------------------------------- strike plan (out-of-reach feedback)
+const ALL_CHASSIS := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+
+func _grid(map_idx: int) -> IsoGridMap:
+	var gm := IsoGridMap.new()
+	gm.load_from_definition(GlobalState.maps[map_idx])
+	return gm
+
+func _unit(chassis: String, faction: MechData.Faction, pos: Vector2i, tag: String = "u") -> MechData:
+	return GlobalState.create_mech_instance(chassis, faction, tag.to_upper() + "-1", pos, tag)
+
+func _refuel_at(m: MechData, gm: IsoGridMap, pos: Vector2i) -> int:
+	var t := gm.get_tile(pos)
+	return m.passive_refuel + (MechData.CITY_FUEL if t.terrain_type == GridTileData.TerrainType.CITY else 0)
+
+func test_step_breakdown_sums() -> void:
+	var bad := 0
+	for c in ALL_CHASSIS:
+		var m := _unit(c, MechData.Faction.PLAYER, Vector2i.ZERO)
+		for tt in GridTileData.TerrainType.values():
+			for climb in 3:
+				var from := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 1)
+				var to := GridTileData.new(Vector2i.ONE, tt, 1 + climb)
+				var b: Dictionary = m.get_step_fuel_breakdown(from, to)
+				if int(b["base"]) + int(b["chassis"]) + int(b["climb"]) != int(b["total"]) or int(b["total"]) != m.get_step_fuel_cost(from, to):
+					bad += 1
+	_check(bad == 0, "step breakdown terms sum to total == get_step_fuel_cost for every chassis/terrain/climb (%d bad)" % bad)
+	var g := _unit("goliath", MechData.Faction.PLAYER, Vector2i.ZERO)
+	var gb: Dictionary = g.get_step_fuel_breakdown(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.FOREST, 2), GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3))
+	_check(gb["base"] == 5 and gb["chassis"] == 1 and gb["chassis_label"] == "HEAVY" and gb["climb"] == 1 and gb["total"] == 7 and gb["terrain"] == "MTN", "goliath into a mountain one level up is MTN 5 + HEAVY 1 + CLIMB 1 = 7 (got %s)" % gb)
+	var d := _unit("donner", MechData.Faction.PLAYER, Vector2i.ZERO)
+	var db: Dictionary = d.get_step_fuel_breakdown(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 1), GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3))
+	_check(db["chassis_label"] == "CLIMB GEAR" and db["chassis"] == -2 and db["climb"] == 1, "donner mountain gear shows CLIMB GEAR -2 and a discounted climb (got %s)" % db)
+
+func test_strike_plan_goliath_mountain() -> void:
+	# Iron Bridge: (7,7) is trench at L2, (8,7) a mountain at L3.
+	var gm := _grid(0)
+	var titan := _unit("goliath", MechData.Faction.PLAYER, Vector2i(7, 7), "t")
+	titan.current_fuel = 4
+	var foe := _unit("donner", MechData.Faction.AI, Vector2i(8, 7), "f")
+	var plan: StrikePlan = gm.compute_strike_plan(titan, foe.grid_pos, {foe.grid_pos: foe})
+	_check(plan.severity == StrikePlan.IN_STRIKING_DISTANCE, "adjacent titan with 4F is in striking distance (got %d)" % plan.severity)
+	_check(plan.needs == 7 and plan.have == 4 and plan.path_fuel == 0, "strike needs 7, have 4, no path fuel (got %d/%d/%d)" % [plan.needs, plan.have, plan.path_fuel])
+	_check(plan.advice == StrikePlan.ADV_WAIT_HERE, "advice is WAIT/REFUEL HERE (got %d)" % plan.advice)
+	_check(plan.breakdown_text() == "MTN 5 + HEAVY 1 + CLIMB 1", "breakdown text (got '%s')" % plan.breakdown_text())
+	gm.free()
+
+func test_strike_plan_matches_reachable() -> void:
+	var mismatches: Array = []
+	for mi in GlobalState.maps.size():
+		var gm := _grid(mi)
+		for c in ["vanguard", "goliath"]:
+			for start: Vector2i in gm.tiles.keys():
+				if start.x % 2 != 0 or start.y % 2 != 0:
+					continue
+				for target: Vector2i in gm.tiles.keys():
+					var dist: int = absi(target.x - start.x) + absi(target.y - start.y)
+					if dist == 0 or dist > 4:
+						continue
+					var atk := _unit(c, MechData.Faction.PLAYER, start, "a")
+					var foe := _unit("vanguard", MechData.Faction.AI, target, "f")
+					var occ := {target: foe}
+					var reach: Dictionary = gm.compute_reachable_tiles(atk, occ)
+					var plan: StrikePlan = gm.compute_strike_plan(atk, target, occ)
+					if reach.has(target):
+						if plan.severity != StrikePlan.REACHABLE or plan.needs != int(reach[target]["fuel_spent"]):
+							mismatches.append([mi, c, start, target])
+					elif plan.severity == StrikePlan.REACHABLE:
+						mismatches.append([mi, c, start, target, "plan says reachable"])
+		gm.free()
+	_check(mismatches.is_empty(), "strike plan agrees with reachable_info (%d mismatches, first %s)" % [mismatches.size(), mismatches.slice(0, 1)])
+
+func test_strike_plan_beyond_range() -> void:
+	var gm := _grid(0)
+	var titan := _unit("goliath", MechData.Faction.PLAYER, Vector2i(0, 5), "t")
+	var foe := _unit("donner", MechData.Faction.AI, Vector2i(8, 7), "f")
+	var plan: StrikePlan = gm.compute_strike_plan(titan, foe.grid_pos, {foe.grid_pos: foe})
+	_check(plan.severity == StrikePlan.BEYOND_RANGE, "a distant enemy is beyond range (got %d)" % plan.severity)
+	_check(plan.needs > titan.max_fuel, "beyond-range needs exceeds the tank (got %d)" % plan.needs)
+	gm.free()
+
+func test_strike_plan_skips_occupied_launch_tiles() -> void:
+	var gm := _grid(0)
+	var atk := _unit("vanguard", MechData.Faction.PLAYER, Vector2i(3, 3), "a")
+	var foe := _unit("vanguard", MechData.Faction.AI, Vector2i(0, 0), "f")
+	var occ := {
+		Vector2i(0, 0): foe,
+		Vector2i(1, 0): _unit("falke", MechData.Faction.PLAYER, Vector2i(1, 0), "b"),
+		Vector2i(0, 1): _unit("falke", MechData.Faction.PLAYER, Vector2i(0, 1), "c"),
+	}
+	var plan: StrikePlan = gm.compute_strike_plan(atk, foe.grid_pos, occ)
+	_check(plan.severity == StrikePlan.NO_APPROACH, "an enemy whose launch tiles are all friendly-held has no approach (got %d)" % plan.severity)
+	gm.free()
+
+func test_strike_plan_advice_is_true() -> void:
+	var lies: Array = []
+	var seen := {}
+	for mi in GlobalState.maps.size():
+		var gm := _grid(mi)
+		for c in ["vanguard", "goliath"]:
+			for start: Vector2i in gm.tiles.keys():
+				for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(2, 0), Vector2i(1, 1), Vector2i(0, 2)]:
+					var target: Vector2i = start + d
+					if not gm.is_valid_coords(target):
+						continue
+					var proto := _unit(c, MechData.Faction.PLAYER, start, "a")
+					for fuel in range(0, proto.max_fuel + 1, 2):
+						var atk := _unit(c, MechData.Faction.PLAYER, start, "a")
+						atk.current_fuel = fuel
+						var foe := _unit("vanguard", MechData.Faction.AI, target, "f")
+						var occ := {target: foe}
+						var plan: StrikePlan = gm.compute_strike_plan(atk, target, occ)
+						if plan.severity != StrikePlan.IN_STRIKING_DISTANCE:
+							continue
+						seen[plan.advice] = true
+						var tgt_tile := gm.get_tile(target)
+						var mx := atk.max_fuel
+						match plan.advice:
+							StrikePlan.ADV_WAIT_HERE:
+								var nxt := mini(mx, mini(mx, fuel + MechData.WAIT_FUEL) + _refuel_at(atk, gm, start))
+								if nxt < atk.get_step_fuel_cost(gm.get_tile(start), tgt_tile):
+									lies.append([mi, c, start, target, fuel, "WAIT_HERE"])
+							StrikePlan.ADV_MOVE_TO:
+								var reach: Dictionary = gm.compute_reachable_tiles(atk, occ)
+								if not reach.has(plan.move_to) or absi(plan.move_to.x - target.x) + absi(plan.move_to.y - target.y) != 1:
+									lies.append([mi, c, start, target, fuel, "MOVE_TO not a reachable launch tile"])
+								else:
+									var left: int = fuel - int(reach[plan.move_to]["fuel_spent"])
+									var nxt2 := mini(mx, left + _refuel_at(atk, gm, plan.move_to))
+									if nxt2 < atk.get_step_fuel_cost(gm.get_tile(plan.move_to), tgt_tile):
+										lies.append([mi, c, start, target, fuel, "MOVE_TO"])
+							StrikePlan.ADV_WAIT:
+								var nxt3 := mini(mx, mini(mx, fuel + MechData.WAIT_FUEL) + _refuel_at(atk, gm, start))
+								if nxt3 < plan.needs:
+									lies.append([mi, c, start, target, fuel, "WAIT"])
+		gm.free()
+	_check(lies.is_empty(), "every strike advice holds under the WAIT/upkeep rules (%d false, first %s)" % [lies.size(), lies.slice(0, 1)])
+	_check(seen.has(StrikePlan.ADV_WAIT_HERE) and seen.has(StrikePlan.ADV_MOVE_TO), "the advice sweep exercises WAIT_HERE and MOVE_TO (saw %s)" % [seen.keys()])

@@ -6,6 +6,13 @@ extends RefCounted
 ## armor rating (DEF), firepower (ATK), speed (SPD), evasion (EVA), crit chance (CRIT),
 ## fuel capacity & fuel usage profile, and the 3-ability TECH Loadout.
 
+## WAIT / REFUEL order and City Depot resupply (applied by Battlefield; read by the HUD advice and the
+## Rules of Engagement page so the numbers never drift).
+const WAIT_FUEL: int = 5
+const WAIT_ENERGY: int = 4
+const CITY_FUEL: int = 4
+const CITY_ENERGY: int = 3
+
 enum Faction {
 	PLAYER = 0, # 8th Iron Coalition (Olive / Amber)
 	AI = 1      # Kriegs-Syndikat Red (Crimson / Gunmetal)
@@ -101,25 +108,38 @@ func _init(
 
 ## Calculates exact fuel needed for this mech to step from `from_tile` to `to_tile`.
 func get_step_fuel_cost(from_tile: GridTileData, to_tile: GridTileData) -> int:
-	var cost: int = to_tile.get_base_fuel_cost()
-	
+	return int(get_step_fuel_breakdown(from_tile, to_tile)["total"])
+
+## The step cost split into the terms the HUD and Rules page show. base + chassis + climb == total.
+## chassis_label: "HEAVY" / "LIGHT" (fuel_efficiency_mod off-road), "AMPHIB" (river with
+## amphibious_gear), "CLIMB GEAR" (mountain with mountain_gear) or "" when no adjustment applies.
+func get_step_fuel_breakdown(from_tile: GridTileData, to_tile: GridTileData) -> Dictionary:
+	var base: int = to_tile.get_base_fuel_cost()
+	var chassis: int = 0
+	var label: String = ""
 	# Chassis-specific terrain adaptations
 	if to_tile.terrain_type == GridTileData.TerrainType.RIVER and amphibious_gear:
-		cost -= 2
+		chassis = -2
+		label = "AMPHIB"
 	elif to_tile.terrain_type == GridTileData.TerrainType.MOUNTAIN and mountain_gear:
-		cost -= 2
-	elif to_tile.terrain_type != GridTileData.TerrainType.ROAD:
-		cost += fuel_efficiency_mod
-	
-	# Elevation climb penalty (+1 fuel per 100m of upward climb)
+		chassis = -2
+		label = "CLIMB GEAR"
+	elif to_tile.terrain_type != GridTileData.TerrainType.ROAD and fuel_efficiency_mod != 0:
+		chassis = fuel_efficiency_mod
+		label = "HEAVY" if fuel_efficiency_mod > 0 else "LIGHT"
+
+	# Elevation climb penalty (+1 fuel per 100m of upward climb); mountain gear absorbs one level
 	var climb_diff: int = maxi(0, to_tile.elevation - from_tile.elevation)
-	if climb_diff > 0:
-		if mountain_gear:
-			cost += maxi(0, climb_diff - 1)
-		else:
-			cost += climb_diff
-			
-	return maxi(1, cost)
+	var climb: int = maxi(0, climb_diff - 1) if mountain_gear else climb_diff
+
+	var total: int = maxi(1, base + chassis + climb)
+	# The 1-fuel floor is credited to the chassis term so the parts still add up to the total.
+	chassis += total - (base + chassis + climb)
+	return {
+		"base": base, "terrain": to_tile.get_terrain_short_code(),
+		"chassis": chassis, "chassis_label": label,
+		"climb": climb, "total": total,
+	}
 
 func is_alive() -> bool:
 	return current_armor > 0
