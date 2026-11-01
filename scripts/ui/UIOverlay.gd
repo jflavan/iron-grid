@@ -3,6 +3,9 @@ extends CanvasLayer
 
 ## Tactical UI Overlay (HUD, Telemetry Readouts, Terrain Inspector, Combat Forecast,
 ## Skirmish Showdown Modal, Field Manual, and Operation Debrief Screen).
+## Drawn in the battle screen's CRT menu style (CrtUI) at an integer pixel scale. Commands are
+## menu rows: click them, or use their keys (handled by Battlefield); the debrief also takes
+## Up/Down + Enter.
 
 signal action_wait_refuel_requested()
 signal action_end_turn_requested()
@@ -10,6 +13,36 @@ signal action_center_camera_requested()
 signal action_return_menu_requested()
 signal action_restart_mission_requested()
 signal skirmish_modal_closed(result: SkirmishEngine.SkirmishResult)
+
+const LEFT_W := 152       # fits the widest battle sprite (136px) inside its portrait frame
+const RIGHT_W := 164
+const LOG_H := 64
+const TOP_H := 30
+
+const MANUAL_LINES := [
+	"1. TURN FLOW & FUEL MOBILITY:",
+	"   - Each Turn follows: PLAYER COMMAND PHASE -> SKIRMISH RESOLUTION PHASE -> SYNDICATE AI PHASE.",
+	"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
+	"   - [WAIT / REFUEL] entrenches (+15% DEF) & restores +5 Fuel. Starting a turn on a City adds +4 Fuel & +12 Armor.",
+	"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
+	"",
+	"2. TERRAIN CHART (FUEL COST / ATTACK MOD / DEFENSE MOD):",
+	"   - TRANSIT ROAD (ROD):   1 Fuel /  +5% ATK /   0% DEF  (Fastest artery for Heavy Walkers)",
+	"   - OPEN PLAIN (PLN):     2 Fuel /   0% ATK /  +5% DEF  (Standard maneuvering ground)",
+	"   - FORTIFIED CITY (CTY): 2 Fuel / +10% ATK / +25% DEF  (Repairs +12 Armor & +4 Fuel each turn!)",
+	"   - TRENCH TIMBER (TRN):  3 Fuel /  +5% ATK / +15% DEF  (Prepared defensive cover)",
+	"   - RIVER FORD (RIV):     4 Fuel / -15% ATK / -15% DEF  (Bogged down & exposed! Avoid stopping here!)",
+	"   - MOUNTAIN CRAG (MTN):  5 Fuel / +15% ATK / +30% DEF  (Commanding rock bastion)",
+	"",
+	"3. ELEVATION & HIGH GROUND ADVANTAGE:",
+	"   - Attacking from higher elevation down onto an enemy grants +12% Firepower, +10% Armor, and +1 Card Rank per level!",
+	"   - Attacking uphill suffers -10% Firepower and -1 Card Rank per elevation level.",
+	"",
+	"4. AUTOMATED SKIRMISH RESOLVER (TRIPLE TRIAD + STATS):",
+	"   - Moving onto an enemy-occupied node triggers a Collision & launches the 3x3 Equipment Deck Clash.",
+	"   - Cards compare directional ranks (N, E, S, W) against adjacent cards to flip/capture them!",
+	"   - Matching sums on 2+ adjacent edges triggers a TACTICAL PLUS combo capture!",
+]
 
 var root_ctrl: Control
 var skirmish_modal: BattleScreen
@@ -31,104 +64,28 @@ var show_game_over_modal: bool = false
 var _banner_timer: float = 0.0
 var _banner_text: String = ""
 var _anim_time: float = 0.0
-
-var _btn_wait: Button
-var _btn_end_turn: Button
-var _btn_manual: Button
-var _btn_center: Button
-var _btn_menu: Button
-var _btn_retry: Button
-var _btn_debrief_menu: Button
+var _scale: int = 2
+var _hot := CrtHotspots.new()
+var _debrief_row: int = 0
 
 func _ready() -> void:
 	layer = 10
 	root_ctrl = Control.new()
 	root_ctrl.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root_ctrl.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(root_ctrl)
 	root_ctrl.draw.connect(_on_root_draw)
-
-	_create_hud_buttons()
 
 	skirmish_modal = BattleScreen.new()
 	skirmish_modal.resolution_confirmed.connect(func(res): skirmish_modal_closed.emit(res))
 	add_child(skirmish_modal)
 
-func _create_hud_buttons() -> void:
-	_btn_wait = _make_button("WAIT / REFUEL (+5F) [R]", Vector2(210, 36), func():
-		SoundManager.play("ui_confirm")
-		action_wait_refuel_requested.emit()
-	)
-	_btn_end_turn = _make_button("END PLAYER TURN [E]", Vector2(190, 36), func():
-		SoundManager.play("phase_shift")
-		action_end_turn_requested.emit()
-	)
-	_btn_manual = _make_button("FIELD MANUAL [H]", Vector2(150, 34), func():
-		SoundManager.play("ui_click")
-		show_manual_modal = not show_manual_modal
-		root_ctrl.queue_redraw()
-	)
-	_btn_center = _make_button("RESET CAM [C]", Vector2(130, 34), func():
-		SoundManager.play("ui_click")
-		action_center_camera_requested.emit()
-	)
-	_btn_menu = _make_button("MAIN MENU", Vector2(120, 34), func():
-		SoundManager.play("ui_cancel")
-		action_return_menu_requested.emit()
-	)
-
-	_btn_retry = _make_button("REDEPLOY OPERATION", Vector2(210, 44), func():
-		SoundManager.play("ui_confirm")
-		show_game_over_modal = false
-		action_restart_mission_requested.emit()
-	)
-	_btn_retry.visible = false
-
-	_btn_debrief_menu = _make_button("RETURN TO COMMAND HQ", Vector2(220, 44), func():
-		SoundManager.play("ui_click")
-		action_return_menu_requested.emit()
-	)
-	_btn_debrief_menu.visible = false
-
-func _make_button(label: String, min_sz: Vector2, callback: Callable) -> Button:
-	var b := Button.new()
-	b.text = label
-	b.custom_minimum_size = min_sz
-	b.focus_mode = Control.FOCUS_NONE
-	b.pressed.connect(callback)
-	root_ctrl.add_child(b)
-	return b
-
 func _process(delta: float) -> void:
 	_anim_time += delta
 	if _banner_timer > 0.0:
 		_banner_timer = maxf(0.0, _banner_timer - delta)
-	_layout_hud_buttons()
 	root_ctrl.queue_redraw()
-
-func _layout_hud_buttons() -> void:
-	var vp: Vector2 = get_viewport().get_visible_rect().size
-	# Top-right utility buttons
-	_btn_manual.position = Vector2(vp.x - 426, 12)
-	_btn_center.position = Vector2(vp.x - 268, 12)
-	_btn_menu.position = Vector2(vp.x - 130, 12)
-
-	# Bottom command action buttons
-	var is_player_turn: bool = (GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE) and not skirmish_modal.visible and not show_game_over_modal
-	_btn_wait.visible = is_player_turn and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and not selected_mech.has_moved
-	_btn_end_turn.visible = is_player_turn
-
-	_btn_wait.position = Vector2(20, vp.y - 148)
-	_btn_end_turn.position = Vector2(240, vp.y - 148)
-
-	if show_game_over_modal:
-		_btn_retry.visible = true
-		_btn_debrief_menu.visible = true
-		_btn_retry.position = Vector2(vp.x * 0.5 - 225, vp.y * 0.5 + 85)
-		_btn_debrief_menu.position = Vector2(vp.x * 0.5 + 10, vp.y * 0.5 + 85)
-	else:
-		_btn_retry.visible = false
-		_btn_debrief_menu.visible = false
 
 func trigger_phase_banner(text: String) -> void:
 	_banner_text = text
@@ -140,320 +97,358 @@ func show_skirmish_resolution(result: SkirmishEngine.SkirmishResult) -> void:
 
 func trigger_game_over() -> void:
 	show_game_over_modal = true
+	_debrief_row = 0
 	root_ctrl.queue_redraw()
 
+func _is_player_command_time() -> bool:
+	return GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not skirmish_modal.visible and not show_game_over_modal
+
+func _can_wait() -> bool:
+	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and not selected_mech.has_moved
+
+# ---------------------------------------------------------------- input
+func _input(event: InputEvent) -> void:
+	if skirmish_modal.visible:
+		return
+	if event is InputEventMouseMotion:
+		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
+		_hot.hovered = id
+		if id.begins_with("debrief:"):
+			_debrief_row = int(id.substr(8))
+		root_ctrl.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if id != "" else Control.CURSOR_ARROW
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
+		if id != "":
+			_activate(id)
+			get_viewport().set_input_as_handled()
+	elif show_game_over_modal and event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT:
+				_debrief_row = 1 - _debrief_row
+				SoundManager.play("ui_click")
+			KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+				_activate("debrief:%d" % _debrief_row)
+		get_viewport().set_input_as_handled()
+
+func _activate(id: String) -> void:
+	match id:
+		"manual":
+			SoundManager.play("ui_click")
+			show_manual_modal = not show_manual_modal
+		"cam":
+			SoundManager.play("ui_click")
+			action_center_camera_requested.emit()
+		"menu":
+			SoundManager.play("ui_cancel")
+			action_return_menu_requested.emit()
+		"wait":
+			SoundManager.play("ui_confirm")
+			action_wait_refuel_requested.emit()
+		"end_turn":
+			SoundManager.play("phase_shift")
+			action_end_turn_requested.emit()
+		"debrief:0":
+			SoundManager.play("ui_confirm")
+			show_game_over_modal = false
+			action_restart_mission_requested.emit()
+		"debrief:1":
+			SoundManager.play("ui_click")
+			action_return_menu_requested.emit()
+	root_ctrl.queue_redraw()
+
+# ---------------------------------------------------------------- drawing helpers
+func _t(s: String, pos: Vector2, col: Color) -> void:
+	CrtUI.text(root_ctrl, s, pos, col)
+
+func _tr(s: String, right_x: float, y: float, col: Color) -> void:
+	CrtUI.text_right(root_ctrl, s, right_x, y, col)
+
+## A clickable menu row: cursor on hover (or when forced), hover colour, hotspot.
+func _row(id: String, label: String, pos: Vector2, width: float, key_hint: String = "", force_cursor: bool = false) -> void:
+	var hot := _hot.hovered == id
+	if hot or force_cursor:
+		CrtUI.cursor(root_ctrl, pos)
+	_t(label, pos + Vector2(10, 0), CrtUI.C_CURSOR if hot else CrtUI.C_NAME)
+	if key_hint != "":
+		_tr(key_hint, pos.x + width, pos.y, CrtUI.C_LABEL_DIM)
+	_hot.add(id, Rect2(pos.x - 2, pos.y - 3, width + 4, CrtUI.ROW + 2))
+
+func _phase_color() -> Color:
+	match GlobalState.current_phase:
+		GlobalState.TurnPhase.PLAYER_PHASE:
+			return CrtUI.C_LABEL
+		GlobalState.TurnPhase.RESOLUTION_PHASE:
+			return CrtUI.C_NAME
+	return CrtUI.C_HOSTILE
+
+# ---------------------------------------------------------------- drawing
 func _on_root_draw() -> void:
-	var font: Font = ThemeDB.fallback_font
 	var vp: Vector2 = get_viewport().get_visible_rect().size
+	_scale = CrtUI.pixel_scale(vp)
+	var v := CrtUI.virtual_size(vp, _scale)
+	CrtUI.begin(root_ctrl, _scale)
+	_hot.clear()
 
-	# 1. Top Command Telemetry Bar
-	var top_bar := Rect2(0, 0, vp.x, 58)
-	root_ctrl.draw_rect(top_bar, Color(0.07, 0.09, 0.07, 0.94), true)
-	root_ctrl.draw_line(Vector2(0, 58), Vector2(vp.x, 58), Color(0.76, 0.58, 0.22, 0.9), 2.0)
+	_draw_top_bar(v)
 
+	var display_mech: MechData = selected_mech if selected_mech != null else hovered_mech
+	if display_mech != null:
+		_draw_unit_panel(Rect2(6, TOP_H + 4, LEFT_W, 0), display_mech)
+	else:
+		var r := Rect2(6, TOP_H + 4, LEFT_W, 58)
+		CrtUI.panel(root_ctrl, r)
+		_t("NO WALKER SELECTED", r.position + Vector2(6, 6), CrtUI.C_NAME)
+		CrtUI.paragraph(root_ctrl, "Click a friendly walker to plot fuel range and engage.", r.position + Vector2(6, 20), r.size.x - 12, CrtUI.C_NUM)
+
+	if hovered_tile != null:
+		_draw_terrain_panel(Rect2(v.x - 6 - RIGHT_W, TOP_H + 4, RIGHT_W, 0))
+
+	var log_r := Rect2(6, v.y - 6 - LOG_H, v.x - 12, LOG_H)
+	_draw_commands(Rect2(v.x - 6 - RIGHT_W, log_r.position.y - 4, RIGHT_W, 0))
+	_draw_log(log_r)
+
+	if _banner_timer > 0.0:
+		var a := clampf(_banner_timer * 1.5, 0.0, 1.0)
+		var w := maxf(260.0, PixelFont.text_width(_banner_text) + 24.0)
+		var br := Rect2(roundf((v.x - w) / 2.0), TOP_H + 4, w, 20)
+		CrtUI.panel(root_ctrl, br, CrtUI.C_NAME, a)
+		CrtUI.text_centered(root_ctrl, _banner_text, v.x / 2.0, br.position.y + 6, Color(CrtUI.C_NAME, a))
+
+	if show_manual_modal:
+		_draw_manual_modal(v)
+	if show_game_over_modal:
+		_draw_game_over_modal(v)
+
+func _draw_top_bar(v: Vector2) -> void:
+	CrtUI.panel(root_ctrl, Rect2(0, 0, v.x, TOP_H))
 	var map_title: String = map_def.map_name if map_def != null else "OPERATION: IRON GRID"
 	var strat_badge: String = map_def.get_strategy_name() if map_def != null else "TACTICAL"
 	var max_turns: int = map_def.turn_limit if map_def != null else 10
+	var title := "%s  [%s]" % [map_title, strat_badge]
+	var stats := "TURN %02d/%02d  COALITION %d  SYNDIKAT %d  OBJ %d/%d" % [
+		GlobalState.turn_number, max_turns, player_unit_count, ai_unit_count, player_obj_count, total_obj_count
+	]
+	_t(title, Vector2(8, 6), CrtUI.C_NAME)
+	_t(stats, Vector2(8, 17), CrtUI.C_NUM)
 
-	root_ctrl.draw_string(font, Vector2(18, 25), "%s  [%s]" % [map_title, strat_badge], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.95, 0.80, 0.32))
-	root_ctrl.draw_string(
-		font,
-		Vector2(18, 46),
-		"TURN %02d / %02d   |   COALITION MECHS: %d   |   SYNDICATE MECHS: %d   |   OBJECTIVES HELD: %d / %d" % [
-			GlobalState.turn_number, max_turns, player_unit_count, ai_unit_count, player_obj_count, total_obj_count
-		],
-		HORIZONTAL_ALIGNMENT_LEFT,
-		-1,
-		12,
-		Color(0.80, 0.86, 0.76)
-	)
+	# Phase box: centred, but never over the title/stats text.
+	var phase := GlobalState.get_phase_name()
+	var pw := maxf(150.0, PixelFont.text_width(phase) + 20.0)
+	var left_end := 8.0 + PixelFont.text_width(title if title.length() > stats.length() else stats) + 12.0
+	var pill := Rect2(roundf(maxf(v.x / 2.0 - pw / 2.0, left_end)), 5, pw, 20)
+	var pc := _phase_color()
+	CrtUI.panel(root_ctrl, pill, pc)
+	CrtUI.text_centered(root_ctrl, phase, pill.position.x + pw / 2.0, pill.position.y + 7, pc)
 
-	# Phase Status Pill in Center Top
-	var phase_col := Color(0.42, 0.92, 0.50) if GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE else Color(0.96, 0.36, 0.28)
-	if GlobalState.current_phase == GlobalState.TurnPhase.RESOLUTION_PHASE:
-		phase_col = Color(0.98, 0.82, 0.28)
-	var phase_box := Rect2(vp.x * 0.5 - 140, 12, 280, 34)
-	root_ctrl.draw_rect(phase_box, Color(0.11, 0.13, 0.11), true)
-	root_ctrl.draw_rect(phase_box, phase_col, false, 1.8)
-	root_ctrl.draw_string(font, phase_box.position + Vector2(10, 23), GlobalState.get_phase_name(), HORIZONTAL_ALIGNMENT_CENTER, 260, 13, phase_col)
+	# Utility commands, right-aligned
+	var items := [["menu", "MENU"], ["cam", "CAM [C]"], ["manual", "MANUAL [H]"]]
+	var x := v.x - 8
+	for it in items:
+		var w := PixelFont.text_width(it[1]) + 10
+		x -= w
+		_row(it[0], it[1], Vector2(x, 11), w)
+		x -= 14
 
-	# 2. Left Panel — Active Mech Telemetry & Deck HUD
-	var display_mech: MechData = selected_mech if selected_mech != null else hovered_mech
-	if display_mech != null:
-		_draw_left_unit_panel(font, Rect2(12, 68, 286, 472), display_mech)
-	else:
-		var empty_box := Rect2(12, 68, 286, 96)
-		root_ctrl.draw_rect(empty_box, Color(0.07, 0.09, 0.07, 0.88), true)
-		root_ctrl.draw_rect(empty_box, Color(0.35, 0.40, 0.32, 0.8), false, 1.5)
-		root_ctrl.draw_string(font, Vector2(26, 98), "NO WALKER SELECTED", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.85, 0.78, 0.42))
-		root_ctrl.draw_string(font, Vector2(26, 121), "Left-Click any friendly walker to plot", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.72, 0.76, 0.68))
-		root_ctrl.draw_string(font, Vector2(26, 140), "fuel range & engage Syndicate forces.", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.72, 0.76, 0.68))
+func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
+	var is_player: bool = m.faction == MechData.Faction.PLAYER
+	var accent := CrtUI.C_LABEL if is_player else CrtUI.C_HOSTILE
+	var cell := MechSpriteBank.cell_size(m.chassis_id)
+	var deck_h := 12 + m.deck.size() * 22
+	var gear := _gear_note(m)
+	var gear_lines := CrtUI.wrap_lines("MOBILITY: " + gear, rect.size.x - 12).size()
+	rect.size.y = 6 + 40 + cell.y + 8 + 4 + 12 + 46 + gear_lines * CrtUI.LINE + 4 + deck_h + 2
+	CrtUI.panel(root_ctrl, rect, accent)
 
-	# 3. Right Panel — Terrain & Elevation Inspector + Combat Forecast
-	if hovered_tile != null:
-		_draw_right_terrain_panel(font, Rect2(vp.x - 308, 68, 296, 435))
+	var x := rect.position.x + 6
+	var w := rect.size.x - 12
+	var y := rect.position.y + 6
+	_t("8TH IRON DIVISION" if is_player else "KRIEGS-SYNDIKAT", Vector2(x, y), accent)
+	y += 10
+	_t(CrtUI.fit(m.callsign, w), Vector2(x, y), CrtUI.C_NAME)
+	y += 10
+	_t(CrtUI.fit(m.unit_name, w), Vector2(x, y), CrtUI.C_LABEL_DIM)
+	y += 10
+	_t(CrtUI.fit(m.chassis_class, w), Vector2(x, y), CrtUI.C_LABEL_DIM)
+	y += 10
 
-	# 4. Bottom Comms Log & Controls Bar
-	var bot_rect := Rect2(12, vp.y - 102, vp.x - 24, 88)
-	root_ctrl.draw_rect(bot_rect, Color(0.06, 0.08, 0.06, 0.90), true)
-	root_ctrl.draw_rect(bot_rect, Color(0.38, 0.44, 0.34, 0.85), false, 1.4)
-	root_ctrl.draw_string(font, bot_rect.position + Vector2(14, 18), "TACTICAL COMMS LOG // (PAN: WASD / Arrows / Right-Drag | ZOOM: Wheel | WAIT/REFUEL: R | END TURN: E)", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.85, 0.72, 0.32))
+	# Portrait: the battle sprite at 1:1, in its own frame, facing the way it fights.
+	var port := Rect2(x, y, w, cell.y + 8)
+	CrtUI.frame(root_ctrl, port)
+	CrtUI.mech(root_ctrl, m.chassis_id, int(m.faction), Rect2(x, y + 4, w, cell.y), not is_player, _anim_time * 1000.0, _scale)
+	y += port.size.y + 4
+	var status_txt := "ENTRENCHED +15% DEF" if m.is_entrenched else ("ORDER COMPLETE" if m.has_moved else "SYSTEMS READY")
+	_t(status_txt, Vector2(x, y), CrtUI.C_LABEL if not m.has_moved else CrtUI.C_LABEL_DIM)
+	y += 12
 
-	var log_count: int = GlobalState.combat_log.size()
-	var start_idx: int = maxi(0, log_count - 3)
-	for i in range(start_idx, log_count):
-		var line_y: float = bot_rect.position.y + 38 + (i - start_idx) * 18
-		root_ctrl.draw_string(font, Vector2(bot_rect.position.x + 16, line_y), GlobalState.combat_log[i], HORIZONTAL_ALIGNMENT_LEFT, int(bot_rect.size.x - 32), 12, Color(0.76, 0.86, 0.74))
+	_t("HULL", Vector2(x, y), CrtUI.C_LABEL)
+	_tr("%d/%d R%d" % [m.current_armor, m.max_armor, m.armor_rating], x + w, y, CrtUI.C_NUM)
+	CrtUI.gauge(root_ctrl, Rect2(x, y + 10, w, 3), m.get_armor_ratio(), CrtUI.C_HULL)
+	y += 16
+	_t("FUEL", Vector2(x, y), CrtUI.C_LABEL)
+	_tr("%d/%d +%d" % [m.current_fuel, m.max_fuel, m.passive_refuel], x + w, y, CrtUI.C_NUM)
+	CrtUI.gauge(root_ctrl, Rect2(x, y + 10, w, 3), m.get_fuel_ratio(), CrtUI.C_FUEL)
+	y += 16
+	_t("FIRE %d" % m.firepower, Vector2(x, y), CrtUI.C_LABEL)
+	_tr("POS %d,%d" % [m.grid_pos.x, m.grid_pos.y], x + w, y, CrtUI.C_NUM)
+	y += 14
+	y = CrtUI.paragraph(root_ctrl, "MOBILITY: " + gear, Vector2(x, y), w, CrtUI.C_LABEL_DIM) + 4
 
-	# 5. Phase Transition Banner (positioned below top bar so it never obscures the battlefield)
-	if _banner_timer > 0.0:
-		var b_alpha: float = clampf(_banner_timer * 1.5, 0.0, 0.95)
-		var b_rect := Rect2(vp.x * 0.5 - 260, 68, 520, 44)
-		root_ctrl.draw_rect(b_rect, Color(0.08, 0.10, 0.08, b_alpha), true)
-		root_ctrl.draw_rect(b_rect, Color(0.95, 0.78, 0.28, b_alpha), false, 2.0)
-		root_ctrl.draw_string(font, b_rect.position + Vector2(16, 29), _banner_text, HORIZONTAL_ALIGNMENT_CENTER, 488, 17, Color(0.98, 0.86, 0.35, b_alpha))
+	_t("DECK", Vector2(x, y), CrtUI.C_LABEL)
+	_tr("DMG/SHD", x + w, y, CrtUI.C_LABEL_DIM)
+	y += 12
+	for c: EquipmentCard in m.deck:
+		_t(CrtUI.fit(c.card_name, w), Vector2(x, y), CrtUI.C_NAME)
+		_t("%s %s %s %s" % [EquipmentCard.format_rank(c.top), EquipmentCard.format_rank(c.right), EquipmentCard.format_rank(c.bottom), EquipmentCard.format_rank(c.left)], Vector2(x, y + 10), CrtUI.C_LABEL)
+		_tr("%d/%d" % [c.damage_rating, c.shield_rating], x + w, y + 10, CrtUI.C_NUM)
+		y += 22
 
-	# 6. Optional Field Manual Modal
-	if show_manual_modal:
-		_draw_manual_modal(font, vp)
-
-	# 7. Victory / Defeat Modal
-	if show_game_over_modal:
-		_draw_game_over_modal(font, vp)
-
-func _draw_left_unit_panel(font: Font, rect: Rect2, m: MechData) -> void:
-	var is_player: bool = (m.faction == MechData.Faction.PLAYER)
-	var accent := Color(0.45, 0.88, 0.48) if is_player else Color(0.95, 0.35, 0.28)
-	root_ctrl.draw_rect(rect, Color(0.07, 0.09, 0.07, 0.92), true)
-	root_ctrl.draw_rect(rect, accent, false, 1.8)
-
-	var x: float = rect.position.x + 14
-	var y: float = rect.position.y + 22
-
-	var fac_str := "8TH IRON DIVISION (PLAYER)" if is_player else "KRIEGS-SYNDIKAT (HOSTILE)"
-	root_ctrl.draw_string(font, Vector2(x, y), fac_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, accent)
-	y += 20
-	root_ctrl.draw_string(font, Vector2(x, y), m.callsign, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.96, 0.94, 0.86))
-	y += 17
-	root_ctrl.draw_string(font, Vector2(x, y), "%s // %s" % [m.unit_name, m.chassis_class], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.74, 0.78, 0.70))
-
-	# Schematic Portrait Box
-	var port := Rect2(x, y + 8, rect.size.x - 28, 96)
-	root_ctrl.draw_rect(port, Color(0.04, 0.05, 0.04), true)
-	root_ctrl.draw_rect(port, Color(0.24, 0.28, 0.22), false, 1.0)
-	MechUnit.draw_mech_silhouette(
-		root_ctrl,
-		port.position + Vector2(port.size.x * 0.5, port.size.y * 0.80),
-		m.chassis_id,
-		m.faction,
-		1.45,
-		_anim_time
-	)
-	var status_txt := "ENTRENCHED (+15% DEF)" if m.is_entrenched else ("ORDER COMPLETE" if m.has_moved else "SYSTEMS READY")
-	var status_col := Color(0.45, 0.95, 0.60) if not m.has_moved else Color(0.75, 0.75, 0.68)
-	root_ctrl.draw_string(font, port.position + Vector2(8, 16), status_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, status_col)
-
-	y += 118
-	var bar_w: float = rect.size.x - 28
-
-	# Hull Armor Bar
-	root_ctrl.draw_string(font, Vector2(x, y), "ARMOR INTEGRITY: %d / %d  (RATING: %d)" % [m.current_armor, m.max_armor, m.armor_rating], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.92, 0.90, 0.82))
-	y += 6
-	root_ctrl.draw_rect(Rect2(x, y, bar_w, 11), Color(0.16, 0.16, 0.16), true)
-	root_ctrl.draw_rect(Rect2(x, y, bar_w * m.get_armor_ratio(), 11), Color(0.38, 0.88, 0.45), true)
-
-	y += 24
-	# Fuel Gauge
-	root_ctrl.draw_string(font, Vector2(x, y), "DIESEL FUEL: %d / %d  (+%d/TURN)" % [m.current_fuel, m.max_fuel, m.passive_refuel], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.72, 0.90, 0.98))
-	y += 6
-	root_ctrl.draw_rect(Rect2(x, y, bar_w, 11), Color(0.16, 0.16, 0.16), true)
-	root_ctrl.draw_rect(Rect2(x, y, bar_w * m.get_fuel_ratio(), 11), Color(0.30, 0.78, 0.94), true)
-
-	y += 24
-	root_ctrl.draw_string(font, Vector2(x, y), "PRIMARY FIREPOWER: %d   |   GRID POS: (%d, %d)" % [m.firepower, m.grid_pos.x, m.grid_pos.y], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.96, 0.80, 0.34))
-
-	y += 18
-	var gear_note := "STANDARD TREAD/LEG GEAR"
+func _gear_note(m: MechData) -> String:
 	if m.amphibious_gear:
-		gear_note = "AMPHIBIOUS SEALS (-2 River Fuel)"
-	elif m.mountain_gear:
-		gear_note = "QUAD CLIMBING GEAR (-2 Mountain/Climb Fuel)"
-	elif m.fuel_efficiency_mod > 0:
-		gear_note = "HEAVY CHASSIS (+1 Fuel off-road)"
-	root_ctrl.draw_string(font, Vector2(x, y), "MOBILITY: " + gear_note, HORIZONTAL_ALIGNMENT_LEFT, int(bar_w), 11, Color(0.75, 0.84, 0.72))
+		return "AMPHIBIOUS SEALS (-2 RIVER FUEL)"
+	if m.mountain_gear:
+		return "QUAD CLIMBING GEAR (-2 MOUNTAIN/CLIMB FUEL)"
+	if m.fuel_efficiency_mod > 0:
+		return "HEAVY CHASSIS (+1 FUEL OFF-ROAD)"
+	return "STANDARD TREAD/LEG GEAR"
 
-	y += 22
-	root_ctrl.draw_string(font, Vector2(x, y), "EQUIPMENT DECK (SKIRMISH LOADOUT):", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.88, 0.84, 0.72))
-	y += 8
-
-	for i in range(m.deck.size()):
-		var c: EquipmentCard = m.deck[i]
-		var cr := Rect2(x, y + i * 38, bar_w, 34)
-		root_ctrl.draw_rect(cr, Color(0.11, 0.13, 0.11), true)
-		root_ctrl.draw_rect(cr, accent.darkened(0.35), false, 1.0)
-		root_ctrl.draw_string(font, cr.position + Vector2(8, 14), "%d. %s [%s]" % [i + 1, c.card_name, c.category], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.95, 0.92, 0.84))
-		var edges := "RANKS [N:%s E:%s S:%s W:%s] | DMG:%d SHD:%d" % [
-			EquipmentCard.format_rank(c.top),
-			EquipmentCard.format_rank(c.right),
-			EquipmentCard.format_rank(c.bottom),
-			EquipmentCard.format_rank(c.left),
-			c.damage_rating,
-			c.shield_rating
-		]
-		root_ctrl.draw_string(font, cr.position + Vector2(8, 29), edges, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.74, 0.84, 0.72))
-
-func _draw_right_terrain_panel(font: Font, rect: Rect2) -> void:
-	var has_forecast: bool = not current_forecast.is_empty()
-	var panel_h: float = 435.0 if has_forecast else 235.0
-	var actual_rect := Rect2(rect.position, Vector2(rect.size.x, panel_h))
-
-	root_ctrl.draw_rect(actual_rect, Color(0.07, 0.09, 0.07, 0.92), true)
-	root_ctrl.draw_rect(actual_rect, Color(0.68, 0.56, 0.26, 0.9), false, 1.6)
-
-	var x: float = actual_rect.position.x + 14
-	var y: float = actual_rect.position.y + 22
-
-	root_ctrl.draw_string(font, Vector2(x, y), "TERRAIN & ELEVATION TELEMETRY", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.95, 0.78, 0.32))
-	y += 22
-	root_ctrl.draw_string(font, Vector2(x, y), "SECTOR (%d, %d): %s" % [hovered_tile.coords.x, hovered_tile.coords.y, hovered_tile.get_terrain_name().to_upper()], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.95, 0.94, 0.86))
-	y += 20
-	root_ctrl.draw_string(font, Vector2(x, y), "ELEVATION HEIGHT: %dm (Level %d)" % [hovered_tile.get_elevation_meters(), hovered_tile.elevation], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.74, 0.88, 0.96))
-	y += 20
-	root_ctrl.draw_string(font, Vector2(x, y), "BASE FUEL COST: %d Fuel / Tile" % hovered_tile.get_base_fuel_cost(), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.86, 0.86, 0.78))
-	y += 20
-
+func _draw_terrain_panel(rect: Rect2) -> void:
+	var x := rect.position.x + 6
+	var w := rect.size.x - 12
+	var right := x + w
+	var rows: Array = []   # [label, value, colour]
 	var atk_m: int = hovered_tile.get_attack_modifier_pct()
 	var def_m: int = hovered_tile.get_defense_modifier_pct()
-	root_ctrl.draw_string(font, Vector2(x, y), "TERRAIN ATTACK MOD: %+d%%" % atk_m, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.48, 0.95, 0.56) if atk_m >= 0 else Color(1.0, 0.42, 0.35))
-	y += 20
-	root_ctrl.draw_string(font, Vector2(x, y), "TERRAIN DEFENSE MOD: %+d%%" % def_m, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.48, 0.95, 0.56) if def_m >= 0 else Color(1.0, 0.42, 0.35))
-
-	if hovered_tile.is_objective:
-		y += 22
-		var owner_txt := "8TH IRON DIVISION" if hovered_tile.controlled_by == 0 else ("KRIEGS-SYNDIKAT" if hovered_tile.controlled_by == 1 else "CONTESTED")
-		root_ctrl.draw_string(font, Vector2(x, y), "STRATEGIC OBJECTIVE: %s (%s)" % [hovered_tile.objective_label, owner_txt], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.98, 0.84, 0.32))
-
+	rows.append(["ELEVATION", "%dM L%d" % [hovered_tile.get_elevation_meters(), hovered_tile.elevation], CrtUI.C_NUM])
+	rows.append(["FUEL COST", "%d/TILE" % hovered_tile.get_base_fuel_cost(), CrtUI.C_NUM])
+	rows.append(["ATTACK MOD", "%+d%%" % atk_m, CrtUI.C_LABEL if atk_m >= 0 else CrtUI.C_HOSTILE])
+	rows.append(["DEFENSE MOD", "%+d%%" % def_m, CrtUI.C_LABEL if def_m >= 0 else CrtUI.C_HOSTILE])
 	if not hovered_reach_info.is_empty():
-		y += 22
-		root_ctrl.draw_string(
-			font,
-			Vector2(x, y),
-			"PATH FUEL COST: -%d Fuel (Rem: %dF)" % [hovered_reach_info["fuel_spent"], hovered_reach_info["fuel_left"]],
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1,
-			13,
-			Color(0.35, 0.92, 0.78)
-		)
+		rows.append(["PATH FUEL", "-%d (%d LEFT)" % [hovered_reach_info["fuel_spent"], hovered_reach_info["fuel_left"]], CrtUI.C_CURSOR])
+	var obj_text := ""
+	if hovered_tile.is_objective:
+		var owner_txt := "8TH IRON DIV" if hovered_tile.controlled_by == 0 else ("SYNDIKAT" if hovered_tile.controlled_by == 1 else "CONTESTED")
+		obj_text = "OBJECTIVE: %s (%s)" % [hovered_tile.objective_label, owner_txt]
+	var obj_lines := CrtUI.wrap_lines(obj_text, w) if obj_text != "" else PackedStringArray()
+	var has_forecast := not current_forecast.is_empty()
+	var summary_lines := CrtUI.wrap_lines(str(current_forecast.get("approach_summary", "")), w - 12) if has_forecast else PackedStringArray()
+	var forecast_h := 6 + 12 + summary_lines.size() * CrtUI.LINE + 4 + 4 * 11 + 4 + 12 if has_forecast else 0
+	rect.size.y = 6 + 22 + rows.size() * 11 + (obj_lines.size() * CrtUI.LINE + 4 if obj_text != "" else 0) + (forecast_h + 6 if has_forecast else 0) + 2
+	CrtUI.panel(root_ctrl, rect)
 
-	# Combat Forecast Box if hovering an attackable enemy node!
+	var y := rect.position.y + 6
+	_t("SECTOR %d,%d" % [hovered_tile.coords.x, hovered_tile.coords.y], Vector2(x, y), CrtUI.C_LABEL)
+	y += 10
+	_t(CrtUI.fit(hovered_tile.get_terrain_name(), w), Vector2(x, y), CrtUI.C_NAME)
+	y += 12
+	for r in rows:
+		_t(r[0], Vector2(x, y), CrtUI.C_LABEL)
+		_tr(r[1], right, y, r[2])
+		y += 11
+	if obj_text != "":
+		y += 2
+		for l in obj_lines:
+			_t(l, Vector2(x, y), CrtUI.C_NAME)
+			y += CrtUI.LINE
+		y += 2
+
 	if has_forecast:
-		y += 22
-		var f_box := Rect2(x, y, actual_rect.size.x - 28, 175)
-		root_ctrl.draw_rect(f_box, Color(0.18, 0.08, 0.07, 0.95), true)
-		root_ctrl.draw_rect(f_box, Color(1.0, 0.38, 0.25), false, 2.0)
+		y += 4
+		var f := Rect2(x - 2, y, w + 4, forecast_h)
+		CrtUI.panel(root_ctrl, f, CrtUI.C_HOSTILE)
+		var fx := x + 4
+		var fr := right - 4
+		var fy := y + 6
+		_t("ENGAGEMENT FORECAST", Vector2(fx, fy), CrtUI.C_NAME)
+		fy += 12
+		for l in summary_lines:
+			_t(l, Vector2(fx, fy), CrtUI.C_NUM)
+			fy += CrtUI.LINE
+		fy += 4
+		_t("YOUR MOD", Vector2(fx, fy), CrtUI.C_LABEL)
+		_tr("%+d%% FP%d" % [int(current_forecast["atk_mod_pct"]), int(current_forecast["atk_eff_fp"])], fr, fy, CrtUI.C_NUM)
+		fy += 11
+		_t("ENEMY MOD", Vector2(fx, fy), CrtUI.C_HOSTILE)
+		_tr("%+d%% FP%d" % [int(current_forecast["def_mod_pct"]), int(current_forecast["def_eff_fp"])], fr, fy, CrtUI.C_NUM)
+		fy += 11
+		_t("CARDS", Vector2(fx, fy), CrtUI.C_LABEL)
+		_tr("%d VS %d" % [int(current_forecast["atk_cards_held"]), int(current_forecast["def_cards_held"])], fr, fy, CrtUI.C_NUM)
+		fy += 11
+		_t("EST DMG/RETURN", Vector2(fx, fy), CrtUI.C_LABEL)
+		_tr("%d/%d" % [int(current_forecast["est_dmg_to_def"]), int(current_forecast["est_dmg_to_atk"])], fr, fy, CrtUI.C_NUM)
+		fy += 15
+		_t("CLICK ENEMY TO ENGAGE", Vector2(fx, fy), CrtUI.C_HOSTILE)
 
-		var fx: float = x + 10
-		var fy: float = y + 20
-		root_ctrl.draw_string(font, Vector2(fx, fy), "SKIRMISH ENGAGEMENT FORECAST", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1.0, 0.78, 0.32))
-		fy += 20
-		root_ctrl.draw_string(font, Vector2(fx, fy), str(current_forecast.get("approach_summary", "")), HORIZONTAL_ALIGNMENT_LEFT, int(f_box.size.x - 16), 11, Color(0.92, 0.88, 0.78))
-		fy += 22
-		root_ctrl.draw_string(
-			font,
-			Vector2(fx, fy),
-			"YOUR MOD: %+d%% (EFF FP: %d)" % [int(current_forecast["atk_mod_pct"]), int(current_forecast["atk_eff_fp"])],
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1,
-			12,
-			Color(0.48, 0.95, 0.55)
-		)
-		fy += 20
-		root_ctrl.draw_string(
-			font,
-			Vector2(fx, fy),
-			"ENEMY MOD: %+d%% (EFF FP: %d)" % [int(current_forecast["def_mod_pct"]), int(current_forecast["def_eff_fp"])],
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1,
-			12,
-			Color(1.0, 0.48, 0.40)
-		)
-		fy += 22
-		root_ctrl.draw_string(
-			font,
-			Vector2(fx, fy),
-			"DECK PROJECTION: %d CARDS  vs  %d CARDS" % [int(current_forecast["atk_cards_held"]), int(current_forecast["def_cards_held"])],
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1,
-			12,
-			Color(0.98, 0.86, 0.38)
-		)
-		fy += 22
-		root_ctrl.draw_string(
-			font,
-			Vector2(fx, fy),
-			"EST. DAMAGE DEALT: ~%d   |   RETURN: ~%d" % [int(current_forecast["est_dmg_to_def"]), int(current_forecast["est_dmg_to_atk"])],
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1,
-			12,
-			Color(0.95, 0.95, 0.90)
-		)
-		fy += 22
-		root_ctrl.draw_string(font, Vector2(fx, fy), ">> LEFT-CLICK ENEMY NODE TO ENGAGE <<", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1.0, 0.42, 0.28))
+## Bottom-right command menu; bottom edge sits at rect.position.y.
+func _draw_commands(rect: Rect2) -> void:
+	var rows: Array = []
+	if _can_wait():
+		rows.append(["wait", "WAIT / REFUEL +5F", "R"])
+	if _is_player_command_time():
+		rows.append(["end_turn", "END TURN", "E"])
+	if rows.is_empty():
+		return
+	var h := 8 + rows.size() * CrtUI.ROW
+	var r := Rect2(rect.position.x, rect.position.y - h, rect.size.x, h)
+	CrtUI.panel(root_ctrl, r)
+	for i in rows.size():
+		_row(rows[i][0], rows[i][1], r.position + Vector2(6, 5 + i * CrtUI.ROW), r.size.x - 12, rows[i][2])
 
-func _draw_manual_modal(font: Font, vp: Vector2) -> void:
-	root_ctrl.draw_rect(Rect2(Vector2.ZERO, vp), Color(0.02, 0.03, 0.02, 0.78), true)
-	var mw: float = 820.0
-	var mh: float = 520.0
-	var mr := Rect2((vp.x - mw) * 0.5, (vp.y - mh) * 0.5, mw, mh)
-	root_ctrl.draw_rect(mr, Color(0.08, 0.10, 0.08, 0.98), true)
-	root_ctrl.draw_rect(mr, Color(0.85, 0.68, 0.28), false, 2.5)
+func _draw_log(r: Rect2) -> void:
+	CrtUI.panel(root_ctrl, r)
+	var x := r.position.x + 6
+	var w := r.size.x - 12
+	_t("COMMS LOG", Vector2(x, r.position.y + 6), CrtUI.C_LABEL)
+	_tr("PAN WASD/ARROWS/RMB  ZOOM WHEEL  WAIT R  END TURN E", x + w, r.position.y + 6, CrtUI.C_LABEL_DIM)
+	var log_count: int = GlobalState.combat_log.size()
+	var start_idx: int = maxi(0, log_count - 4)
+	for i in range(start_idx, log_count):
+		_t(CrtUI.fit(GlobalState.combat_log[i], w), Vector2(x, r.position.y + 18 + (i - start_idx) * CrtUI.LINE), CrtUI.C_NUM)
 
-	var x: float = mr.position.x + 28
-	var y: float = mr.position.y + 36
-	root_ctrl.draw_string(font, Vector2(x, y), "FIELD MANUAL // TERRAIN, ELEVATION & SKIRMISH RULES (PRESS [H] TO CLOSE)", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.96, 0.80, 0.32))
-	y += 32
-
-	var lines := [
-		"1. TURN FLOW & FUEL MOBILITY:",
-		"   - Each Turn follows: PLAYER COMMAND PHASE -> SKIRMISH RESOLUTION PHASE -> SYNDICATE AI PHASE.",
-		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
-		"   - [WAIT / REFUEL] entrenches (+15% DEF) & restores +5 Fuel. Starting a turn on a City adds +4 Fuel & +12 Armor.",
-		"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
-		"",
-		"2. TERRAIN CHART (FUEL COST | ATTACK MOD | DEFENSE MOD):",
-		"   - TRANSIT ROAD (ROD):   1 Fuel |  +5% ATK |   0% DEF  (Fastest artery for Heavy Walkers)",
-		"   - OPEN PLAIN (PLN):     2 Fuel |   0% ATK |  +5% DEF  (Standard maneuvering ground)",
-		"   - FORTIFIED CITY (CTY): 2 Fuel | +10% ATK | +25% DEF  (Repairs +12 Armor & +4 Fuel each turn!)",
-		"   - TRENCH TIMBER (TRN):  3 Fuel |  +5% ATK | +15% DEF  (Prepared defensive cover)",
-		"   - RIVER FORD (RIV):     4 Fuel | -15% ATK | -15% DEF  (Bogged down & exposed! Avoid stopping here!)",
-		"   - MOUNTAIN CRAG (MTN):  5 Fuel | +15% ATK | +30% DEF  (Commanding rock bastion)",
-		"",
-		"3. ELEVATION & HIGH GROUND ADVANTAGE:",
-		"   - Attacking from higher elevation down onto an enemy grants +12% Firepower, +10% Armor, and +1 Card Rank per level!",
-		"   - Attacking uphill suffers -10% Firepower and -1 Card Rank per elevation level.",
-		"",
-		"4. AUTOMATED SKIRMISH RESOLVER (TRIPLE TRIAD + STATS):",
-		"   - Moving onto an enemy-occupied node triggers a Collision & launches the 3x3 Equipment Deck Clash.",
-		"   - Cards compare directional ranks (N, E, S, W) against adjacent cards to flip/capture them!",
-		"   - Matching sums on 2+ adjacent edges triggers a TACTICAL PLUS combo capture!"
-	]
+func _draw_manual_modal(v: Vector2) -> void:
+	root_ctrl.draw_rect(Rect2(Vector2.ZERO, v), Color(0.0, 0.0, 0.0, 0.72))
+	var w := minf(v.x - 24, 680.0)
+	var inner := w - 20
+	var lines: Array = []   # [text, x offset, colour]
+	for l: String in MANUAL_LINES:
+		if l == "":
+			lines.append(["", 0, CrtUI.C_NUM])
+		elif l.begins_with("   - "):
+			var wrapped := CrtUI.wrap_lines(l.substr(5), inner - 12)
+			for k in wrapped.size():
+				lines.append([("- " if k == 0 else "  ") + wrapped[k], 0, CrtUI.C_NUM])
+		else:
+			lines.append([l, 0, CrtUI.C_NAME])
+	var h := 30 + lines.size() * CrtUI.LINE + 8
+	var r := Rect2(roundf((v.x - w) / 2.0), roundf((v.y - h) / 2.0), w, h)
+	CrtUI.panel(root_ctrl, r)
+	_t("FIELD MANUAL", r.position + Vector2(10, 8), CrtUI.C_LABEL)
+	_tr("[H] CLOSE", r.end.x - 10, r.position.y + 8, CrtUI.C_LABEL_DIM)
+	var y := r.position.y + 26
 	for l in lines:
-		var col := Color(0.95, 0.82, 0.36) if l.begins_with("1.") or l.begins_with("2.") or l.begins_with("3.") or l.begins_with("4.") else Color(0.82, 0.86, 0.78)
-		root_ctrl.draw_string(font, Vector2(x, y), l, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, col)
-		y += 20
+		if l[0] != "":
+			_t(l[0], Vector2(r.position.x + 10 + l[1], y), l[2])
+		y += CrtUI.LINE
 
-func _draw_game_over_modal(font: Font, vp: Vector2) -> void:
-	root_ctrl.draw_rect(Rect2(Vector2.ZERO, vp), Color(0.02, 0.03, 0.02, 0.85), true)
-	var mw: float = 640.0
-	var mh: float = 300.0
-	var mr := Rect2((vp.x - mw) * 0.5, (vp.y - mh) * 0.5, mw, mh)
-	var won: bool = (GlobalState.last_battle_winner == 0)
-	var border_col := Color(0.45, 0.92, 0.50) if won else Color(0.95, 0.32, 0.25)
-
-	root_ctrl.draw_rect(mr, Color(0.08, 0.10, 0.08, 0.98), true)
-	root_ctrl.draw_rect(mr, border_col, false, 3.0)
-
-	var title := "OPERATION VICTORY // SECTOR SECURED" if won else "OPERATION FAILED // COALITION ROUTED"
-	root_ctrl.draw_string(font, mr.position + Vector2(20, 56), title, HORIZONTAL_ALIGNMENT_CENTER, int(mw - 40), 22, border_col)
-	root_ctrl.draw_string(font, mr.position + Vector2(30, 110), GlobalState.last_battle_reason, HORIZONTAL_ALIGNMENT_CENTER, int(mw - 60), 15, Color(0.90, 0.88, 0.80))
-	root_ctrl.draw_string(font, mr.position + Vector2(30, 150), "TURNS ELAPSED: %d" % GlobalState.turn_number, HORIZONTAL_ALIGNMENT_CENTER, int(mw - 60), 14, Color(0.75, 0.80, 0.72))
+func _draw_game_over_modal(v: Vector2) -> void:
+	root_ctrl.draw_rect(Rect2(Vector2.ZERO, v), Color(0.0, 0.0, 0.0, 0.8))
+	var won: bool = GlobalState.last_battle_winner == 0
+	var col := CrtUI.C_LABEL if won else CrtUI.C_HOSTILE
+	var w := 340.0
+	var reason := CrtUI.wrap_lines(GlobalState.last_battle_reason, w - 24)
+	var h := 16 + 12 + 8 + reason.size() * CrtUI.LINE + 8 + 12 + 10 + 2 * CrtUI.ROW + 10
+	var r := Rect2(roundf((v.x - w) / 2.0), roundf((v.y - h) / 2.0), w, h)
+	CrtUI.panel(root_ctrl, r, col)
+	var cx := r.position.x + w / 2.0
+	var y := r.position.y + 12
+	CrtUI.text_centered(root_ctrl, "OPERATION VICTORY // SECTOR SECURED" if won else "OPERATION FAILED // COALITION ROUTED", cx, y, col)
+	y += 20
+	for l in reason:
+		CrtUI.text_centered(root_ctrl, l, cx, y, CrtUI.C_NUM)
+		y += CrtUI.LINE
+	y += 8
+	CrtUI.text_centered(root_ctrl, "TURNS ELAPSED: %d" % GlobalState.turn_number, cx, y, CrtUI.C_LABEL_DIM)
+	y += 20
+	var labels := ["REDEPLOY OPERATION", "RETURN TO COMMAND HQ"]
+	var row_w := PixelFont.text_width(labels[1]) + 12
+	for i in labels.size():
+		_row("debrief:%d" % i, labels[i], Vector2(roundf(cx - row_w / 2.0), y + i * CrtUI.ROW), row_w, "", _debrief_row == i)
