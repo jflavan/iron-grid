@@ -19,7 +19,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import backdrops  # noqa: E402
 import chassis as chassis_mod  # noqa: E402
+import font  # noqa: E402
 import png  # noqa: E402
 import poses  # noqa: E402
 import raster  # noqa: E402
@@ -28,9 +30,6 @@ import rig  # noqa: E402
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_OUT = os.path.join(REPO, "assets", "battle")
 FACTIONS = ("coalition", "syndikat")
-
-# Extra generator stages (backdrops, font, attachments) register here.
-EXTRA_STAGES = []
 
 
 def render_sheet(defn, flags=(), braced=False):
@@ -75,6 +74,8 @@ def write_attachments(out):
 def generate_all(out):
     os.makedirs(os.path.join(out, "mechs"), exist_ok=True)
     write_attachments(out)
+    backdrops.write_backdrops(out)
+    font.write_font(out)
     variant_map = {}
     for vname, (base, _flags, _braced) in chassis_mod.VARIANTS.items():
         variant_map.setdefault(base, {})[vname.split("_", 1)[1]] = vname
@@ -82,8 +83,6 @@ def generate_all(out):
         write_mech(out, name, defn, variants=variant_map.get(name, {}))
     for vname, (base, flags, braced) in chassis_mod.VARIANTS.items():
         write_mech(out, vname, chassis_mod.CHASSIS[base], flags, braced)
-    for stage in EXTRA_STAGES:
-        stage(out)
 
 
 def _same_tree(a, b):

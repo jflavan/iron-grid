@@ -98,6 +98,17 @@ class GeneratorTests(unittest.TestCase):
         with open(os.path.join(self.tmp, "mechs", "falke.json")) as f:
             self.assertIn("rangefinder", json.load(f)["anchors"]["attach"])
 
+    def test_backdrops_and_font(self):
+        for t in ("plain", "road", "river", "forest", "city", "mountain"):
+            self.assertEqual(png_size(os.path.join(self.tmp, "backdrops", t + ".png")), (360, 152), t)
+        with open(os.path.join(self.tmp, "font", "font5x7.json"), encoding="utf-8") as f:
+            meta = json.load(f)
+        self.assertEqual(meta["advance"], 6)
+        self.assertIn("Ä", meta["chars"])
+        self.assertIn("9", meta["chars"])
+        w, h = png_size(os.path.join(self.tmp, "font", "font5x7.png"))
+        self.assertEqual((w, h), (6 * len(meta["chars"]), 8))
+
     def test_deterministic(self):
         with tempfile.TemporaryDirectory() as d:
             generate.generate_all(d)
