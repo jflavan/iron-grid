@@ -29,6 +29,7 @@ func _ready() -> void:
 		"test_apply_before_conclusion_is_ignored", "test_fast_forward_is_quiet",
 		"test_step_breakdown_sums", "test_strike_plan_goliath_mountain", "test_strike_plan_matches_reachable",
 		"test_strike_plan_beyond_range", "test_strike_plan_skips_occupied_launch_tiles", "test_strike_plan_advice_is_true",
+		"test_out_of_reach_hover_and_click", "test_terrain_panel_draws_plan",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -936,3 +937,72 @@ func test_strike_plan_advice_is_true() -> void:
 		gm.free()
 	_check(lies.is_empty(), "every strike advice holds under the WAIT/upkeep rules (%d false, first %s)" % [lies.size(), lies.slice(0, 1)])
 	_check(seen.has(StrikePlan.ADV_WAIT_HERE) and seen.has(StrikePlan.ADV_MOVE_TO), "the advice sweep exercises WAIT_HERE and MOVE_TO (saw %s)" % [seen.keys()])
+
+# ---------------------------------------------------------------- out-of-reach HUD + comms log
+func _spawn_iron_bridge() -> Battlefield:
+	GlobalState.selected_map_index = 0
+	var bf: Battlefield = load("res://scenes/Battlefield.tscn").instantiate()
+	add_child(bf)
+	await get_tree().process_frame
+	return bf
+
+func _unit_by_callsign(bf: Battlefield, prefix: String) -> MechUnit:
+	for u in bf.unit_container.units:
+		if is_instance_valid(u) and u.mech_data.callsign.begins_with(prefix):
+			return u
+	return null
+
+func test_out_of_reach_hover_and_click() -> void:
+	var bf := await _spawn_iron_bridge()
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	var spinne := _unit_by_callsign(bf, "SPINNE-4")
+	titan.mech_data.grid_pos = Vector2i(7, 7)
+	titan.mech_data.current_fuel = 4
+	bf._select_unit(titan)
+	bf._refresh_hover_telemetry(Vector2i(8, 7))
+	var plan: StrikePlan = bf.ui_overlay.strike_plan
+	_check(plan != null and plan.severity == StrikePlan.IN_STRIKING_DISTANCE, "hovering SPINNE-4 from (7,7) with 4F shows an in-striking-distance plan")
+	_check(bf.ui_overlay.current_forecast.is_empty(), "no engagement forecast for an unreachable enemy")
+	_check(bf.ui_overlay.step_cost_mech == titan.mech_data, "YOUR STEP COST row follows the selected titan")
+	bf._refresh_hover_telemetry(Vector2i(5, 3))
+	_check(bf.ui_overlay.strike_plan == null, "hovering an empty tile clears the strike plan")
+
+	var log_before: int = GlobalState.combat_log.size()
+	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
+	var new_lines: Array = GlobalState.combat_log.slice(log_before)
+	var logged := new_lines.any(func(l): return "CANNOT REACH" in l and "STRIKE NEEDS 7F" in l)
+	_check(logged, "clicking the unreachable enemy logs why (got %s)" % [new_lines])
+	_check(bf.selected_unit == spinne, "the click still selects the enemy for inspection")
+
+	# A distant enemy is quiet: no log line.
+	var iron := _unit_by_callsign(bf, "IRON-1")
+	bf._select_unit(iron)
+	var far: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
+	_check(far != null and far.severity == StrikePlan.BEYOND_RANGE, "SPINNE-4 is beyond IRON-1's range (got %s)" % [far.severity if far else null])
+	log_before = GlobalState.combat_log.size()
+	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
+	_check(GlobalState.combat_log.size() == log_before, "clicking a beyond-range enemy adds no log line")
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_terrain_panel_draws_plan() -> void:
+	var bf := await _spawn_iron_bridge()
+	var ov := bf.ui_overlay
+	ov.hovered_tile = bf.grid_map.get_tile(Vector2i(8, 7))
+	ov.strike_plan = null
+	var h0: float = ov._terrain_panel_height()
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	titan.mech_data.grid_pos = Vector2i(7, 7)
+	titan.mech_data.current_fuel = 4
+	var spinne := _unit_by_callsign(bf, "SPINNE-4")
+	ov.strike_plan = bf.grid_map.compute_strike_plan(titan.mech_data, spinne.mech_data.grid_pos, bf.unit_container.build_occupied_map(titan))
+	var h1: float = ov._terrain_panel_height()
+	var wrapped := 0
+	for l in ov.strike_plan.panel_lines():
+		wrapped += CrtUI.wrap_lines(l, UIOverlay.RIGHT_W - 24).size()
+	_check(h1 - h0 >= (1 + wrapped) * CrtUI.LINE, "panel grows to fit the OUT OF REACH box (%s -> %s for %d lines)" % [h0, h1, wrapped])
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	_check(true, "terrain panel draws with a strike plan without errors")
+	bf.queue_free()
+	await get_tree().process_frame

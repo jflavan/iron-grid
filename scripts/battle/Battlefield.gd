@@ -225,6 +225,8 @@ func _deselect_unit() -> void:
 	ui_overlay.selected_mech = null
 	ui_overlay.hovered_reach_info = {}
 	ui_overlay.current_forecast = {}
+	ui_overlay.strike_plan = null
+	ui_overlay.step_cost_mech = null
 	grid_map.clear_highlights()
 
 func _on_tile_hovered(coords: Vector2i, _tile: GridTileData) -> void:
@@ -235,6 +237,8 @@ func _refresh_hover_telemetry(coords: Vector2i) -> void:
 	ui_overlay.hovered_tile = td
 	var u_at := unit_container.get_unit_at(coords)
 	ui_overlay.hovered_mech = u_at.mech_data if u_at != null else null
+	ui_overlay.strike_plan = strike_plan_for(coords)
+	ui_overlay.step_cost_mech = selected_unit.mech_data if _has_ready_player_selection() else null
 
 	if grid_map.reachable_info.has(coords):
 		var r_info: Dictionary = grid_map.reachable_info[coords]
@@ -252,6 +256,22 @@ func _refresh_hover_telemetry(coords: Vector2i) -> void:
 		ui_overlay.hovered_reach_info = {}
 		ui_overlay.current_forecast = {}
 
+func _has_ready_player_selection() -> bool:
+	return (GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and selected_unit != null
+		and is_instance_valid(selected_unit) and selected_unit.mech_data.faction == MechData.Faction.PLAYER
+		and not selected_unit.mech_data.has_moved)
+
+## Why the selected walker cannot strike the enemy on `coords`, or null when there is nothing to
+## explain: not the player phase, no ready player walker selected, no enemy there, or the enemy is
+## already a highlighted attack target.
+func strike_plan_for(coords: Vector2i) -> StrikePlan:
+	if not _has_ready_player_selection() or grid_map.reachable_info.has(coords):
+		return null
+	var u_at := unit_container.get_unit_at(coords)
+	if u_at == null or u_at.mech_data.faction == selected_unit.mech_data.faction:
+		return null
+	return grid_map.compute_strike_plan(selected_unit.mech_data, coords, unit_container.build_occupied_map(selected_unit))
+
 func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 	if GlobalState.current_phase != GlobalState.TurnPhase.PLAYER_PHASE or _is_animating_move:
 		return
@@ -267,9 +287,15 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 			_execute_unit_movement(selected_unit, coords, move_path, move_fuel)
 			return
 
-	# 2. Otherwise, clicking any unit selects it to inspect its telemetry & fuel range
+	# 2. Otherwise, clicking any unit selects it to inspect its telemetry & fuel range.
+	# An enemy the selected walker could almost strike says why it can't (OUT OF REACH).
 	if clicked_unit != null:
-		SoundManager.play("ui_click")
+		var plan := strike_plan_for(coords)
+		if plan != null and plan.severity == StrikePlan.IN_STRIKING_DISTANCE:
+			SoundManager.play("ui_cancel")
+			GlobalState.add_log(plan.log_line(selected_unit.mech_data.callsign, clicked_unit.mech_data.callsign))
+		else:
+			SoundManager.play("ui_click")
 		_select_unit(clicked_unit)
 	else:
 		SoundManager.play("ui_cancel")

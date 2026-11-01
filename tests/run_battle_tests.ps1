@@ -5,8 +5,9 @@
 
 .DESCRIPTION
     Refreshes Godot's global class cache, runs res://tests/BattleScreenTests.tscn headless and
-    fails unless the suite prints "[BATTLE TESTS] N checks, 0 failures". A GDScript parse error
-    would otherwise leave Godot idling until --quit-after with exit code 0.
+    fails unless the suite prints "[BATTLE TESTS] N checks, 0 failures" and no SCRIPT ERROR line.
+    A GDScript parse error would otherwise leave Godot idling until --quit-after with exit code 0,
+    and a runtime error aborts the running test function without recording a failure.
 
     Works in Windows PowerShell 5.1 and PowerShell 7+.
 
@@ -51,5 +52,8 @@ $summary = $out | Where-Object { $_ -match '^\[BATTLE TESTS\]' } | Select-Object
 if (-not $summary) { $summary = '[BATTLE TESTS] no summary (suite did not run to completion)' }
 Write-Output $summary
 
-if ($code -eq 0 -and $summary -like '* 0 failures') { exit 0 }
+$scriptErrors = @($out | Where-Object { $_ -match 'SCRIPT ERROR' }).Count
+if ($scriptErrors -gt 0) { Write-Output "[BATTLE TESTS] $scriptErrors SCRIPT ERROR line(s): a test aborted" }
+
+if ($code -eq 0 -and $summary -like '* 0 failures' -and $scriptErrors -eq 0) { exit 0 }
 exit 1

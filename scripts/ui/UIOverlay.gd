@@ -23,6 +23,7 @@ const MANUAL_LINES := [
 	"1. TURN FLOW & FUEL MOBILITY:",
 	"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
 	"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
+	"   - Attacking moves onto the enemy's tile: you pay ITS fuel cost (terrain + chassis surcharge + climb). Hover an enemy to see what a strike needs.",
 	"   - [WAIT / REFUEL] entrenches (+15% DEF, +5% EVA, +6% Hit, +4 SPD) & restores +5 Fuel / +4 EN (+8 Hull in a City). Cities repair +12 Hull, +4 Fuel, +3 EN each turn.",
 	"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
 	"",
@@ -53,6 +54,8 @@ var hovered_mech: MechData = null
 var hovered_tile: GridTileData = null
 var hovered_reach_info: Dictionary = {}
 var current_forecast: Dictionary = {}
+var strike_plan: StrikePlan = null       # why the hovered enemy can't be struck (Battlefield.strike_plan_for)
+var step_cost_mech: MechData = null      # ready selected walker whose real step cost the sector panel shows
 
 var map_def: MapDefinition = null
 var player_unit_count: int = 0
@@ -317,28 +320,71 @@ func _gear_note(m: MechData) -> String:
 		return "HEAVY CHASSIS (+1 FUEL OFF-ROAD)"
 	return "STANDARD TREAD/LEG GEAR"
 
-func _draw_terrain_panel(rect: Rect2) -> void:
-	var x := rect.position.x + 6
-	var w := rect.size.x - 12
-	var right := x + w
-	var rows: Array = []   # [label, value, colour]
+## Sector panel rows: [label, value, colour].
+func _terrain_rows() -> Array:
+	var rows: Array = []
 	var atk_m: int = hovered_tile.get_attack_modifier_pct()
 	var def_m: int = hovered_tile.get_defense_modifier_pct()
 	rows.append(["ELEVATION", "%dM L%d" % [hovered_tile.get_elevation_meters(), hovered_tile.elevation], CrtUI.C_NUM])
-	rows.append(["FUEL COST", "%d/TILE" % hovered_tile.get_base_fuel_cost(), CrtUI.C_NUM])
+	if step_cost_mech != null:
+		# Entering from the same level: the chassis surcharge/gear applies, climb depends on the approach.
+		var own: int = step_cost_mech.get_step_fuel_cost(hovered_tile, hovered_tile)
+		rows.append(["YOUR STEP COST", "%dF +CLIMB" % own, CrtUI.C_NUM])
+	else:
+		rows.append(["FUEL COST", "%d/TILE" % hovered_tile.get_base_fuel_cost(), CrtUI.C_NUM])
 	rows.append(["ATTACK MOD", "%+d%%" % atk_m, CrtUI.C_LABEL if atk_m >= 0 else CrtUI.C_HOSTILE])
 	rows.append(["DEFENSE MOD", "%+d%%" % def_m, CrtUI.C_LABEL if def_m >= 0 else CrtUI.C_HOSTILE])
 	if not hovered_reach_info.is_empty():
 		rows.append(["PATH FUEL", "-%d (%d LEFT)" % [hovered_reach_info["fuel_spent"], hovered_reach_info["fuel_left"]], CrtUI.C_CURSOR])
-	var obj_text := ""
-	if hovered_tile.is_objective:
-		var owner_txt := "8TH IRON DIV" if hovered_tile.controlled_by == 0 else ("SYNDIKAT" if hovered_tile.controlled_by == 1 else "CONTESTED")
-		obj_text = "OBJECTIVE: %s (%s)" % [hovered_tile.objective_label, owner_txt]
+	return rows
+
+func _objective_text() -> String:
+	if not hovered_tile.is_objective:
+		return ""
+	var owner_txt := "8TH IRON DIV" if hovered_tile.controlled_by == 0 else ("SYNDIKAT" if hovered_tile.controlled_by == 1 else "CONTESTED")
+	return "OBJECTIVE: %s (%s)" % [hovered_tile.objective_label, owner_txt]
+
+## Wrapped body lines of the strike-plan box (OUT OF REACH or the quiet one-liner).
+func _plan_lines(inner_w: float) -> PackedStringArray:
+	var out := PackedStringArray()
+	if strike_plan == null:
+		return out
+	for l in strike_plan.panel_lines():
+		out.append_array(CrtUI.wrap_lines(l, inner_w))
+	return out
+
+func _plan_box_h(inner_w: float) -> float:
+	if strike_plan == null or strike_plan.severity == StrikePlan.REACHABLE:
+		return 0.0
+	var n := _plan_lines(inner_w).size()
+	if strike_plan.severity == StrikePlan.IN_STRIKING_DISTANCE:
+		return 6 + 12 + n * CrtUI.LINE + 4   # title row + body
+	return n * CrtUI.LINE + 2
+
+## Height of the sector panel for the current hover state (rows, objective, forecast or strike plan).
+func _terrain_panel_height() -> float:
+	var w := RIGHT_W - 12
+	var rows := _terrain_rows()
+	var obj_text := _objective_text()
 	var obj_lines := CrtUI.wrap_lines(obj_text, w) if obj_text != "" else PackedStringArray()
 	var has_forecast := not current_forecast.is_empty()
 	var summary_lines := CrtUI.wrap_lines(str(current_forecast.get("approach_summary", "")), w - 12) if has_forecast else PackedStringArray()
 	var forecast_h := 6 + 12 + summary_lines.size() * CrtUI.LINE + 4 + 4 * 11 + 4 + 12 if has_forecast else 0
-	rect.size.y = 6 + 22 + rows.size() * 11 + (obj_lines.size() * CrtUI.LINE + 4 if obj_text != "" else 0) + (forecast_h + 6 if has_forecast else 0) + 2
+	var plan_h := _plan_box_h(w - 12)
+	return 6 + 22 + rows.size() * 11 + (obj_lines.size() * CrtUI.LINE + 4 if obj_text != "" else 0) \
+		+ (forecast_h + 6 if has_forecast else 0) + (plan_h + 6 if plan_h > 0 else 0) + 2
+
+func _draw_terrain_panel(rect: Rect2) -> void:
+	var x := rect.position.x + 6
+	var w := rect.size.x - 12
+	var right := x + w
+	var rows := _terrain_rows()
+	var obj_text := _objective_text()
+	var obj_lines := CrtUI.wrap_lines(obj_text, w) if obj_text != "" else PackedStringArray()
+	var has_forecast := not current_forecast.is_empty()
+	var summary_lines := CrtUI.wrap_lines(str(current_forecast.get("approach_summary", "")), w - 12) if has_forecast else PackedStringArray()
+	var forecast_h := 6 + 12 + summary_lines.size() * CrtUI.LINE + 4 + 4 * 11 + 4 + 12 if has_forecast else 0
+	rect.size.y = _terrain_panel_height()
 	CrtUI.panel(root_ctrl, rect)
 
 	var y := rect.position.y + 6
@@ -383,6 +429,22 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 		_tr("%d/%d" % [int(current_forecast["est_dmg_to_def"]), int(current_forecast["est_dmg_to_atk"])], fr, fy, CrtUI.C_NUM)
 		fy += 15
 		_t("CLICK ENEMY TO ENGAGE", Vector2(fx, fy), CrtUI.C_HOSTILE)
+
+	var plan_h := _plan_box_h(w - 12)
+	if plan_h > 0:
+		y += 4
+		if strike_plan.severity == StrikePlan.IN_STRIKING_DISTANCE:
+			CrtUI.panel(root_ctrl, Rect2(x - 2, y, w + 4, plan_h), CrtUI.C_CURSOR)
+			var py := y + 6
+			_t("OUT OF REACH", Vector2(x + 4, py), CrtUI.C_CURSOR)
+			py += 12
+			for l in _plan_lines(w - 12):
+				_t(l, Vector2(x + 4, py), CrtUI.C_NUM)
+				py += CrtUI.LINE
+		else:
+			for l in _plan_lines(w - 12):
+				_t(l, Vector2(x + 4, y), CrtUI.C_LABEL_DIM)
+				y += CrtUI.LINE
 
 ## Bottom-right command menu; bottom edge sits at rect.position.y.
 func _draw_commands(rect: Rect2) -> void:
