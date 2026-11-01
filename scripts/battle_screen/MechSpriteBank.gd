@@ -27,6 +27,28 @@ static func get_sheet(chassis: String, faction: int) -> Texture2D:
 		_tex_cache[key] = load(MECH_DIR + key + ".png") as Texture2D
 	return _tex_cache[key]
 
+## Same sheet with every opaque pixel turned white (FF6 hit flash). Null when the renderer
+## can't read texture data back (headless dummy renderer); callers then skip the flash.
+static func get_white_sheet(chassis: String, faction: int) -> Texture2D:
+	var key := "%s_%s_white" % [chassis, FACTION_NAMES[clampi(faction, 0, 1)]]
+	if not _tex_cache.has(key):
+		var src := get_sheet(chassis, faction)
+		var img: Image = src.get_image() if src != null else null
+		if img == null or img.is_empty():
+			_tex_cache[key] = null
+		else:
+			img = img.duplicate()
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+			for y in img.get_height():
+				for x in img.get_width():
+					var a := img.get_pixel(x, y).a
+					if a > 0.0:
+						img.set_pixel(x, y, Color(1, 1, 1, a))
+			_tex_cache[key] = ImageTexture.create_from_image(img)
+	return _tex_cache[key]
+
 static func cell_size(chassis: String) -> Vector2:
 	var m := meta_for(chassis)
 	return Vector2(float(m.get("w", 0)), float(m.get("h", 0)))

@@ -14,6 +14,7 @@ func _ready() -> void:
 		"test_sprite_bank_loads", "test_anchor_mirrors", "test_recoil_moves_muzzle",
 		"test_side_from_approach", "test_elevation_offsets", "test_wrap_long_headline",
 		"test_damage_sums", "test_hold_at_one", "test_ai_attacker_panels", "test_followup_flags", "test_capture_text",
+		"test_skip_confirm_reuse", "test_full_playback_finishes",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -137,3 +138,43 @@ func test_capture_text() -> void:
 			else:
 				_check(tl.beats[i]["capture_text"] == "", "no capture, no text (step %d)" % i)
 	_check(seen, "at least one sampled fight has a capture")
+
+# ---------------------------------------------------------------- screen contract
+func test_skip_confirm_reuse() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	var got: Array = []
+	screen.resolution_confirmed.connect(func(res): got.append(res))
+	var r1 := _fight("vanguard", "moloch")
+	var r2 := _fight("donner", "kommandant", 1)
+	screen.start_showdown(r1)
+	_check(screen.visible, "screen visible after start_showdown")
+	await get_tree().process_frame
+	screen._on_skip_pressed()
+	screen._on_skip_pressed()
+	_check(screen._all_steps_done, "skip finishes playback")
+	_check(got.is_empty(), "skip alone does not confirm")
+	screen._on_confirm_pressed()
+	_check(got.size() == 1 and got[0] == r1, "confirm emits once with r1")
+	_check(not screen.visible, "screen hidden after confirm")
+	screen.start_showdown(r2)
+	_check(not screen._all_steps_done, "reused screen restarts playback")
+	await get_tree().process_frame
+	screen._on_confirm_pressed()
+	screen._on_confirm_pressed()
+	_check(got.size() == 2 and got[1] == r2, "second fight emits once with r2")
+	screen.queue_free()
+
+func test_full_playback_finishes() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	screen.start_showdown(_fight("goliath", "falke", 0, 5))
+	var steps := 0
+	while not screen._all_steps_done and steps < 4000:
+		screen._process(1.0 / 30.0)
+		steps += 1
+	_check(screen._all_steps_done, "playback reaches the result on its own (%d ticks)" % steps)
+	_check(screen.stage.hull_display["def"] == 0, "destroyed defender shows 0 hull at the end")
+	screen.queue_free()

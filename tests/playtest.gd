@@ -280,7 +280,7 @@ func _play_mission(map_idx: int, policy: String) -> void:
 		if GlobalState.current_phase == GlobalState.TurnPhase.GAME_OVER:
 			break
 
-		var modal: SkirmishModal = bf.ui_overlay.skirmish_modal
+		var modal: BattleScreen = bf.ui_overlay.skirmish_modal
 		if modal.visible:
 			if not last_skirmish_shown:
 				stats["skirmishes"] += 1

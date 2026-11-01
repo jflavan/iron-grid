@@ -12,7 +12,7 @@ signal action_restart_mission_requested()
 signal skirmish_modal_closed(result: SkirmishEngine.SkirmishResult)
 
 var root_ctrl: Control
-var skirmish_modal: SkirmishModal
+var skirmish_modal: BattleScreen
 
 var selected_mech: MechData = null
 var hovered_mech: MechData = null
@@ -50,7 +50,7 @@ func _ready() -> void:
 
 	_create_hud_buttons()
 
-	skirmish_modal = SkirmishModal.new()
+	skirmish_modal = BattleScreen.new()
 	skirmish_modal.resolution_confirmed.connect(func(res): skirmish_modal_closed.emit(res))
 	add_child(skirmish_modal)
 
