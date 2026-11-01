@@ -17,6 +17,8 @@ func _ready() -> void:
 		"test_skip_confirm_reuse", "test_full_playback_finishes",
 		"test_every_weapon_has_anim", "test_every_support_has_anim", "test_persistent_effects_after_skip",
 		"test_pairings_play_to_result", "test_attachment_textures_cached",
+		"test_mouse_click_skips_then_confirms", "test_viewport_renders_only_while_active",
+		"test_white_sheets_are_pregenerated", "test_support_run_is_pure",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -44,7 +46,8 @@ func test_anchor_mirrors() -> void:
 	var w: int = int(MechSpriteBank.meta_for("vanguard")["w"])
 	var a := MechSpriteBank.anchor("vanguard", "feet", "idle0", false)
 	var b := MechSpriteBank.anchor("vanguard", "feet", "idle0", true)
-	_check(is_equal_approx(b.x, w - a.x), "mirrored anchor x = w - x (got %s vs %s)" % [b, a])
+	# a pixel in column x lands in column w - 1 - x under the mirrored draw transform
+	_check(is_equal_approx(b.x, w - 1 - a.x), "mirrored anchor x = w - 1 - x (got %s vs %s)" % [b, a])
 	_check(is_equal_approx(b.y, a.y), "mirrored anchor keeps y")
 
 func test_recoil_moves_muzzle() -> void:
@@ -260,3 +263,48 @@ func test_attachment_textures_cached() -> void:
 		_check(SupportAnims._attach_tex(att, m) != null, "%s attachment texture loads" % att)
 	# held by the static cache, not just by the caller
 	_check(SupportAnims._attach_cache.size() >= 3, "attachment textures are retained across frames")
+
+# ---------------------------------------------------------------- review fixes
+func test_mouse_click_skips_then_confirms() -> void:
+	var screen := _screen_for(_fight("vanguard", "moloch"))
+	await get_tree().process_frame
+	var got: Array = []
+	screen.resolution_confirmed.connect(func(res): got.append(res))
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	screen._gui_input(click)
+	_check(screen._all_steps_done, "first click skips to the result")
+	_check(got.is_empty(), "first click does not confirm")
+	screen._gui_input(click)
+	_check(got.size() == 1, "second click confirms")
+	screen.queue_free()
+
+func test_viewport_renders_only_while_active() -> void:
+	var screen := _screen_for(_fight("falke", "donner"))
+	await get_tree().process_frame
+	_check(screen._viewport.render_target_update_mode == SubViewport.UPDATE_ALWAYS, "viewport renders every frame while a fight plays")
+	screen._on_confirm_pressed()
+	screen._on_confirm_pressed()
+	_check(screen._viewport.render_target_update_mode == SubViewport.UPDATE_DISABLED, "viewport stops rendering once hidden")
+	screen.queue_free()
+
+func test_white_sheets_are_pregenerated() -> void:
+	for c in CHASSIS + ["moloch_spent", "donner_braced"]:
+		var w := MechSpriteBank.get_white_sheet(c, 0)
+		_check(w != null and w.resource_path.ends_with("_white.png"), "%s white flash sheet is a pre-generated PNG (no per-pixel build at impact)" % c)
+		if w != null:
+			_check(w.get_width() == MechSpriteBank.get_sheet(c, 0).get_width(), "%s white sheet matches sheet size" % c)
+
+func test_support_run_is_pure() -> void:
+	var screen := _screen_for(_fight("donner", "goliath"))
+	await get_tree().process_frame
+	var st := screen.stage
+	for card in ["anchor_strut", "ferro_bulkhead", "ablative_shield"]:
+		var a: Dictionary = st.mechs["atk"]
+		var d: Dictionary = st.mechs["def"]
+		var before := [a["sheet"], a["slab"], a["armed"]]
+		for t in [0.2, 0.5, 0.9]:
+			SupportAnims.run(st, a, d, card, t)
+		_check([a["sheet"], a["slab"], a["armed"]] == before, "%s animation does not mutate lasting state" % card)
+	screen.queue_free()

@@ -46,6 +46,9 @@ def write_mech(out, sheet_name, defn, flags=(), braced=False, variants=None):
         pal = raster.palette_for(fac)
         frames = [raster.colorize(b, w, h, pal) for b in bufs]
         png.write_png(os.path.join(out, "mechs", "%s_%s.png" % (sheet_name, fac)), w * len(frames), h, raster.hstack(frames, w, h))
+    # white silhouette for hit flashes (faction-independent)
+    whites = [[[(255, 255, 255, 255) if b[y * w + x] is not None else (0, 0, 0, 0) for x in range(w)] for y in range(h)] for b in bufs]
+    png.write_png(os.path.join(out, "mechs", "%s_white.png" % sheet_name), w * len(whites), h, raster.hstack(whites, w, h))
     meta = {
         "w": w, "h": h,
         "idle_ms": defn["idle_ms"],

@@ -31,15 +31,16 @@ static func apply_persistent(_stage: BattleStage, a: Dictionary, card_id: String
 		"ferro_bulkhead":
 			a["slab"] = true
 		"anchor_strut":
-			var braced: String = MechSpriteBank.meta_for(a["chassis"]).get("variants", {}).get("braced", "")
-			if braced == "" and MechSpriteBank.has_pose(a["chassis"] + "_braced", "idle0"):
-				braced = a["chassis"] + "_braced"
+			var braced := braced_sheet(a)
 			if braced != "":
 				a["sheet"] = braced
 		"ablative_shield":
 			a["armed"] = true
 
 ## Reactive bricks detonate on the hit they soften; the spent sheet replaces the intact one.
+static func braced_sheet(a: Dictionary) -> String:
+	return String(MechSpriteBank.meta_for(a["chassis"]).get("variants", {}).get("braced", ""))
+
 static func consume_soften(_stage: BattleStage, target: Dictionary, card_id: String) -> void:
 	if card_id == "ablative_shield" and target.get("armed", false):
 		target["armed"] = false
@@ -71,14 +72,16 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: Strin
 				var tex := _attach_tex("slab", a)
 				stage.fx(func(ci): _draw_attach(ci, tex, p, a["mirrored"]))
 			else:
-				a["slab"] = true
+				# landed: drawn here until the phase ends and the stage makes it lasting
+				var tex := _attach_tex("slab", a)
+				stage.fx(func(ci): _draw_attach(ci, tex, front, a["mirrored"]))
 				var k := (t - SLAB_DROP) / (dur - SLAB_DROP)
 				if k < 0.5:
 					a["offset"] += Vector2(0, 1 if int(t / 0.04) % 2 == 0 else 0)
 				stage.fx(func(ci): BattleFX.ellipse(ci, Vector2(front.x + 20 * (1 if not a["mirrored"] else -1), BattleStage.GROUND_Y), int(10 + k * 46), int(2 + k * 4), Color(0.55, 0.47, 0.32, 0.75 * (1.0 - k))))
 		"anchor_strut":
-			if t >= 0.4:
-				apply_persistent(stage, a, card_id)
+			if t >= 0.4 and braced_sheet(a) != "":
+				a["sheet_vis"] = braced_sheet(a) # visual only; the stage applies the lasting swap
 			if t > 0.35 and t < 1.0:
 				var k := (t - 0.35) / 0.65
 				var feet := stage.point(a, "feet")

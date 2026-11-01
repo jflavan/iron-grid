@@ -37,7 +37,7 @@ func _ready() -> void:
 	_viewport.disable_3d = true
 	_viewport.transparent_bg = false
 	_viewport.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
-	_viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	add_child(_viewport)
 	stage = BattleStage.new()
 	_viewport.add_child(stage)
@@ -67,6 +67,8 @@ func start_showdown(result: SkirmishEngine.SkirmishResult) -> void:
 	_all_steps_done = false
 	visible = true
 	stage.setup(result, BattleTimeline.build(result))
+	# render every frame while active so the first visible frame is this fight, never the last one
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	stage.speed_label = "2X" if _fast_mode else ""
 	SoundManager.play("radar_lock")
 
@@ -97,9 +99,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_S:
 			_on_speed_pressed()
 			get_viewport().set_input_as_handled()
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+
+## The full-screen Control stops mouse events, so clicks arrive here (not in _unhandled_input):
+## the first click skips to the result, the next confirms.
+func _gui_input(event: InputEvent) -> void:
+	if not visible or not _is_active:
+		return
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if _all_steps_done:
 			_on_confirm_pressed()
+		else:
+			_on_skip_pressed()
 		accept_event()
 
 func _on_speed_pressed() -> void:
@@ -123,6 +133,7 @@ func _on_confirm_pressed() -> void:
 	SoundManager.play("ui_confirm")
 	_is_active = false
 	visible = false
+	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	var res := current_result
 	current_result = null
 	resolution_confirmed.emit(res)

@@ -17,3 +17,7 @@ mono_crash.*.json
 # Brainstorm / browser tooling scratch
 .superpowers/
 .playwright-mcp/
+
+# Python bytecode
+__pycache__/
+*.pyc

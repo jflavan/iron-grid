@@ -83,7 +83,7 @@ func _make_mech(side: String, data: MechData, on_left: bool, lift: int) -> Dicti
 		# lasting state for the rest of the fight
 		"slab": false, "armed": false, "dark": false, "sink": 0.0, "end_offset": Vector2.ZERO,
 		# per-frame effect state (reset every frame)
-		"glitch": 0.0, "ghosts": [], "glow": Color(0, 0, 0, 0), "attach": {}, "bricks_glow": 0.0,
+		"glitch": 0.0, "ghosts": [], "glow": Color(0, 0, 0, 0), "attach": {}, "bricks_glow": 0.0, "sheet_vis": "",
 	}
 	var feet := MechSpriteBank.anchor(m["sheet"], "feet", "idle0", m["mirrored"])
 	var fx: float = FEET_X["left" if on_left else "right"]
@@ -246,13 +246,17 @@ func _apply_impact(b: Dictionary) -> void:
 func fx(c: Callable) -> void:
 	_fx.append(c)
 
+## Sheet drawn this frame: a support animation may preview a variant before it becomes lasting.
+func sheet_of(m: Dictionary) -> String:
+	return m["sheet_vis"] if m.get("sheet_vis", "") != "" else m["sheet"]
+
 func pose_of(m: Dictionary) -> String:
 	if m["pose"] != "":
 		return m["pose"]
-	return MechSpriteBank.idle_pose(m["sheet"], clock * 1000.0 + float(m["idle_shift_ms"]))
+	return MechSpriteBank.idle_pose(sheet_of(m), clock * 1000.0 + float(m["idle_shift_ms"]))
 
 func point(m: Dictionary, anchor_name: String) -> Vector2:
-	return m["base"] + m["offset"] + MechSpriteBank.anchor(m["sheet"], anchor_name, pose_of(m), m["mirrored"])
+	return m["base"] + m["offset"] + MechSpriteBank.anchor(sheet_of(m), anchor_name, pose_of(m), m["mirrored"])
 
 func coalition_mech() -> Dictionary:
 	return mechs[timeline.coalition_side]
@@ -274,6 +278,7 @@ func _animate() -> void:
 		m["ghosts"] = []
 		m["glow"] = Color(0, 0, 0, 0)
 		m["attach"] = {}
+		m["sheet_vis"] = ""
 		m["bricks_glow"] = 0.4 if m["armed"] and int(clock / 0.3) % 2 == 0 else 0.0
 	_fx.clear()
 	# Hold-at-1: a walker whose real hull is gone keeps acting but staggers, sparks and smokes.
@@ -373,13 +378,13 @@ func _draw_mech(m: Dictionary) -> void:
 	if not m["visible"]:
 		return
 	var pose := pose_of(m)
-	var tex := MechSpriteBank.get_sheet(m["sheet"], m["faction"])
+	var tex := MechSpriteBank.get_sheet(sheet_of(m), m["faction"])
 	if tex == null:
 		return
-	var src := MechSpriteBank.frame_rect(m["sheet"], pose)
+	var src := MechSpriteBank.frame_rect(sheet_of(m), pose)
 	var pos: Vector2 = m["base"] + m["offset"]
 	var needs_white: bool = m["white"] or m["ghosts"].size() > 0 or m["glow"].a > 0.0
-	var white := MechSpriteBank.get_white_sheet(m["sheet"], m["faction"]) if needs_white else null
+	var white := MechSpriteBank.get_white_sheet(sheet_of(m)) if needs_white else null
 	# sinking wreck: only the part above the ground line is drawn
 	var sink := roundf(float(m["sink"]))
 	var visible_h := src.size.y - sink
@@ -412,11 +417,11 @@ func _draw_mech(m: Dictionary) -> void:
 	if m["bricks_glow"] > 0.0 and not m["dark"]:
 		var br = MechSpriteBank.meta_for(m["chassis"]).get("anchors", {}).get("bricks", null)
 		if br != null:
-			var off := MechSpriteBank.pose_offset(m["sheet"], pose)
+			var off := MechSpriteBank.pose_offset(sheet_of(m), pose)
 			draw_rect(Rect2(Vector2(br[0], br[1]) + off, Vector2(31, 19)), Color(1.0, 0.7, 0.2, m["bricks_glow"] * 0.5))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if not m["dark"]:
-		var stacks: Array = MechSpriteBank.meta_for(m["sheet"]).get("anchors", {}).get("stacks", [])
+		var stacks: Array = MechSpriteBank.meta_for(sheet_of(m)).get("anchors", {}).get("stacks", [])
 		for i in stacks.size():
 			BattleFX.exhaust(self, point(m, "stacks/%d" % i), clock, i * 0.37 + (0.2 if m["side"] == "def" else 0.0), m["dir"])
 	elif sink > 0.0:

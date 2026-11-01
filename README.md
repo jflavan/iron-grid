@@ -115,7 +115,7 @@ Each turn cycles through three phases:
 | **`E`** | End Player Command Phase |
 | **`C`** | Reset & center camera on battlefield |
 | **`H`** | Toggle Tactical Field Manual & Terrain Chart |
-| **`Space` / `Enter`** | Battle screen: skip to the result / confirm the result |
+| **`Space` / `Enter` / Left Click** | Battle screen: skip to the result / confirm the result |
 | **`S`** | Battle screen: toggle 1× / 2× playback speed |
 | **`Esc`** | Deselect unit / Close modal |
 
