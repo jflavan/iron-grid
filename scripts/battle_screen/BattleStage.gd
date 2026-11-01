@@ -41,8 +41,9 @@ const DESTROY_DUR := 2.2
 const CMD_BOX_RECT := Rect2(114, MENU_Y + 4, 80, 62)
 const TECH_BOX_RECT := Rect2(114, MENU_Y + 4, 242, 62)
 const MENU_ROW_H := 13
-const CMD_ROW0_TOP := MENU_Y + 10   # first ATTACK/TECH/DEFEND/RETREAT row (text sits 2px lower)
+const CMD_ROW0_TOP := MENU_Y + 9    # first ATTACK/TECH/DEFEND/RETREAT row
 const TECH_ROW0_TOP := MENU_Y + 18  # first ability row; the "TECH SYSTEMS" header sits above it
+const ROW_TEXT_DY := 3              # glyph top sits this far below the row's hit-test top
 
 var result: SkirmishEngine.SkirmishResult
 var session: SkirmishEngine.BattleSession = null
@@ -731,9 +732,9 @@ func _draw_menu() -> void:
 			for i in COMMANDS.size():
 				var disabled: bool = (i == 3 and coa_side == "def" and session != null and not session.can_defender_retreat)
 				var col := C_DIM if disabled else C_NAME
-				PixelFont.draw_text(self, COMMANDS[i], Vector2(130, MENU_Y + 12 + i * 13), col)
+				PixelFont.draw_text(self, COMMANDS[i], Vector2(130, _cmd_row_y(i)), col)
 			if int(clock / 0.2) % 2 == 0:
-				var cy := MENU_Y + 12 + menu_cursor * 13
+				var cy := _cmd_row_y(menu_cursor)
 				draw_colored_polygon(PackedVector2Array([Vector2(120, cy), Vector2(126, cy + 3.5), Vector2(120, cy + 7)]), C_CURSOR)
 		else:
 			BattleFX.panel(self, TECH_BOX_RECT)
@@ -746,20 +747,27 @@ func _draw_menu() -> void:
 				var short_ab := ab.ability_name.to_upper()
 				if short_ab.length() > 24:
 					short_ab = short_ab.substr(0, 24)
-				var ry := MENU_Y + 21 + i * 13
+				var ry := _tech_row_y(i)
 				PixelFont.draw_text(self, short_ab, Vector2(130, ry), col)
 				_right_text("%dEN" % ab.energy_cost, int(TECH_BOX_RECT.end.x - 6), ry, C_EN if affordable else C_DIM)
-			var cy := MENU_Y + 21 + tech_cursor * 13
+			var cy := _tech_row_y(tech_cursor)
 			draw_colored_polygon(PackedVector2Array([Vector2(120, cy), Vector2(126, cy + 3.5), Vector2(120, cy + 7)]), C_CURSOR)
 	elif phase == "menu" and int(b.get("command_row", -1)) >= 0:
 		BattleFX.panel(self, CMD_BOX_RECT)
 		for i in COMMANDS.size():
-			PixelFont.draw_text(self, COMMANDS[i], Vector2(130, MENU_Y + 12 + i * 13), C_NAME)
+			PixelFont.draw_text(self, COMMANDS[i], Vector2(130, _cmd_row_y(i)), C_NAME)
 		var target_row := int(b["command_row"])
 		var row := mini(target_row, int(phase_t / 0.10))
 		if int(clock / 0.18) % 2 == 0 or row == target_row:
-			var cy := MENU_Y + 12 + row * 13
+			var cy := _cmd_row_y(row)
 			draw_colored_polygon(PackedVector2Array([Vector2(120, cy), Vector2(126, cy + 3.5), Vector2(120, cy + 7)]), C_CURSOR)
+
+## Drawn y of a command / ability row, derived from the same constants menu_row_at hit-tests with.
+func _cmd_row_y(i: int) -> int:
+	return CMD_ROW0_TOP + ROW_TEXT_DY + i * MENU_ROW_H
+
+func _tech_row_y(i: int) -> int:
+	return TECH_ROW0_TOP + ROW_TEXT_DY + i * MENU_ROW_H
 
 func _gauge(r: Rect2, ratio: float, col: Color) -> void:
 	draw_rect(r, C_GAUGE_BG)

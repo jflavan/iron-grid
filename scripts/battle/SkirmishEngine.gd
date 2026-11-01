@@ -686,8 +686,8 @@ static func compute_forecast(attacker: MechData, defender: MechData, from_tile: 
 		"est_dmg_to_atk": res.total_dmg_to_attacker,
 		"atk_eff_fp": res.atk_effective_firepower,
 		"def_eff_fp": res.def_effective_firepower,
-		"atk_spd": attacker.speed,
-		"def_spd": defender.speed,
+		"atk_spd": res.atk_effective_speed,  # round-1 initiative speeds, the ones the queue was built from
+		"def_spd": res.def_effective_speed,
 		"first_striker": "ATTACKER" if res.first_striker == "atk" else "DEFENDER",
 		"rounds_fought": res.rounds_fought,
 		"attacker_won": res.attacker_won_clash,
