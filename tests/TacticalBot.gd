@@ -21,8 +21,11 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 
 	var best := { "type": "WAIT_ENTRENCH", "target_pos": m.grid_pos,
 		"score": _score_tile(start_tile, m, foes, map_def, targets) + (18.0 if m.current_fuel <= 4 else 4.0) }
-	if garrison and start_tile.is_objective and start_tile.controlled_by == ME:
-		best["score"] += 38.0
+	if garrison:
+		if start_tile.is_objective and start_tile.controlled_by == ME:
+			best["score"] += 48.0
+		elif start_tile.elevation >= 3:
+			best["score"] += 18.0
 	var cands: Array[Dictionary] = [best]
 
 	for dest_pos in reachable.keys():
@@ -33,16 +36,22 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 		if info["is_attack"]:
 			var tgt: MechUnit = uc.get_unit_at(dest_pos, unit)
 			if tgt == null: continue
-			var from_tile: GridTileData = grid_map.get_tile(path[path.size() - 2] if path.size() >= 2 else m.grid_pos)
+			var from_pos: Vector2i = path[path.size() - 2] if path.size() >= 2 else m.grid_pos
+			var from_tile: GridTileData = grid_map.get_tile(from_pos)
 			var fc: Dictionary = SkirmishEngine.compute_forecast(m, tgt.mech_data, from_tile, dest_tile)
 			var dd: int = fc["est_dmg_to_def"]; var da: int = fc["est_dmg_to_atk"]
 			var atk_won: bool = bool(fc.get("attacker_won", dd >= da))
 			score = 45.0 + float(dd - da) * 1.35 + (24.0 if atk_won else -20.0)
 			score += float(fc["atk_mod_pct"] - fc["def_mod_pct"]) * 0.45
-			if dd >= tgt.mech_data.current_armor: score += 130.0
+			if dd >= tgt.mech_data.current_armor: score += 130.0 if da < m.current_armor else 35.0
 			if dest_tile.is_objective and dest_tile.controlled_by != ME: score += 30.0
 			if deny.has(dest_pos): score += 150.0
 			if da >= m.current_armor and dd < tgt.mech_data.current_armor: score -= 95.0
+			if garrison and not deny.has(dest_pos):
+				if start_tile.is_objective and start_tile.controlled_by == ME and from_pos != m.grid_pos:
+					score -= 42.0
+				if from_tile.elevation < start_tile.elevation:
+					score -= float(start_tile.elevation - from_tile.elevation) * 18.0
 		else:
 			if dest_pos == m.grid_pos: continue
 			score = _score_tile(dest_tile, m, foes, map_def, targets)
@@ -86,13 +95,19 @@ static func _score_tile(tile: GridTileData, m: MechData, foes: Array[MechUnit], 
 	if tile.terrain_type == GridTileData.TerrainType.RIVER: s -= 26.0
 	elif tile.terrain_type == GridTileData.TerrainType.CITY: s += 18.0
 	elif tile.terrain_type == GridTileData.TerrainType.MOUNTAIN and m.mountain_gear: s += 16.0
-	if tile.is_objective: s += 52.0 if tile.controlled_by != ME else 24.0
+	if tile.is_objective:
+		if tile.controlled_by != ME:
+			s += 52.0
+		else:
+			s += 44.0 if map_def.strategy_mode == MapDefinition.StrategyMode.DEFENSE else 24.0
 	var ed: float = 999.0
 	for f in foes: ed = minf(ed, float(absi(tile.coords.x - f.mech_data.grid_pos.x) + absi(tile.coords.y - f.mech_data.grid_pos.y)))
 	var od: float = 999.0
 	for o in targets: od = minf(od, float(absi(tile.coords.x - o.x) + absi(tile.coords.y - o.y)))
 	match map_def.strategy_mode:
-		MapDefinition.StrategyMode.DEFENSE: s -= od * 7.0 + ed * 2.2   # Coalition garrison
+		MapDefinition.StrategyMode.DEFENSE:
+			s -= od * 7.0 + ed * 2.2   # Coalition garrison
+			if tile.elevation < 2: s -= 22.0
 		MapDefinition.StrategyMode.OFFENSE: s -= od * 6.5 + ed * 4.5   # Coalition assault
 		_: s -= ed * 4.8 + od * 3.8
 	return s

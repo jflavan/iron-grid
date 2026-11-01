@@ -212,6 +212,16 @@ func test_interactive_session_menu() -> void:
 	screen.stage.move_cursor(1)
 	screen.stage.confirm_selection()
 	_check(screen.stage.phase == "support", "selecting Krupp Plate enters support phase")
+	# Clicking during animation in an active interactive session fast-forwards to the next command_select prompt
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	click.position = Vector2(20, 20)
+	screen._gui_input(click)
+	_check(screen.stage.phase == "command_select" and not screen._all_steps_done, "click during animation advances to next command_select without skipping battle")
+	# Clicking outside the command box while in command_select must not skip the battle
+	screen._gui_input(click)
+	_check(screen.stage.phase == "command_select" and not screen._all_steps_done, "click outside command box during command_select does not skip battle")
 	# Skip remaining battle to end
 	screen._on_skip_pressed()
 	_check(screen._all_steps_done and sess.is_finished, "skip auto-resolves interactive session to completion")

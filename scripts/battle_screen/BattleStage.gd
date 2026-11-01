@@ -39,7 +39,7 @@ const ENDING_DUR := 1.0
 const DESTROY_DUR := 2.2
 
 const CMD_BOX_RECT := Rect2(114, MENU_Y + 4, 80, 62)
-const TECH_BOX_RECT := Rect2(114, MENU_Y + 4, 164, 62)
+const TECH_BOX_RECT := Rect2(114, MENU_Y + 4, 242, 62)
 
 var result: SkirmishEngine.SkirmishResult
 var session: SkirmishEngine.BattleSession = null
@@ -152,6 +152,20 @@ func skip_to_end() -> void:
 	beat_idx = timeline.beats.size()
 	_apply_ending_final()
 	_enter("result")
+	queue_redraw()
+
+## Fast-forwards current turn animations until the next interactive `command_select` prompt
+## (or `result` if the battle concludes during this exchange).
+func skip_to_next_command_or_end() -> void:
+	if finished or phase == "command_select":
+		return
+	var guard := 0
+	while phase not in ["result", "command_select"] and guard < 64:
+		if phase == "attack" and not _impact_done:
+			_apply_impact(current_beat())
+		phase_t = 0.0
+		_next_phase()
+		guard += 1
 	queue_redraw()
 
 func advance(delta: float) -> void:
@@ -552,12 +566,18 @@ func _animate_ending() -> void:
 			var m: Dictionary = mechs["def"]
 			var k := clampf(t / 0.6, 0.0, 1.0)
 			m["offset"] = Vector2(roundf(-8.0 * k * int(m["dir"])), roundf(k))
-			m["pose"] = "hit" if t < 0.5 else "stagger"
+			if result != null and result.defender_retreated:
+				m["pose"] = "brace"
+			else:
+				m["pose"] = "hit" if t < 0.5 else "stagger"
 		"repelled":
 			var m: Dictionary = mechs["atk"]
 			var k := clampf(t / 0.6, 0.0, 1.0)
 			m["offset"] = Vector2(roundf(-8.0 * k * int(m["dir"])), 0)
-			m["pose"] = "hit" if t < 0.5 else "brace"
+			if result != null and result.attacker_retreated:
+				m["pose"] = "brace"
+			else:
+				m["pose"] = "hit" if t < 0.5 else "brace"
 		_:
 			for side in _ending_losers():
 				var m: Dictionary = mechs[side]
@@ -729,13 +749,14 @@ func _draw_menu() -> void:
 		else:
 			BattleFX.panel(self, TECH_BOX_RECT)
 			PixelFont.draw_text(self, "TECH SYSTEMS [ESC]", Vector2(122, MENU_Y + 8), C_LABEL)
+			_right_text("EN %d/%d" % [coa_en, cd.max_energy], int(TECH_BOX_RECT.end.x - 6), MENU_Y + 8, C_EN)
 			for i in cd.abilities.size():
 				var ab: CombatAbility = cd.abilities[i]
 				var affordable := (coa_en >= ab.energy_cost)
 				var col := C_NAME if affordable else C_DIM
 				var short_ab := ab.ability_name.to_upper()
-				if short_ab.length() > 16:
-					short_ab = short_ab.substr(0, 16)
+				if short_ab.length() > 24:
+					short_ab = short_ab.substr(0, 24)
 				var ry := MENU_Y + 21 + i * 13
 				PixelFont.draw_text(self, short_ab, Vector2(130, ry), col)
 				_right_text("%dEN" % ab.energy_cost, int(TECH_BOX_RECT.end.x - 6), ry, C_EN if affordable else C_DIM)

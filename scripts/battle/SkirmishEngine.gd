@@ -208,6 +208,7 @@ class BattleSession extends RefCounted:
 		st.base_crit = clampi(m.crit_chance + maxi(0, my_elev_adv) * 5, 4, 50)
 		st.base_acc = 94 + my_elev_adv * 4
 		if side == "def" and m.is_entrenched:
+			st.base_spd += 4
 			st.base_eva += 5
 			st.base_acc += 6
 		return st
@@ -234,10 +235,10 @@ class BattleSession extends RefCounted:
 			_conclude_battle()
 			return
 		result.rounds_fought = round_number
-		# Round 1 gives Initiating Attacker +8 Speed bonus (offset if Defender is Entrenched +8 Speed)
+		# Round 1 gives Initiating Attacker +8 Speed bonus (offset if Defender is Entrenched: +4 base +6 Round 1 = +10)
 		var atk_spd := atk_state.get_effective_speed() + (8 if round_number == 1 else 0)
-		var def_spd := def_state.get_effective_speed() + (8 if round_number == 1 and result.defender.is_entrenched else 0)
-		if atk_spd >= def_spd:
+		var def_spd := def_state.get_effective_speed() + (6 if round_number == 1 and result.defender.is_entrenched else 0)
+		if atk_spd > def_spd or (atk_spd == def_spd and not result.defender.is_entrenched):
 			turn_queue = ["atk", "def"]
 		else:
 			turn_queue = ["def", "atk"]
@@ -264,14 +265,17 @@ class BattleSession extends RefCounted:
 					best_weapon = ab
 
 		# 2. Tactical Morale / Retreat Check:
-		# If critically low on Hull (<= 28% HP), cannot kill target this turn, and not guarding an Objective tile
+		# On Round 2+, if a walker is in critical hull (<= 38% HP or within lethal range of next enemy strike),
+		# cannot finish the opponent this turn, is not defending a vital Objective tile, and hasn't already tried to retreat:
 		var hp_ratio := float(actor.hp) / float(maxi(1, actor.max_hp))
 		var holding_vital_objective: bool = (side == "def" and result.target_tile != null and result.target_tile.is_objective)
 		var can_escape_tile: bool = (side == "atk" or can_defender_retreat)
-		if not deterministic_mode and hp_ratio <= 0.28 and target.hp > best_weapon_dmg and not holding_vital_objective and can_escape_tile:
-			# Attempt retreat if speed gives a reasonable chance
+		var enemy_est := estimate_attack_damage(target, actor, null)
+		var in_lethal_danger: bool = (hp_ratio <= 0.38 or (actor.hp <= enemy_est + 6 and target.hp > actor.hp + 10))
+		if not deterministic_mode and round_number >= 2 and in_lethal_danger and target.hp > best_weapon_dmg and not holding_vital_objective and can_escape_tile and not actor.used_support_ids.has("retreat_attempted"):
 			var esc_chance := compute_escape_chance(actor, target)
-			if esc_chance >= 45 and rng.randi_range(1, 100) <= 65:
+			if esc_chance >= 40:
+				actor.used_support_ids["retreat_attempted"] = true
 				return {"command": CommandType.RETREAT, "ability_id": ""}
 
 		# 3. Early in the fight (Round 1-2), consider using an unapplied Support/Armor/Tactical TECH
@@ -364,6 +368,7 @@ class BattleSession extends RefCounted:
 				step.status_text = "GUARD +50% // +2 EN"
 				step.description = "%s braces armor plating (+50%% Guard, +2 EN)." % actor.mech.callsign
 			CommandType.RETREAT:
+				actor.used_support_ids["retreat_attempted"] = true
 				step.ability_id = "retreat"
 				step.ability_name = "EMERGENCY RETREAT"
 				step.ability_category = "RETREAT"
@@ -441,6 +446,8 @@ class BattleSession extends RefCounted:
 			step.soften_from = target.pending_soften
 			target.pending_soften = ""
 
+		if target.hp > 0:
+			dmg = mini(target.hp, dmg)
 		target.hp = maxi(0, target.hp - dmg)
 		step.damage_dealt = dmg
 		if actor.side == "atk":
@@ -611,8 +618,8 @@ static func _init_result_modifiers(
 	res.def_effective_armor = maxi(8, int(round(float(defender.armor_rating) * (1.0 + float(res.def_total_mod_pct) / 100.0))))
 
 	res.atk_effective_speed = attacker.speed + 8
-	res.def_effective_speed = defender.speed + (8 if defender.is_entrenched else 0)
-	res.first_striker = "atk" if res.atk_effective_speed >= res.def_effective_speed else "def"
+	res.def_effective_speed = defender.speed + (10 if defender.is_entrenched else 0)
+	res.first_striker = "atk" if res.atk_effective_speed > res.def_effective_speed or (res.atk_effective_speed == res.def_effective_speed and not defender.is_entrenched) else "def"
 
 	var elev_label := "LEVEL GROUND"
 	if res.elev_diff > 0:

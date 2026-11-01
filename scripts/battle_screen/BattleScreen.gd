@@ -14,7 +14,7 @@ extends Control
 ## - Esc / Backspace / Right-Click: back out of TECH sub-menu
 ## - S: toggle 1x/2x animation speed
 ## - A: toggle Auto-Pilot (AI picks player commands automatically)
-## - Space/Enter/Click (when not in command menu): skip to result, then confirm
+## - Space/Enter/Click (when not in command menu): advance to next command or skip to result, then confirm
 
 signal resolution_confirmed(result: SkirmishEngine.SkirmishResult)
 
@@ -149,7 +149,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if _all_steps_done:
 				_on_confirm_pressed()
 			else:
-				_on_skip_pressed()
+				_on_advance_or_skip_pressed()
 			get_viewport().set_input_as_handled()
 
 func _gui_input(event: InputEvent) -> void:
@@ -163,16 +163,15 @@ func _gui_input(event: InputEvent) -> void:
 			if event.button_index == MOUSE_BUTTON_RIGHT:
 				stage.cancel_submenu()
 				accept_event()
-				return
 			elif event.button_index == MOUSE_BUTTON_LEFT:
 				if stage.handle_mouse_click(_screen_to_stage(event.position)):
 					accept_event()
-					return
+			return
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if _all_steps_done:
 				_on_confirm_pressed()
 			else:
-				_on_skip_pressed()
+				_on_advance_or_skip_pressed()
 			accept_event()
 
 func _on_speed_pressed() -> void:
@@ -184,6 +183,17 @@ func _on_auto_pressed() -> void:
 	_auto_pilot = not _auto_pilot
 	stage.auto_pilot = _auto_pilot
 	SoundManager.play("ui_click")
+
+func _on_advance_or_skip_pressed() -> void:
+	if not _is_active or _all_steps_done:
+		return
+	if current_session != null and not current_session.is_finished and not _auto_pilot:
+		SoundManager.play("ui_click")
+		stage.skip_to_next_command_or_end()
+		if stage.finished and not _all_steps_done:
+			_finish()
+	else:
+		_on_skip_pressed()
 
 func _on_skip_pressed() -> void:
 	if not _is_active or _all_steps_done:

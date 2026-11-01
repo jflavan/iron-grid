@@ -382,7 +382,7 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 		_tr(CrtUI.fit(str(current_forecast.get("first_striker", "ATK")), 78), fr, fy, CrtUI.C_CURSOR)
 		fy += 11
 		_t("EST DMG/RETURN", Vector2(fx, fy), CrtUI.C_LABEL)
-		_tr("%d/%d (%s)" % [int(current_forecast["est_dmg_to_def"]), int(current_forecast["est_dmg_to_atk"]), str(current_forecast.get("outlook", "EVEN"))], fr, fy, CrtUI.C_NUM)
+		_tr("%d/%d" % [int(current_forecast["est_dmg_to_def"]), int(current_forecast["est_dmg_to_atk"])], fr, fy, CrtUI.C_NUM)
 		fy += 15
 		_t("CLICK ENEMY TO ENGAGE", Vector2(fx, fy), CrtUI.C_HOSTILE)
 
