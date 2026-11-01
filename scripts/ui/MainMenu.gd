@@ -25,6 +25,7 @@ var _stat_max := {"hull": 1, "en": 1, "armor": 1, "fire": 1, "spd": 1, "fuel": 1
 var show_rules: bool = false
 var rules_chapter: int = 0
 var _rules: Array[Dictionary] = []
+var _rules_cache: Dictionary = {}   # "chapter:width" -> laid-out blocks (content is fixed while the menu lives)
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -347,18 +348,32 @@ func _draw_rules(v: Vector2) -> void:
 	var inner_w := body.size.x - 2 * RULES_PAD
 	CrtUI.text(self, "%d. %s" % [rules_chapter + 1, ch["title"]], Vector2(bx, body.position.y + 8), CrtUI.C_NAME)
 	var y := body.position.y + RULES_BODY_TOP
-	for b: Dictionary in ch["blocks"]:
-		if b.has("table"):
-			var rows: Array = b["table"]
-			var xs := RulesContent.table_col_x(rows)
+	for blk: Dictionary in _rules_render(rules_chapter, inner_w):
+		if blk.has("rows"):
+			var xs: PackedFloat32Array = blk["xs"]
+			var rows: Array = blk["rows"]
 			for r in rows.size():
 				var row: PackedStringArray = rows[r]
 				for c in row.size():
 					CrtUI.text(self, row[c], Vector2(bx + xs[c], y), CrtUI.C_LABEL if r == 0 else CrtUI.C_NUM)
 				y += CrtUI.LINE
 		else:
-			var col := CrtUI.C_CURSOR if b.has("key") else CrtUI.C_NUM
-			for l in RulesContent.block_lines(b, inner_w):
-				CrtUI.text(self, l, Vector2(bx, y), col)
+			for l in blk["lines"]:
+				CrtUI.text(self, l, Vector2(bx, y), blk["col"])
 				y += CrtUI.LINE
 		y += RulesContent.BLOCK_GAP
+
+## A chapter's blocks wrapped / measured for `inner_w`, cached: _draw runs every frame.
+## Each item is {"rows", "xs"} for a table or {"lines", "col"} for text.
+func _rules_render(chapter: int, inner_w: float) -> Array:
+	var key := "%d:%d" % [chapter, int(inner_w)]
+	if _rules_cache.has(key):
+		return _rules_cache[key]
+	var out: Array = []
+	for b: Dictionary in _rules[chapter]["blocks"]:
+		if b.has("table"):
+			out.append({"rows": b["table"], "xs": RulesContent.table_col_x(b["table"])})
+		else:
+			out.append({"lines": RulesContent.block_lines(b, inner_w), "col": CrtUI.C_CURSOR if b.has("key") else CrtUI.C_NUM})
+	_rules_cache[key] = out
+	return out

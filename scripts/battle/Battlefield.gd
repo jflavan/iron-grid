@@ -14,6 +14,9 @@ var current_map_def: MapDefinition
 
 ## Hull lost by a defender that loses the clash with no open tile to retreat to.
 const CRUSH_DAMAGE: int = 15
+
+var _strike_plan_key: Array = []
+var _strike_plan_cached: StrikePlan = null
 var selected_unit: MechUnit = null
 var _is_animating_move: bool = false
 var _phase_before_resolution: GlobalState.TurnPhase = GlobalState.TurnPhase.PLAYER_PHASE
@@ -167,11 +170,10 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 		u.position = grid_map.grid_to_screen(m.grid_pos, true)
 		if not include_refuel:
 			continue
-		var refuel_amt: int = m.passive_refuel
-		var energy_amt: int = m.passive_energy_regen
 		var tile := grid_map.get_tile(m.grid_pos)
+		var refuel_amt: int = m.upkeep_refuel(tile)
+		var energy_amt: int = m.passive_energy_regen
 		if tile != null and tile.terrain_type == GridTileData.TerrainType.CITY:
-			refuel_amt += MechData.CITY_FUEL
 			energy_amt += MechData.CITY_ENERGY
 			var healed: int = mini(BalanceProbe.upkeep[int(m.faction)], m.max_armor - m.current_armor)
 			m.current_armor += healed
@@ -186,7 +188,7 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 func _entrench_unit(m: MechData) -> int:
 	m.has_moved = true
 	m.is_entrenched = true
-	var gained_fuel: int = mini(MechData.WAIT_FUEL, m.max_fuel - m.current_fuel)
+	var gained_fuel: int = m.wait_fuel_gain(m.current_fuel)
 	m.current_fuel += gained_fuel
 	m.current_energy = mini(m.max_energy, m.current_energy + MechData.WAIT_ENERGY)
 	var td := grid_map.get_tile(m.grid_pos)
@@ -228,9 +230,14 @@ func _deselect_unit() -> void:
 	ui_overlay.selected_mech = null
 	ui_overlay.hovered_reach_info = {}
 	ui_overlay.current_forecast = {}
+	_clear_strike_readout()
+	grid_map.clear_highlights()
+
+## Drops the OUT OF REACH box and the YOUR STEP COST row: the selected walker has used its order
+## (or there is no selection), so neither applies any more.
+func _clear_strike_readout() -> void:
 	ui_overlay.strike_plan = null
 	ui_overlay.step_cost_mech = null
-	grid_map.clear_highlights()
 
 func _on_tile_hovered(coords: Vector2i, _tile: GridTileData) -> void:
 	_refresh_hover_telemetry(coords)
@@ -273,7 +280,15 @@ func strike_plan_for(coords: Vector2i) -> StrikePlan:
 	var u_at := unit_container.get_unit_at(coords)
 	if u_at == null or u_at.mech_data.faction == selected_unit.mech_data.faction:
 		return null
-	return grid_map.compute_strike_plan(selected_unit.mech_data, coords, unit_container.build_occupied_map(selected_unit))
+	# Hover and the click that follows ask the same question: answer it once per board state.
+	var m := selected_unit.mech_data
+	var occ := unit_container.build_occupied_map(selected_unit)
+	var key := [m, m.grid_pos, m.current_fuel, coords, occ.keys()]
+	if _strike_plan_key == key:
+		return _strike_plan_cached
+	_strike_plan_key = key
+	_strike_plan_cached = grid_map.compute_strike_plan(m, coords, occ)
+	return _strike_plan_cached
 
 func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 	if GlobalState.current_phase != GlobalState.TurnPhase.PLAYER_PHASE or _is_animating_move:
@@ -326,6 +341,7 @@ func _execute_unit_movement(unit: MechUnit, target_coords: Vector2i, path: Array
 	grid_map.clear_highlights()
 	ui_overlay.hovered_reach_info = {}
 	ui_overlay.current_forecast = {}
+	_clear_strike_readout()
 
 	unit.animate_move_along_screen_points(screen_pts, func():
 		if is_instance_valid(unit):
@@ -376,8 +392,10 @@ func _on_wait_refuel_requested() -> void:
 	var m := selected_unit.mech_data
 	var gained_fuel: int = _entrench_unit(m)
 
-	GlobalState.add_log("%s entrenched at (%d,%d) [+15%% DEF, +%d Fuel, +4 EN]." % [m.callsign, m.grid_pos.x, m.grid_pos.y, gained_fuel])
+	GlobalState.add_log("%s entrenched at (%d,%d) [%+d%% DEF, +%d Fuel, +%d EN]." % [
+		m.callsign, m.grid_pos.x, m.grid_pos.y, BalanceProbe.def_pct[int(m.faction)], gained_fuel, MechData.WAIT_ENERGY])
 	grid_map.clear_highlights()
+	_clear_strike_readout()
 	selected_unit.queue_redraw()
 	_check_auto_advance_player_phase()
 

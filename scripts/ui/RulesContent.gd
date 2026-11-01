@@ -100,7 +100,7 @@ static func _how_you_win() -> Dictionary:
 		{"key": "Wiping out the enemy wins any mission. Losing every walker loses it."},
 		{"p": "PITCHED BATTLE: hold every objective at the end of a turn, or the majority when the turn limit runs out (an even split goes to the side with more walkers left; you win an exact tie)."},
 		{"p": "FORTIFIED DEFENSE: keep at least one citadel node until the turn limit. If you hold none of them at the end of a turn, you lose."},
-		{"p": "BLITZKRIEG OFFENSE: take a Syndicate HQ bunker and still hold it at the end of the turn, before the turn limit."},
+		{"p": "BLITZKRIEG OFFENSE: take a Syndicate HQ bunker and still hold it at the end of a turn. The final turn still counts. You lose only if no bunker is held when the turn limit runs out."},
 		{"key": "Captures only count at the end of a full turn: they have to survive the enemy phase."},
 		{"table": rows},
 	]}
@@ -124,8 +124,8 @@ static func _movement() -> Dictionary:
 		{"table": fuel_rows},
 		{"table": ch_rows},
 		{"p": "Refuel: each chassis regains its refuel at the start of your turn. WAIT/REFUEL adds +%d now. A city adds +%d more each turn." % [MechData.WAIT_FUEL, MechData.CITY_FUEL]},
-		{"key": "EXAMPLE: %s on a plain, enemy on a mountain one level up: %s %d + HEAVY %d + CLIMB %d = %d of its %d fuel. Move next to it, then strike on a fuller tank." % [
-			g.callsign, ex["terrain"], int(ex["base"]), int(ex["chassis"]), int(ex["climb"]), int(ex["total"]), g.max_fuel]},
+		{"key": "EXAMPLE: %s on a plain, enemy on a mountain one level up: %s = %d of its %d fuel. Move next to it, then strike on a fuller tank." % [
+			g.callsign, " + ".join(StrikePlan.step_terms(ex)), int(ex["total"]), g.max_fuel]},
 	]}
 
 static func _terrain() -> Dictionary:
@@ -184,7 +184,8 @@ static func _tips() -> Dictionary:
 	var g := _chassis("goliath")
 	return {"title": "FIELD TIPS", "blocks": [
 		{"key": "Hover an enemy before you commit: a red tile can be struck, and OUT OF REACH tells you what a strike would cost."},
-		{"p": "Heavies live on roads. A %s pays +%d off-road, so it reaches a ridge only with a nearly full tank." % [g.callsign, g.fuel_efficiency_mod]},
+		{"p": ("Heavies live on roads. A %s pays %+d off-road, so it reaches a ridge only with a nearly full tank." % [g.callsign, g.fuel_efficiency_mod])
+			if g.fuel_efficiency_mod > 0 else "Roads cost 1 fuel and never take a chassis surcharge: use them to bring slow walkers forward."},
 		{"p": "To hit a walker on a crag, end your move next to it, then strike next turn after your refuel."},
 		{"p": "Fight downhill. Every level of height you give up costs firepower and accuracy."},
 		{"p": "Don't stop in a river. Wade through on a road bridge, or with a Falke."},

@@ -25,13 +25,19 @@ func breakdown_terms() -> PackedStringArray:
 		return parts
 	if path_fuel > 0:
 		parts.append("PATH %d" % path_fuel)
-	parts.append("%s %d" % [step["terrain"], int(step["base"])])
-	var ch: int = int(step["chassis"])
+	parts.append_array(step_terms(step))
+	return parts
+
+## Terms of one MechData.get_step_fuel_breakdown, e.g. ["MTN 5", "HEAVY 1", "CLIMB 1"] or
+## ["MTN 5", "CLIMB GEAR -2"]. Shared with the Rules page's worked example.
+static func step_terms(b: Dictionary) -> PackedStringArray:
+	var parts: PackedStringArray = ["%s %d" % [b["terrain"], int(b["base"])]]
+	var ch: int = int(b["chassis"])
 	if ch != 0:
-		var label: String = step["chassis_label"] if step["chassis_label"] != "" else "CHASSIS"
+		var label: String = b["chassis_label"] if b["chassis_label"] != "" else "CHASSIS"
 		parts.append("%s %d" % [label, ch] if ch > 0 else "%s -%d" % [label, -ch])
-	if int(step["climb"]) > 0:
-		parts.append("CLIMB %d" % int(step["climb"]))
+	if int(b["climb"]) > 0:
+		parts.append("CLIMB %d" % int(b["climb"]))
 	return parts
 
 ## "PATH 2 + MTN 5 + HEAVY 1 + CLIMB 1".

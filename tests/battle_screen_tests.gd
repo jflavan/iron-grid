@@ -31,6 +31,9 @@ func _ready() -> void:
 		"test_strike_plan_beyond_range", "test_strike_plan_skips_occupied_launch_tiles", "test_strike_plan_advice_is_true",
 		"test_out_of_reach_hover_and_click", "test_terrain_panel_draws_plan",
 		"test_rules_chapters_fit", "test_rules_numbers_come_from_data", "test_rules_navigation",
+		"test_hud_plan_clears_after_order", "test_rules_offense_final_turn", "test_rules_example_follows_chassis_data",
+		"test_next_turn_fuel_matches_upkeep", "test_manual_numbers_come_from_data", "test_rules_render_is_cached",
+		"test_strike_plan_reused_until_state_changes",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -395,7 +398,7 @@ func test_crt_glyph_coverage() -> void:
 		strings.append_array([ch.callsign, ch.unit_name, ch.chassis_class, ch.lore_blurb])
 		for ab: CombatAbility in ch.abilities:
 			strings.append_array([ab.ability_name, ab.category, ab.description])
-	strings.append_array(UIOverlay.MANUAL_LINES)
+	strings.append_array(UIOverlay.manual_lines())
 	var missing := {}
 	for s in strings:
 		for ch in CrtUI.sanitize(s):
@@ -811,9 +814,6 @@ func _grid(map_idx: int) -> IsoGridMap:
 func _unit(chassis: String, faction: MechData.Faction, pos: Vector2i, tag: String = "u") -> MechData:
 	return GlobalState.create_mech_instance(chassis, faction, tag.to_upper() + "-1", pos, tag)
 
-func _refuel_at(m: MechData, gm: IsoGridMap, pos: Vector2i) -> int:
-	var t := gm.get_tile(pos)
-	return m.passive_refuel + (MechData.CITY_FUEL if t.terrain_type == GridTileData.TerrainType.CITY else 0)
 
 func test_step_breakdown_sums() -> void:
 	var bad := 0
@@ -916,10 +916,9 @@ func test_strike_plan_advice_is_true() -> void:
 							continue
 						seen[plan.advice] = true
 						var tgt_tile := gm.get_tile(target)
-						var mx := atk.max_fuel
 						match plan.advice:
 							StrikePlan.ADV_WAIT_HERE:
-								var nxt := mini(mx, mini(mx, fuel + MechData.WAIT_FUEL) + _refuel_at(atk, gm, start))
+								var nxt := atk.next_turn_fuel(fuel, gm.get_tile(start), true)
 								if nxt < atk.get_step_fuel_cost(gm.get_tile(start), tgt_tile):
 									lies.append([mi, c, start, target, fuel, "WAIT_HERE"])
 							StrikePlan.ADV_MOVE_TO:
@@ -928,11 +927,11 @@ func test_strike_plan_advice_is_true() -> void:
 									lies.append([mi, c, start, target, fuel, "MOVE_TO not a reachable launch tile"])
 								else:
 									var left: int = fuel - int(reach[plan.move_to]["fuel_spent"])
-									var nxt2 := mini(mx, left + _refuel_at(atk, gm, plan.move_to))
+									var nxt2 := atk.next_turn_fuel(left, gm.get_tile(plan.move_to), false)
 									if nxt2 < atk.get_step_fuel_cost(gm.get_tile(plan.move_to), tgt_tile):
 										lies.append([mi, c, start, target, fuel, "MOVE_TO"])
 							StrikePlan.ADV_WAIT:
-								var nxt3 := mini(mx, mini(mx, fuel + MechData.WAIT_FUEL) + _refuel_at(atk, gm, start))
+								var nxt3 := atk.next_turn_fuel(fuel, gm.get_tile(start), true)
 								if nxt3 < plan.needs:
 									lies.append([mi, c, start, target, fuel, "WAIT"])
 		gm.free()
@@ -977,6 +976,7 @@ func test_out_of_reach_hover_and_click() -> void:
 
 	# A distant enemy is quiet: no log line.
 	var iron := _unit_by_callsign(bf, "IRON-1")
+	iron.mech_data.has_moved = false
 	bf._select_unit(iron)
 	var far: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
 	_check(far != null and far.severity == StrikePlan.BEYOND_RANGE, "SPINNE-4 is beyond IRON-1's range (got %s)" % [far.severity if far else null])
@@ -1091,4 +1091,102 @@ func test_rules_navigation() -> void:
 	menu.queue_redraw()
 	await get_tree().process_frame
 	menu.queue_free()
+	await get_tree().process_frame
+
+# ---------------------------------------------------------------- code-review regression tests
+func test_hud_plan_clears_after_order() -> void:
+	var bf := await _spawn_iron_bridge()
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	titan.mech_data.grid_pos = Vector2i(7, 7)
+	titan.mech_data.current_fuel = 4
+	bf._select_unit(titan)
+	bf._refresh_hover_telemetry(Vector2i(8, 7))
+	_check(bf.ui_overlay.strike_plan != null, "precondition: OUT OF REACH plan is showing")
+	# The reviewer's case: TITAN-2 is the last walker with an order left, so WAIT selects nobody.
+	for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
+		if u != titan:
+			u.mech_data.has_moved = true
+	bf._on_wait_refuel_requested()
+	_check(bf.ui_overlay.strike_plan == null and bf.ui_overlay.step_cost_mech == null, "WAIT clears the strike plan and step-cost row")
+	var iron := _unit_by_callsign(bf, "IRON-1")
+	iron.mech_data.has_moved = false
+	bf._select_unit(iron)
+	bf._refresh_hover_telemetry(Vector2i(8, 7))
+	_check(bf.ui_overlay.step_cost_mech == iron.mech_data, "precondition: step-cost row follows IRON-1")
+	var dest: Vector2i = bf.grid_map.reachable_info.keys().filter(func(k): return k != iron.mech_data.grid_pos and not bf.grid_map.reachable_info[k]["is_attack"])[0]
+	bf._execute_unit_movement(iron, dest, bf.grid_map.reachable_info[dest]["path"], int(bf.grid_map.reachable_info[dest]["fuel_spent"]))
+	_check(bf.ui_overlay.strike_plan == null and bf.ui_overlay.step_cost_mech == null, "a move clears the strike plan and step-cost row while it animates")
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_rules_offense_final_turn() -> void:
+	var text := _all_rules_text().to_upper()
+	_check(not ("BEFORE THE TURN LIMIT" in text), "the offense rule does not say 'before the turn limit' (holding on the final turn still wins)")
+	_check("FINAL TURN" in text, "the offense rule says the final turn still counts")
+
+func test_rules_example_follows_chassis_data() -> void:
+	var g: MechData = GlobalState.chassis_catalog["goliath"]
+	var saved := g.fuel_efficiency_mod
+	g.fuel_efficiency_mod = -1
+	var text := _all_rules_text()
+	g.fuel_efficiency_mod = saved
+	var example := ""
+	for l in text.split("\n"):
+		if l.begins_with("EXAMPLE:"):
+			example = l.to_upper()
+	_check(example != "" and not ("HEAVY" in example), "with a -1 goliath the worked example says no HEAVY (%s)" % example)
+	_check("LIGHT -1" in example, "the example labels the -1 adjustment LIGHT")
+	_check(not ("+-" in text), "no '+-' sign glitch in the rules text")
+
+func test_next_turn_fuel_matches_upkeep() -> void:
+	var bf := await _spawn_iron_bridge()
+	var iron := _unit_by_callsign(bf, "IRON-1")
+	var m := iron.mech_data
+	for pos in [Vector2i(3, 1), Vector2i(2, 3)]:   # a city and a plain on Iron Bridge
+		for waited in [false, true]:
+			for fuel in [0, 3, m.max_fuel - 2, m.max_fuel]:
+				m.grid_pos = pos
+				m.current_fuel = fuel
+				var predicted: int = m.next_turn_fuel(fuel, bf.grid_map.get_tile(pos), waited)
+				if waited:
+					bf._entrench_unit(m)
+				var ps: Array[MechUnit] = [iron]
+				bf._apply_turn_upkeep(ps, true)
+				_check(m.current_fuel == predicted, "next_turn_fuel matches the real WAIT/upkeep at %s waited=%s fuel=%d (%d vs %d)" % [pos, waited, fuel, predicted, m.current_fuel])
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_manual_numbers_come_from_data() -> void:
+	var manual := "\n".join(UIOverlay.manual_lines())
+	_check(("+%d Fuel" % MechData.WAIT_FUEL) in manual and ("+%d EN" % MechData.WAIT_ENERGY) in manual, "manual WAIT line reads the WAIT constants")
+	var mtn := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.MOUNTAIN, 1)
+	_check(("%d Fuel" % mtn.get_base_fuel_cost()) in manual and ("%+d%% DEF" % mtn.get_defense_modifier_pct()) in manual, "manual terrain chart reads GridTileData")
+	_check(("+%d SPD" % SkirmishEngine.ROUND1_ATTACKER_SPD_BONUS) in manual, "manual initiative line reads SkirmishEngine")
+
+func test_rules_render_is_cached() -> void:
+	var menu: MainMenu = load("res://scenes/MainMenu.tscn").instantiate()
+	add_child(menu)
+	await get_tree().process_frame
+	var a = menu._rules_render(1, 500.0)
+	var b = menu._rules_render(1, 500.0)
+	_check(is_same(a, b), "rules chapter layout is cached per (chapter, width)")
+	_check(not is_same(a, menu._rules_render(2, 500.0)), "different chapters get their own layout")
+	menu.queue_free()
+	await get_tree().process_frame
+
+func test_strike_plan_reused_until_state_changes() -> void:
+	var bf := await _spawn_iron_bridge()
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	titan.mech_data.grid_pos = Vector2i(7, 7)
+	titan.mech_data.current_fuel = 4
+	bf._select_unit(titan)
+	var p1: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
+	_check(is_same(p1, bf.strike_plan_for(Vector2i(8, 7))), "hover then click reuse one strike plan (no second search)")
+	titan.mech_data.current_fuel = 3
+	var p2: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
+	_check(not is_same(p1, p2) and p2.have == 3, "a fuel change gives a fresh plan")
+	var spinne := _unit_by_callsign(bf, "SPINNE-4")
+	spinne.mech_data.grid_pos = Vector2i(9, 7)
+	_check(bf.strike_plan_for(Vector2i(8, 7)) == null, "the cache never answers for a tile the enemy left")
+	bf.queue_free()
 	await get_tree().process_frame

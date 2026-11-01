@@ -172,11 +172,15 @@ const _DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1),
 ## always agree. Returns [best_cost, came_from] (Vector2i -> int / Vector2i). Rules: never expand
 ## through an enemy node, never launch an engagement from a node held by another friendly unit,
 ## and drop any step whose running cost would exceed `budget`.
-func _shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int) -> Array:
+## `settle`, when given, stops the search once every listed node has been popped (its cost is final).
+func _shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
 	var start: Vector2i = unit.grid_pos
 	var best_cost: Dictionary = { start: 0 }
 	var came_from: Dictionary = { start: start }
 	var queue: Array[Vector2i] = [start]
+	var pending: Dictionary = {}
+	for p in settle:
+		pending[p] = true
 
 	while not queue.is_empty():
 		# Pop lowest fuel cost node (Dijkstra)
@@ -189,6 +193,10 @@ func _shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int) ->
 				best_idx = i
 		var current: Vector2i = queue[best_idx]
 		queue.remove_at(best_idx)
+		if not pending.is_empty():
+			pending.erase(current)
+			if pending.is_empty():
+				break
 
 		var cur_cost: int = best_cost[current]
 		var cur_tile: GridTileData = get_tile(current)
@@ -228,7 +236,12 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 	var plan := StrikePlan.new()
 	plan.have = unit.current_fuel
 	var start: Vector2i = unit.grid_pos
-	var costs: Dictionary = _shortest_costs(unit, occupied_units, _NO_FUEL_CAP)[0]
+	var neighbours: Array[Vector2i] = []
+	for d in _DIRS:
+		if is_valid_coords(target + d):
+			neighbours.append(target + d)
+	# Only the launch tiles' costs matter: stop as soon as they are all final.
+	var costs: Dictionary = _shortest_costs(unit, occupied_units, _NO_FUEL_CAP, neighbours)[0]
 	var target_tile := get_tile(target)
 
 	# Launch tiles: enemy neighbours the search reached that the attacker may stand on and fire from.
@@ -270,7 +283,7 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 	# Advice ladder (the first that holds wins).
 	var max_f: int = unit.max_fuel
 	var cheapest_step: int = launches.map(func(c): return int(c["step"]["total"])).min()
-	var fuel_after_wait: int = mini(max_f, mini(max_f, plan.have + MechData.WAIT_FUEL) + _upkeep_refuel(unit, start))
+	var fuel_after_wait: int = unit.next_turn_fuel(plan.have, get_tile(start), true)
 	if cheapest_step > max_f:
 		plan.advice = StrikePlan.ADV_IMPOSSIBLE
 		return plan
@@ -282,7 +295,7 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 	for c in in_reach:
 		if c["pos"] == start:
 			continue
-		var next_fuel: int = mini(max_f, plan.have - int(c["path"]) + _upkeep_refuel(unit, c["pos"]))
+		var next_fuel: int = unit.next_turn_fuel(plan.have - int(c["path"]), get_tile(c["pos"]), false)
 		var spare: int = next_fuel - int(c["step"]["total"])
 		if spare >= 0 and spare > best_spare:
 			best_spare = spare
@@ -295,12 +308,6 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 		return plan
 	plan.advice = StrikePlan.ADV_MULTI_TURN
 	return plan
-
-## Fuel a unit standing on `pos` regains at the start of its next turn (Battlefield._apply_turn_upkeep).
-func _upkeep_refuel(unit: MechData, pos: Vector2i) -> int:
-	var t := get_tile(pos)
-	var city: bool = t != null and t.terrain_type == GridTileData.TerrainType.CITY
-	return unit.passive_refuel + (MechData.CITY_FUEL if city else 0)
 
 func clear_highlights() -> void:
 	reachable_info = {}
