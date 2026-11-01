@@ -21,6 +21,8 @@ const ENTRENCHED_SPD_BONUS: int = 4
 const ENTRENCHED_EVA_BONUS: int = 5
 const ENTRENCHED_ACC_BONUS: int = 6
 const CRIT_DAMAGE_MULT: float = 1.42  # live crit multiplier; the deterministic forecast folds the same bonus in by expectation
+const DAMAGE_VARIANCE_MIN: float = 0.94  # live shots roll a +/-6% classic RPG variance
+const DAMAGE_VARIANCE_MAX: float = 1.06
 
 class TurnStep extends RefCounted:
 	var step_index: int = 0
@@ -33,8 +35,6 @@ class TurnStep extends RefCounted:
 	var ability_name: String = ""
 	var ability_category: String = "WEAPON" # WEAPON, ARMOR, TACTIC, DEFEND, RETREAT
 	var is_support_only: bool = false       # true for ARMOR/TACTIC/DEFEND/RETREAT (no weapon shot)
-	var energy_spent: int = 0
-	var energy_after: int = 0
 	var is_miss: bool = false
 	var is_crit: bool = false
 	var escaped: bool = false
@@ -273,10 +273,11 @@ class BattleSession extends RefCounted:
 		var target := get_opponent(side)
 
 		# 1. Check if we can finish off the target right now with a Weapon TECH or basic ATTACK.
-		# expected_strike_damage() is what _resolve_weapon_strike will deal in this mode, so a
-		# forecast never commits to a finisher that the engine then scales below the kill.
+		# expected_strike_damage() is what _resolve_weapon_strike deals before its dice, and
+		# is_sure_kill() allows for the live variance band, so a finisher is only chosen when the
+		# engine cannot scale it below the kill (a miss is a separate roll either way).
 		var basic_est := expected_strike_damage(actor, target, null)
-		if basic_est >= target.hp:
+		if is_sure_kill(basic_est, target.hp):
 			return {"command": CommandType.ATTACK, "ability_id": ""}
 
 		var best_weapon: CombatAbility = null
@@ -284,7 +285,7 @@ class BattleSession extends RefCounted:
 		for ab in actor.mech.abilities:
 			if ab.is_weapon() and actor.can_use(ab):
 				var est := expected_strike_damage(actor, target, ab)
-				if est >= target.hp:
+				if is_sure_kill(est, target.hp):
 					return {"command": CommandType.TECH, "ability_id": ab.ability_id}
 				if est > best_weapon_dmg:
 					best_weapon_dmg = est
@@ -346,6 +347,11 @@ class BattleSession extends RefCounted:
 			dmg = maxi(5, int(round(float(dmg) * hit * (1.0 + crit * (CRIT_DAMAGE_MULT - 1.0)))))
 		return dmg
 
+	## True when a shot estimated at `est` kills `hp` even at the bottom of the live variance band.
+	func is_sure_kill(est: int, hp: int) -> bool:
+		var floor_dmg := est if deterministic_mode else int(floor(float(est) * DAMAGE_VARIANCE_MIN))
+		return floor_dmg >= hp
+
 	func compute_escape_chance(actor: CombatantState, target: CombatantState) -> int:
 		if actor.side == "def" and not can_defender_retreat:
 			return 0
@@ -375,9 +381,24 @@ class BattleSession extends RefCounted:
 		if turn_queue.is_empty():
 			return null
 
-		var side: String = turn_queue.pop_front()
+		var side: String = turn_queue[0]
 		var actor := get_combatant(side)
 		var target := get_opponent(side)
+
+		# A TECH the actor cannot use (unknown id, spent support TECH, not enough EN) is rejected:
+		# the turn is not consumed and the caller gets null. The menu and the AI both check
+		# can_use() first, so reaching this is a caller bug worth surfacing rather than masking
+		# behind a silent STANDARD FIRE.
+		var chosen_ability: CombatAbility = null
+		if command_type == CommandType.TECH:
+			for ab in actor.mech.abilities:
+				if ab.ability_id == ability_id:
+					chosen_ability = ab
+					break
+			if chosen_ability == null or not actor.can_use(chosen_ability):
+				push_warning("SkirmishEngine: %s cannot use TECH '%s'; command rejected" % [actor.mech.callsign, ability_id])
+				return null
+		turn_queue.pop_front()
 
 		var step := TurnStep.new()
 		step.step_index = _step_counter
@@ -388,23 +409,11 @@ class BattleSession extends RefCounted:
 		step.actor_name = actor.mech.callsign
 		step.command_type = command_type
 
-		# Validate TECH command ability and energy
-		var chosen_ability: CombatAbility = null
-		if command_type == CommandType.TECH:
-			for ab in actor.mech.abilities:
-				if ab.ability_id == ability_id:
-					chosen_ability = ab
-					break
-			if chosen_ability == null or not actor.can_use(chosen_ability):
-				command_type = CommandType.ATTACK
-				step.command_type = CommandType.ATTACK
-
 		match command_type:
 			CommandType.ATTACK:
 				_resolve_weapon_strike(step, actor, target, null)
 			CommandType.TECH:
 				actor.en = maxi(0, actor.en - chosen_ability.energy_cost)
-				step.energy_spent = chosen_ability.energy_cost
 				if chosen_ability.is_weapon():
 					_resolve_weapon_strike(step, actor, target, chosen_ability)
 				else:
@@ -439,7 +448,6 @@ class BattleSession extends RefCounted:
 					step.status_text = "RETREAT BLOCKED!"
 					step.description = "%s attempted to retreat, but %s cut off escape!" % [actor.mech.callsign, target.mech.callsign]
 
-		step.energy_after = actor.en
 		step.atk_hp_after = atk_state.hp
 		step.def_hp_after = def_state.hp
 		step.atk_en_after = atk_state.en
@@ -484,7 +492,7 @@ class BattleSession extends RefCounted:
 			if is_crit:
 				dmg = int(round(float(dmg) * CRIT_DAMAGE_MULT))
 			# Slight +/- 6% classic RPG damage variance
-			var variance: float = rng.randf_range(0.94, 1.06)
+			var variance: float = rng.randf_range(DAMAGE_VARIANCE_MIN, DAMAGE_VARIANCE_MAX)
 			dmg = clampi(int(round(float(dmg) * variance)), 4, 120)
 
 		if target.pending_soften != "":
@@ -729,10 +737,20 @@ const FORECAST_CACHE_LIMIT: int = 4096
 static func clear_forecast_cache() -> void:
 	_forecast_cache.clear()
 
+## Every MechData field the simulation reads, so a per-unit stat change can never serve a stale forecast.
+static func _mech_key(m: MechData) -> Array:
+	var ability_ids: Array = []
+	for ab in m.abilities:
+		ability_ids.append(ab.ability_id)
+	return [
+		m.unit_id, m.chassis_id, int(m.faction), m.is_entrenched,
+		m.current_armor, m.max_armor, m.current_energy, m.max_energy,
+		m.firepower, m.armor_rating, m.speed, m.evasion, m.crit_chance, ability_ids,
+	]
+
 static func _forecast_key(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData) -> Array:
 	return [
-		attacker.unit_id, attacker.chassis_id, int(attacker.faction), attacker.current_armor, attacker.current_energy, attacker.is_entrenched,
-		defender.unit_id, defender.chassis_id, int(defender.faction), defender.current_armor, defender.current_energy, defender.is_entrenched,
+		_mech_key(attacker), _mech_key(defender),
 		int(from_tile.terrain_type), from_tile.elevation, int(target_tile.terrain_type), target_tile.elevation, target_tile.is_objective,
 		BalanceProbe.def_pct[int(defender.faction)],
 	]

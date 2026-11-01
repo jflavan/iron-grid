@@ -24,6 +24,7 @@ func _ready() -> void:
 		"test_forecast_initiative_matches_queue", "test_seeded_sessions_replay", "test_support_tech_is_single_use",
 		"test_guard_survives_miss", "test_auto_pilot_uses_command_select", "test_repelled_attacker_leaves_entrenchment",
 		"test_forecast_damage_matches_ai_estimate", "test_forecast_cache", "test_status_badges",
+		"test_miss_plays_no_impact", "test_seed_counter_resets_per_mission", "test_sure_kill_allows_for_variance",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -530,7 +531,7 @@ func test_support_tech_is_single_use() -> void:
 	var en_before := sess.atk_state.en
 	var def_before := sess.atk_state.def_buff_pct
 	var again := sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "krupp_plate")
-	_check(again.command_type == SkirmishEngine.CommandType.ATTACK and not again.is_support_only, "re-casting a spent support TECH falls back to ATTACK")
+	_check(again == null and sess.get_next_actor_side() == "atk" and not sess.is_finished, "re-casting a spent support TECH is rejected and the turn is not consumed")
 	_check(sess.atk_state.en == en_before and sess.atk_state.def_buff_pct == def_before, "no EN is spent and the buff does not stack")
 	var kwk: CombatAbility = sess.atk_state.mech.abilities[0]
 	_check(kwk.is_weapon() and sess.atk_state.can_use(kwk), "weapon TECHs stay usable every turn")
@@ -654,6 +655,9 @@ func test_forecast_cache() -> void:
 	dfn.is_entrenched = true
 	SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
 	_check(SkirmishEngine._forecast_cache.size() == 3, "entrenchment is part of the key")
+	atk.firepower += 10
+	var f4 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
+	_check(SkirmishEngine._forecast_cache.size() == 4 and f4["atk_eff_fp"] > f1["atk_eff_fp"], "a per-unit stat change is a different key")
 	SkirmishEngine.clear_forecast_cache()
 	_check(SkirmishEngine._forecast_cache.is_empty(), "cache clears")
 
@@ -668,3 +672,54 @@ func test_status_badges() -> void:
 	s2.execute_next_turn(SkirmishEngine.CommandType.TECH, "enigma_ecm")
 	var jammed := s2.def_state.get_status_badges()
 	_check("ARM-" in jammed and "JAM" in jammed, "an ECM-jammed unit shows ARM- and JAM (got %s)" % [jammed])
+
+func test_miss_plays_no_impact() -> void:
+	var screen := _screen_for(_fight("vanguard", "moloch"))
+	await get_tree().process_frame
+	var st := screen.stage
+	for id in WeaponAnims.PROFILES:
+		var a: Dictionary = st.mechs["atk"]
+		var d: Dictionary = st.mechs["def"]
+		var imp := WeaponAnims.impact_time(id)
+		var dur := WeaponAnims.duration(id)
+		var reacted := false
+		for t in [imp + 0.02, imp + 0.2, (imp + dur) * 0.5, dur - 0.05]:
+			d["pose"] = ""
+			d["white"] = false
+			d["offset"] = Vector2.ZERO
+			WeaponAnims.run(st, a, d, id, t, false)
+			if d["pose"] != "" or d["white"] or d["offset"] != Vector2.ZERO:
+				reacted = true
+		_check(not reacted, "%s MISS leaves the target untouched after impact time" % id)
+		d["pose"] = ""
+		d["white"] = false
+		d["offset"] = Vector2.ZERO
+		WeaponAnims.run(st, a, d, id, imp + 0.02, true)
+		_check(d["pose"] != "" or d["white"] or d["offset"] != Vector2.ZERO, "%s hit still reacts on impact" % id)
+	screen.queue_free()
+
+func test_seed_counter_resets_per_mission() -> void:
+	GlobalState.set_battle_seed(17)
+	var first := GlobalState.next_battle_seed()
+	GlobalState.next_battle_seed()
+	GlobalState.next_battle_seed()
+	GlobalState.reset_battle_state()
+	_check(GlobalState.next_battle_seed() == first, "a mission restart replays from the first battle seed")
+	GlobalState.set_battle_seed(-1)
+
+func test_sure_kill_allows_for_variance() -> void:
+	var live := _flat_session("vanguard", "moloch", false, 3)
+	_check(not live.is_sure_kill(30, 30), "an estimate equal to the hull is not a sure kill under -6% variance")
+	_check(live.is_sure_kill(32, 30), "an estimate that clears the hull at -6% is a sure kill")
+	var det := _flat_session("vanguard", "moloch")
+	_check(det.is_sure_kill(30, 30), "deterministic mode has no variance, so equal is enough")
+	# Rejected commands do not consume the turn in the live stage either
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	var sess := _flat_session("vanguard", "moloch", false, 4)
+	screen.start_session(sess)
+	screen.stage.advance(0.75)
+	screen.stage._commit_session_turn(SkirmishEngine.CommandType.TECH, "no_such_tech")
+	_check(screen.stage.phase == "command_select" and sess.result.steps.is_empty(), "an unknown TECH is rejected and the menu stays open")
+	screen.queue_free()

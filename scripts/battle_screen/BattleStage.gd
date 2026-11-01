@@ -313,7 +313,11 @@ func _record_step(step: SkirmishEngine.TurnStep) -> bool:
 func _commit_session_turn(cmd_type: int, ability_id: String) -> void:
 	if session == null or session.is_finished:
 		return
-	_show_committed_turn(_record_step(session.execute_next_turn(cmd_type, ability_id)))
+	var step := session.execute_next_turn(cmd_type, ability_id)
+	if step == null and not session.is_finished:
+		SoundManager.play("ui_cancel")  # the engine rejected the command; the menu stays open
+		return
+	_show_committed_turn(_record_step(step))
 
 ## Starts animating the beat a player (or Auto-Pilot) turn just produced.
 func _show_committed_turn(had_step: bool) -> void:
@@ -528,7 +532,7 @@ func _animate() -> void:
 			SupportAnims.run(self, a, d, b["ability_id"], phase_t)
 		"attack":
 			var ab_id := _attack_ability(b)
-			WeaponAnims.run(self, a, d, ab_id, phase_t)
+			WeaponAnims.run(self, a, d, ab_id, phase_t, not b.get("is_miss", false))
 			var imp := WeaponAnims.impact_time(ab_id)
 			if b.get("is_miss", false) and phase_t >= imp and phase_t < imp + 0.35:
 				var dt := phase_t - imp
@@ -711,11 +715,12 @@ func _draw_menu() -> void:
 	_right_text("%d/%d" % [coa_en, cd.max_energy], 350, MENU_Y + 50, C_NUM)
 
 	if session != null:
-		var coa_badges := session.get_combatant(coa_side).get_status_badges()
+		var coa_live := session.get_combatant(coa_side)
+		var coa_badges := coa_live.get_status_badges()
 		if not coa_badges.is_empty():
 			PixelFont.draw_text(self, " ".join(coa_badges.slice(0, 2)), Vector2(200, MENU_Y + 58), C_CURSOR)
 		else:
-			PixelFont.draw_text(self, "SPD %d  EVA %d%%" % [cd.speed, cd.evasion], Vector2(200, MENU_Y + 58), C_LABEL.darkened(0.2))
+			PixelFont.draw_text(self, "SPD %d  EVA %d%%" % [coa_live.get_effective_speed(), coa_live.get_effective_evasion()], Vector2(200, MENU_Y + 58), C_LABEL.darkened(0.2))
 
 	# Command Menu (Interactive or Automated Beat Preview)
 	var b := current_beat()
@@ -728,7 +733,7 @@ func _draw_menu() -> void:
 				PixelFont.draw_text(self, COMMANDS[i], Vector2(130, _cmd_row_y(i)), col)
 			if int(clock / 0.2) % 2 == 0:
 				var cy := _cmd_row_y(menu_cursor)
-				draw_colored_polygon(PackedVector2Array([Vector2(120, cy), Vector2(126, cy + 3.5), Vector2(120, cy + 7)]), C_CURSOR)
+				_draw_cursor(cy)
 		else:
 			BattleFX.panel(self, TECH_BOX_RECT)
 			PixelFont.draw_text(self, "TECH SYSTEMS [ESC]", Vector2(122, MENU_Y + 8), C_LABEL)
@@ -746,7 +751,7 @@ func _draw_menu() -> void:
 				PixelFont.draw_text(self, short_ab, Vector2(130, ry), col)
 				_right_text("USED" if spent else "%dEN" % ab.energy_cost, int(TECH_BOX_RECT.end.x - 6), ry, C_EN if affordable else C_DIM)
 			var cy := _tech_row_y(tech_cursor)
-			draw_colored_polygon(PackedVector2Array([Vector2(120, cy), Vector2(126, cy + 3.5), Vector2(120, cy + 7)]), C_CURSOR)
+			_draw_cursor(cy)
 	elif phase == "menu" and int(b.get("command_row", -1)) >= 0:
 		BattleFX.panel(self, CMD_BOX_RECT)
 		for i in COMMANDS.size():
@@ -755,7 +760,7 @@ func _draw_menu() -> void:
 		var row := mini(target_row, int(phase_t / 0.10))
 		if int(clock / 0.18) % 2 == 0 or row == target_row:
 			var cy := _cmd_row_y(row)
-			draw_colored_polygon(PackedVector2Array([Vector2(120, cy), Vector2(126, cy + 3.5), Vector2(120, cy + 7)]), C_CURSOR)
+			_draw_cursor(cy)
 
 ## Drawn y of a command / ability row, derived from the same constants menu_row_at hit-tests with.
 func _cmd_row_y(i: int) -> int:
@@ -763,6 +768,10 @@ func _cmd_row_y(i: int) -> int:
 
 func _tech_row_y(i: int) -> int:
 	return TECH_ROW0_TOP + ROW_TEXT_DY + i * MENU_ROW_H
+
+## The menu cursor triangle, pointing at the row whose text starts at `cy`.
+func _draw_cursor(cy: int) -> void:
+	draw_colored_polygon(PackedVector2Array([Vector2(120, cy), Vector2(126, cy + 3.5), Vector2(120, cy + 7)]), C_CURSOR)
 
 func _gauge(r: Rect2, ratio: float, col: Color) -> void:
 	draw_rect(r, C_GAUGE_BG)

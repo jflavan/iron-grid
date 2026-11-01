@@ -54,6 +54,7 @@ func next_battle_seed() -> int:
 func reset_battle_state() -> void:
 	current_phase = TurnPhase.PLAYER_PHASE
 	turn_number = 1
+	_battle_seed_counter = 0  # every mission replays from its first battle seed
 	last_battle_winner = -1
 	last_battle_reason = ""
 	combat_log.clear()
