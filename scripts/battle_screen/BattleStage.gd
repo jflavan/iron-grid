@@ -133,7 +133,7 @@ func skip_to_end() -> void:
 			var cmd := session.choose_ai_command(next_side)
 			var step := session.execute_next_turn(int(cmd["command"]), String(cmd["ability_id"]))
 			if step != null:
-				timeline.append_step(step, result)
+				timeline.append_step(step)
 			guard += 1
 		timeline.sync_ending_from_result(result)
 
@@ -252,7 +252,7 @@ func confirm_selection() -> void:
 		if tech_cursor < 0 or tech_cursor >= abilities.size():
 			return
 		var chosen: CombatAbility = abilities[tech_cursor]
-		if coa_state.en < chosen.energy_cost:
+		if not coa_state.can_use(chosen):
 			SoundManager.play("ui_cancel")
 			return
 		SoundManager.play("ui_confirm")
@@ -317,7 +317,7 @@ func _trigger_auto_player_command() -> void:
 func _play_session_turn(cmd_type: int, ability_id: String) -> bool:
 	var step := session.execute_next_turn(cmd_type, ability_id)
 	if step != null:
-		timeline.append_step(step, result)
+		timeline.append_step(step)
 	if session.is_finished:
 		timeline.sync_ending_from_result(result)
 	return step != null
@@ -346,7 +346,7 @@ func _phase_duration() -> float:
 		"support":
 			return _support_duration(b)
 		"attack":
-			return WeaponAnims.duration(_attack_ability(b), false)
+			return WeaponAnims.duration(_attack_ability(b))
 		"settle":
 			return STATUS_DUR if b["status_text"] != "" else SETTLE_DUR
 		"ending":
@@ -380,14 +380,17 @@ func _start_beat(i: int) -> void:
 	# Live interactive session that has run out of recorded beats: ask the session for the next turn.
 	if session != null and i >= timeline.beats.size():
 		var next_side := session.get_next_actor_side()  # "" once the session has concluded
-		if next_side == timeline.coalition_side and not auto_pilot:
+		if next_side == timeline.coalition_side:
+			# Player's turn: wait in command_select. With Auto-Pilot on, advance() commits the AI's pick
+			# from there, so manual and auto-piloted player turns share one path.
 			in_tech_submenu = false
 			phase_t = 0.0
 			_enter("command_select")
-			SoundManager.play("ui_click")
+			if not auto_pilot:
+				SoundManager.play("ui_click")
 			return
 		if next_side != "":
-			# AI turn (or Player Auto-Pilot): let the AI pick and append its beat
+			# Syndikat turn: let the AI pick and append its beat
 			var cmd := session.choose_ai_command(next_side)
 			_play_session_turn(int(cmd["command"]), String(cmd["ability_id"]))
 		elif session.is_finished:
@@ -413,7 +416,7 @@ func _attack_ability(b: Dictionary) -> String:
 
 func _attack_impact_time() -> float:
 	var b := current_beat()
-	return WeaponAnims.impact_time(_attack_ability(b), false)
+	return WeaponAnims.impact_time(_attack_ability(b))
 
 func _support_duration(b: Dictionary) -> float:
 	return SupportAnims.duration(String(b.get("ability_id", "defend")))
@@ -535,8 +538,8 @@ func _animate() -> void:
 			SupportAnims.run(self, a, d, b["ability_id"], phase_t)
 		"attack":
 			var ab_id := _attack_ability(b)
-			WeaponAnims.run(self, a, d, ab_id, phase_t, false)
-			var imp := WeaponAnims.impact_time(ab_id, false)
+			WeaponAnims.run(self, a, d, ab_id, phase_t)
+			var imp := WeaponAnims.impact_time(ab_id)
 			if b.get("is_miss", false) and phase_t >= imp and phase_t < imp + 0.35:
 				var dt := phase_t - imp
 				var dodge := sin(dt / 0.35 * PI) * 8.0
@@ -740,16 +743,18 @@ func _draw_menu() -> void:
 			BattleFX.panel(self, TECH_BOX_RECT)
 			PixelFont.draw_text(self, "TECH SYSTEMS [ESC]", Vector2(122, MENU_Y + 8), C_LABEL)
 			_right_text("EN %d/%d" % [coa_en, cd.max_energy], int(TECH_BOX_RECT.end.x - 6), MENU_Y + 8, C_EN)
+			var coa_state := session.get_combatant(coa_side)
 			for i in cd.abilities.size():
 				var ab: CombatAbility = cd.abilities[i]
-				var affordable := (coa_en >= ab.energy_cost)
+				var spent := not ab.is_weapon() and coa_state.used_support_ids.has(ab.ability_id)
+				var affordable := coa_state.can_use(ab)
 				var col := C_NAME if affordable else C_DIM
 				var short_ab := ab.ability_name.to_upper()
 				if short_ab.length() > 24:
 					short_ab = short_ab.substr(0, 24)
 				var ry := _tech_row_y(i)
 				PixelFont.draw_text(self, short_ab, Vector2(130, ry), col)
-				_right_text("%dEN" % ab.energy_cost, int(TECH_BOX_RECT.end.x - 6), ry, C_EN if affordable else C_DIM)
+				_right_text("USED" if spent else "%dEN" % ab.energy_cost, int(TECH_BOX_RECT.end.x - 6), ry, C_EN if affordable else C_DIM)
 			var cy := _tech_row_y(tech_cursor)
 			draw_colored_polygon(PackedVector2Array([Vector2(120, cy), Vector2(126, cy + 3.5), Vector2(120, cy + 7)]), C_CURSOR)
 	elif phase == "menu" and int(b.get("command_row", -1)) >= 0:

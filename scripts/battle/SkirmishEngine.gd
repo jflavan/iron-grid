@@ -38,9 +38,7 @@ class TurnStep extends RefCounted:
 	var is_crit: bool = false
 	var escaped: bool = false
 	var escape_failed: bool = false
-	var damage_dealt: int = 0
-	var atk_damage_dealt: int = 0 # Damage dealt by attacker to defender on this step
-	var def_damage_dealt: int = 0 # Damage dealt by defender to attacker on this step
+	var damage_dealt: int = 0      # Damage this step dealt to the opponent of actor_side
 	var soften_from: String = ""
 	var status_text: String = ""
 	var description: String = ""
@@ -122,7 +120,14 @@ class CombatantState extends RefCounted:
 	var crit_buff_pct: int = 0
 	var armor_pierce_bonus: float = 0.0
 	var pending_soften: String = ""
-	var used_support_ids: Dictionary = {}
+	var used_support_ids: Dictionary = {} # ARMOR/TACTIC ability ids already deployed this battle
+	var retreat_attempted: bool = false
+
+	## ARMOR/TACTIC TECHs deploy once per battle; weapon TECHs only need the energy.
+	func can_use(ab: CombatAbility) -> bool:
+		if en < ab.energy_cost:
+			return false
+		return ab.is_weapon() or not used_support_ids.has(ab.ability_id)
 
 	func get_effective_atk() -> int:
 		return maxi(8, int(round(float(base_atk) * (1.0 + float(atk_buff_pct) / 100.0))))
@@ -175,9 +180,9 @@ class BattleSession extends RefCounted:
 		defender: MechData,
 		from_tile: GridTileData,
 		target_tile: GridTileData,
-		p_deterministic: bool = false,
+		p_can_def_retreat: bool = true,
 		p_seed: int = -1,
-		p_can_def_retreat: bool = true
+		p_deterministic: bool = false
 	) -> void:
 		deterministic_mode = p_deterministic
 		can_defender_retreat = p_can_def_retreat
@@ -286,20 +291,19 @@ class BattleSession extends RefCounted:
 		var hp_ratio := float(actor.hp) / float(maxi(1, actor.max_hp))
 		var holding_vital_objective: bool = (side == "def" and result.target_tile != null and result.target_tile.is_objective)
 		var can_escape_tile: bool = (side == "atk" or can_defender_retreat)
-		# A guard still raised here has not been spent (guards last until the enemy's next action
-		# resolves), so it really will halve the next incoming hit and belongs in the estimate.
+		# A guard still raised here has not been spent (guards last until the first enemy shot lands),
+		# so it really will halve the next incoming hit and belongs in the estimate.
 		var enemy_est := estimate_attack_damage(target, actor, null)
 		var in_lethal_danger: bool = (hp_ratio <= 0.38 or (actor.hp <= enemy_est + 6 and target.hp > actor.hp + 10))
-		if not deterministic_mode and round_number >= 2 and in_lethal_danger and target.hp > best_weapon_dmg and not holding_vital_objective and can_escape_tile and not actor.used_support_ids.has("retreat_attempted"):
+		if not deterministic_mode and round_number >= 2 and in_lethal_danger and target.hp > best_weapon_dmg and not holding_vital_objective and can_escape_tile and not actor.retreat_attempted:
 			var esc_chance := compute_escape_chance(actor, target)
 			if esc_chance >= 40:
-				actor.used_support_ids["retreat_attempted"] = true
 				return {"command": CommandType.RETREAT, "ability_id": ""}
 
 		# 3. Early in the fight (Round 1-2), consider using an unapplied Support/Armor/Tactical TECH
 		if round_number <= 2 and hp_ratio >= 0.45:
 			for ab in actor.mech.abilities:
-				if not ab.is_weapon() and actor.en >= ab.energy_cost and not actor.used_support_ids.has(ab.ability_id):
+				if not ab.is_weapon() and actor.can_use(ab):
 					# Prioritize support tech if we haven't used one yet
 					if round_number == 1 or deterministic_mode or rng.randi_range(1, 100) <= 75:
 						return {"command": CommandType.TECH, "ability_id": ab.ability_id}
@@ -359,7 +363,7 @@ class BattleSession extends RefCounted:
 				if ab.ability_id == ability_id:
 					chosen_ability = ab
 					break
-			if chosen_ability == null or actor.en < chosen_ability.energy_cost:
+			if chosen_ability == null or not actor.can_use(chosen_ability):
 				command_type = CommandType.ATTACK
 				step.command_type = CommandType.ATTACK
 
@@ -383,7 +387,7 @@ class BattleSession extends RefCounted:
 				step.status_text = "GUARD +50% // +2 EN"
 				step.description = "%s braces armor plating (+50%% Guard, +2 EN)." % actor.mech.callsign
 			CommandType.RETREAT:
-				actor.used_support_ids["retreat_attempted"] = true
+				actor.retreat_attempted = true
 				step.ability_id = "retreat"
 				step.ability_name = "EMERGENCY RETREAT"
 				step.ability_category = "RETREAT"
@@ -402,11 +406,6 @@ class BattleSession extends RefCounted:
 					step.escape_failed = true
 					step.status_text = "RETREAT BLOCKED!"
 					step.description = "%s attempted to retreat, but %s cut off escape!" % [actor.mech.callsign, target.mech.callsign]
-
-		# A DEFEND guard absorbs exactly one enemy action. It is spent here, once the opponent has
-		# acted, rather than at the guarding unit's next turn start: when initiative order flips
-		# between rounds the guarding unit acts twice in a row, and clearing early would waste it.
-		target.defending = false
 
 		step.energy_after = actor.en
 		step.atk_hp_after = atk_state.hp
@@ -471,10 +470,8 @@ class BattleSession extends RefCounted:
 		target.hp = maxi(0, target.hp - dmg)
 		step.damage_dealt = dmg
 		if actor.side == "atk":
-			step.atk_damage_dealt = dmg
 			result.total_dmg_to_defender += dmg
 		else:
-			step.def_damage_dealt = dmg
 			result.total_dmg_to_attacker += dmg
 
 		if is_crit:
@@ -483,6 +480,10 @@ class BattleSession extends RefCounted:
 			step.status_text = "GUARDED (-50%)"
 		elif step.soften_from != "":
 			step.status_text = "SHIELD DEFLECT!"
+		# Like a pending shield, a DEFEND guard is spent by the first enemy shot that lands. It is
+		# not cleared at the guarding unit's next turn start (an initiative flip would waste it) nor
+		# by a MISS, a support TECH or a failed RETREAT.
+		target.defending = false
 
 		step.description = "%s strikes with [%s] for %d DMG%s!" % [
 			actor.mech.callsign, step.ability_name, dmg, " (CRITICAL!)" if is_crit else ""
@@ -661,7 +662,16 @@ static func create_session(
 	can_defender_retreat: bool = true,
 	p_seed: int = -1
 ) -> BattleSession:
-	return BattleSession.new(attacker, defender, from_tile, target_tile, false, p_seed, can_defender_retreat)
+	return BattleSession.new(attacker, defender, from_tile, target_tile, can_defender_retreat, p_seed)
+
+## Deterministic session (no dice: every shot hits, no crits, no variance) for forecasts and tests.
+static func create_deterministic_session(
+	attacker: MechData,
+	defender: MechData,
+	from_tile: GridTileData,
+	target_tile: GridTileData
+) -> BattleSession:
+	return BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, true)
 
 ## Computes a fast, deterministic tactical forecast before committing to an engagement.
 static func compute_forecast(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData) -> Dictionary:
@@ -705,7 +715,7 @@ static func resolve_skirmish(
 	apply_to_units: bool = true,
 	deterministic: bool = true
 ) -> SkirmishResult:
-	var session := BattleSession.new(attacker, defender, from_tile, target_tile, deterministic)
+	var session := BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, deterministic)
 	var safety := 0
 	while not session.is_finished and safety < 64:
 		var side := session.get_next_actor_side()

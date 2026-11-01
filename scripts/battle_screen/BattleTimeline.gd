@@ -36,12 +36,12 @@ static func build(result: SkirmishEngine.SkirmishResult) -> BattleTimeline:
 	tl.start_hull = {"atk": result.atk_armor_before, "def": result.def_armor_before}
 	tl.start_energy = {"atk": result.atk_energy_before, "def": result.def_energy_before}
 	for step in result.steps:
-		tl.append_step(step, result)
+		tl.append_step(step)
 	tl.sync_ending_from_result(result)
 	return tl
 
-func append_step(step: SkirmishEngine.TurnStep, result: SkirmishEngine.SkirmishResult) -> Dictionary:
-	var actor := step.actor_side if step.actor_side != "" else ("atk" if step.actor_faction == result.attacker.faction else "def")
+func append_step(step: SkirmishEngine.TurnStep) -> Dictionary:
+	var actor := step.actor_side
 	var target := "def" if actor == "atk" else "atk"
 	var is_coalition := (actor == coalition_side)
 	var beat := {

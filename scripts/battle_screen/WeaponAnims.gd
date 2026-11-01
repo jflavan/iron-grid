@@ -3,7 +3,6 @@ extends RefCounted
 
 ## Weapon attack animations. Each runs as a pure function of local time t: it sets the actor and
 ## target poses/effects on their state dictionaries and queues FX draws on the stage.
-## `quick` is the shortened follow-up shot used after an armor/tactical card's effect.
 ## The stage applies the step's damage when local time crosses impact_time() (the first hit).
 ## Loading always happens inside the machine and is never shown.
 
@@ -26,25 +25,23 @@ static func has_anim(card_id: String) -> bool:
 static func _p(card_id: String) -> Dictionary:
 	return PROFILES.get(card_id, PROFILES[DEFAULT])
 
-static func fire_time(card_id: String, quick: bool) -> float:
-	var f: float = _p(card_id)["fire"]
-	return f * 0.3 if quick else f
+static func fire_time(card_id: String) -> float:
+	return float(_p(card_id)["fire"])
 
-static func impact_time(card_id: String, quick: bool) -> float:
-	return fire_time(card_id, quick) + float(_p(card_id)["travel"])
+static func impact_time(card_id: String) -> float:
+	return fire_time(card_id) + float(_p(card_id)["travel"])
 
-static func duration(card_id: String, quick: bool) -> float:
-	var tail: float = _p(card_id)["tail"]
-	return impact_time(card_id, quick) + (tail * 0.65 if quick else tail)
+static func duration(card_id: String) -> float:
+	return impact_time(card_id) + float(_p(card_id)["tail"])
 
-static func run(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: String, t: float, quick: bool) -> void:
+static func run(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: String, t: float) -> void:
 	var p := _p(card_id)
-	var fire := fire_time(card_id, quick)
-	var imp := impact_time(card_id, quick)
+	var fire := fire_time(card_id)
+	var imp := impact_time(card_id)
 	var id := card_id if PROFILES.has(card_id) else DEFAULT
 	match String(p["kind"]):
 		"shell":
-			_shell(stage, a, d, id, p, t, fire, imp, quick)
+			_shell(stage, a, d, id, p, t, fire, imp)
 		"mg":
 			_rounds(stage, a, d, id, p, t, fire, imp, "mg")
 		"burst":
@@ -87,9 +84,9 @@ static func _muzzle(stage: BattleStage, a: Dictionary, id: String) -> Vector2:
 	return stage.point(a, "muzzles/" + id)
 
 # ---------------------------------------------------------------- single heavy shell (88mm, 105mm)
-static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, quick: bool) -> void:
+static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float) -> void:
 	a["pose"] = "brace"
-	if not quick and t >= fire - 0.15 and t < fire - 0.07:
+	if t >= fire - 0.15 and t < fire - 0.07:
 		a["pose"] = "chamber" # external breech jolt only; loading is internal
 	if t >= fire:
 		a["pose"] = recoil_pose(t - fire)

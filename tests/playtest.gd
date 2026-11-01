@@ -126,8 +126,10 @@ func _check_skirmish_engine() -> void:
 			var atk_steps: int = 0
 			var def_steps: int = 0
 			for s in res.steps:
-				atk_steps += s.atk_damage_dealt
-				def_steps += s.def_damage_dealt
+				if s.actor_side == "atk":
+					atk_steps += s.damage_dealt
+				else:
+					def_steps += s.damage_dealt
 				if s.is_support_only:
 					_check(s.damage_dealt == 0, "%s support step deals 0 direct damage" % s.ability_id)
 			_check(atk_steps == res.total_dmg_to_defender, "%s vs %s: step damage to defender sums to total" % [a_id, d_id])
@@ -146,20 +148,20 @@ func _check_skirmish_engine() -> void:
 	# Speed & Round 1 Initiative: Falke (SPD 34) always outspeeds Goliath (SPD 12), even when Goliath attacks on Round 1 (12+8=20 < 34)
 	var gol := GlobalState.create_mech_instance("goliath", MechData.Faction.PLAYER, "G", Vector2i.ZERO)
 	var flk := GlobalState.create_mech_instance("falke", MechData.Faction.AI, "F", Vector2i.ZERO)
-	var sess_gf := SkirmishEngine.BattleSession.new(gol, flk, flat, flat, true)
+	var sess_gf := SkirmishEngine.create_deterministic_session(gol, flk, flat, flat)
 	_check(sess_gf.get_next_actor_side() == "def", "Falke defender (SPD 34) acts before Goliath attacker (SPD 12+8=20)")
 
 	# Equal chassis: Round-1 Assault Initiative bonus lets Attacker act first
 	var v1 := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "V1", Vector2i.ZERO)
 	var v2 := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "V2", Vector2i.ZERO)
-	var sess_vv := SkirmishEngine.BattleSession.new(v1, v2, flat, flat, true)
+	var sess_vv := SkirmishEngine.create_deterministic_session(v1, v2, flat, flat)
 	_check(sess_vv.get_next_actor_side() == "atk", "Attacker acts first on Round 1 when speeds are equal")
 
 	# Interactive commands check: DEFEND halves incoming damage & restores +2 EN; Support TECH spends EN with 0 shot damage; RETREAT ends battle
 	var p_mech := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "P", Vector2i.ZERO)
 	var e_mech := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "E", Vector2i.ZERO)
 	p_mech.current_energy = 10
-	var sess := SkirmishEngine.BattleSession.new(p_mech, e_mech, flat, flat, true)
+	var sess := SkirmishEngine.create_deterministic_session(p_mech, e_mech, flat, flat)
 	var st_sup := sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "krupp_plate")
 	_check(st_sup.is_support_only and st_sup.damage_dealt == 0, "Sloped Krupp Plate is a pure FF support turn (0 damage)")
 	_check(sess.atk_state.en == 6 and sess.atk_state.def_buff_pct == 35, "Sloped Krupp Plate costs 4 EN and grants +35%% DEF")

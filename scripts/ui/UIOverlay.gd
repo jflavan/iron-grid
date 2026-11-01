@@ -41,7 +41,8 @@ const MANUAL_LINES := [
 	"4. TURN-BASED RPG COMBAT (ATTACK / TECH / DEFEND / RETREAT):",
 	"   - Moving onto an enemy-occupied node triggers a classic Final Fantasy turn-based battle.",
 	"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +8 SPD; an Entrenched Defender answers with +10.",
-	"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-50% DMG on the enemy's next action, +2 EN), or RETREAT.",
+	"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-50% DMG on the enemy's next hit, +2 EN), or RETREAT.",
+	"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands.",
 ]
 
 var root_ctrl: Control
@@ -94,9 +95,6 @@ func trigger_phase_banner(text: String) -> void:
 
 func show_skirmish_session(session: SkirmishEngine.BattleSession) -> void:
 	skirmish_modal.start_session(session)
-
-func show_skirmish_resolution(result: SkirmishEngine.SkirmishResult) -> void:
-	skirmish_modal.start_showdown(result)
 
 func trigger_game_over() -> void:
 	show_game_over_modal = true

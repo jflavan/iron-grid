@@ -21,7 +21,8 @@ func _ready() -> void:
 		"test_white_sheets_are_pregenerated", "test_support_run_is_pure",
 		"test_crt_pixel_scale", "test_crt_glyph_coverage", "test_menu_mechs_never_overlap",
 		"test_menu_header_click_is_inert", "test_basic_weapon_single_source", "test_guard_survives_initiative_flip",
-		"test_forecast_initiative_matches_queue", "test_seeded_sessions_replay",
+		"test_forecast_initiative_matches_queue", "test_seeded_sessions_replay", "test_support_tech_is_single_use",
+		"test_guard_survives_miss", "test_auto_pilot_uses_command_select",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -237,11 +238,9 @@ func test_every_weapon_has_anim() -> void:
 			continue
 		n += 1
 		_check(WeaponAnims.has_anim(id), "%s has a dedicated weapon animation" % id)
-		for quick in [false, true]:
-			var d := WeaponAnims.duration(id, quick)
-			var imp := WeaponAnims.impact_time(id, quick)
-			_check(d > 0.0 and imp > 0.0 and imp < d, "%s (quick=%s) impact inside duration" % [id, quick])
-		_check(WeaponAnims.duration(id, true) < WeaponAnims.duration(id, false), "%s follow-up is shorter" % id)
+		var d := WeaponAnims.duration(id)
+		var imp := WeaponAnims.impact_time(id)
+		_check(d > 0.0 and imp > 0.0 and imp < d, "%s impact inside duration" % id)
 	_check(n == 9, "nine weapon TECHs in the catalog, got %d" % n)
 
 func test_every_support_has_anim() -> void:
@@ -267,7 +266,7 @@ func test_persistent_effects_after_skip() -> void:
 	var atk_d := GlobalState.create_mech_instance("donner", MechData.Faction.PLAYER, "A", Vector2i(3, 2))
 	var dfn_v := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "D", Vector2i(4, 2))
 	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
-	var sess1 := SkirmishEngine.BattleSession.new(atk_d, dfn_v, flat, flat, true)
+	var sess1 := SkirmishEngine.create_deterministic_session(atk_d, dfn_v, flat, flat)
 	sess1.execute_next_turn(SkirmishEngine.CommandType.TECH, "anchor_strut")
 	var s1 := BattleScreen.new()
 	add_child(s1)
@@ -285,7 +284,7 @@ func test_persistent_effects_after_skip() -> void:
 
 	var atk_m := GlobalState.create_mech_instance("moloch", MechData.Faction.PLAYER, "A", Vector2i(3, 2))
 	var dfn_k := GlobalState.create_mech_instance("kommandant", MechData.Faction.AI, "D", Vector2i(4, 2))
-	var sess3 := SkirmishEngine.BattleSession.new(atk_m, dfn_k, flat, flat, true)
+	var sess3 := SkirmishEngine.create_deterministic_session(atk_m, dfn_k, flat, flat)
 	sess3.execute_next_turn(SkirmishEngine.CommandType.TECH, "ablative_shield")
 	sess3.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
 	var s3 := BattleScreen.new()
@@ -408,7 +407,7 @@ func _flat_session(atk_chassis: String, def_chassis: String, deterministic: bool
 	var atk := GlobalState.create_mech_instance(atk_chassis, MechData.Faction.PLAYER, "ATK-1", Vector2i(3, 2), "a")
 	var dfn := GlobalState.create_mech_instance(def_chassis, MechData.Faction.AI, "DEF-2", Vector2i(4, 2), "d")
 	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
-	return SkirmishEngine.BattleSession.new(atk, dfn, flat, flat, deterministic, p_seed)
+	return SkirmishEngine.BattleSession.new(atk, dfn, flat, flat, true, p_seed, deterministic)
 
 func test_menu_header_click_is_inert() -> void:
 	var screen := BattleScreen.new()
@@ -488,7 +487,7 @@ func test_forecast_initiative_matches_queue() -> void:
 				var dfn := GlobalState.create_mech_instance(d, MechData.Faction.AI, "D", Vector2i(4, 2), "d")
 				dfn.is_entrenched = entrenched
 				var fc := SkirmishEngine.compute_forecast(atk, dfn, flat, ridge)
-				var sess := SkirmishEngine.BattleSession.new(atk, dfn, flat, ridge, true)
+				var sess := SkirmishEngine.create_deterministic_session(atk, dfn, flat, ridge)
 				var expected := "ATTACKER" if sess.get_next_actor_side() == "atk" else "DEFENDER"
 				_check(fc["first_striker"] == expected, "%s vs %s%s: forecast INITIATIVE %s matches the real round-1 queue (%s)" % [a, d, " (entrenched)" if entrenched else "", fc["first_striker"], expected])
 				_check(sess.result.first_striker == sess.get_next_actor_side(), "%s vs %s: result.first_striker is the first actor" % [a, d])
@@ -518,3 +517,81 @@ func test_seeded_sessions_replay() -> void:
 	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
 	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
 	_check(SkirmishEngine.create_session(atk, dfn, flat, flat, true, 7).rng.seed == 7, "create_session threads the seed into the session RNG")
+
+func test_support_tech_is_single_use() -> void:
+	var sess := _flat_session("vanguard", "moloch")
+	var krupp: CombatAbility = sess.atk_state.mech.abilities[1]
+	_check(krupp.ability_id == "krupp_plate" and sess.atk_state.can_use(krupp), "Krupp Plate is available at the start")
+	var first := sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "krupp_plate")
+	_check(first.command_type == SkirmishEngine.CommandType.TECH and first.is_support_only, "first Krupp Plate deploys")
+	sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)  # Brenner's turn
+	_check(not sess.atk_state.can_use(krupp), "a deployed ARMOR TECH is spent for the rest of the battle")
+	var en_before := sess.atk_state.en
+	var def_before := sess.atk_state.def_buff_pct
+	var again := sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "krupp_plate")
+	_check(again.command_type == SkirmishEngine.CommandType.ATTACK and not again.is_support_only, "re-casting a spent support TECH falls back to ATTACK")
+	_check(sess.atk_state.en == en_before and sess.atk_state.def_buff_pct == def_before, "no EN is spent and the buff does not stack")
+	var kwk: CombatAbility = sess.atk_state.mech.abilities[0]
+	_check(kwk.is_weapon() and sess.atk_state.can_use(kwk), "weapon TECHs stay usable every turn")
+	# The interactive menu refuses a spent TECH the same way
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	var live := _flat_session("vanguard", "moloch", false)
+	screen.start_session(live)
+	screen.stage.advance(0.75)
+	screen.stage.menu_cursor = 1
+	screen.stage.confirm_selection()
+	screen.stage.tech_cursor = 1
+	screen.stage.confirm_selection()
+	_check(live.result.steps.size() == 1 and live.result.steps[0].ability_id == "krupp_plate", "menu deploys Krupp Plate once")
+	screen.stage.skip_to_next_command_or_end()
+	if screen.stage.phase == "command_select":
+		screen.stage.menu_cursor = 1
+		screen.stage.confirm_selection()
+		screen.stage.tech_cursor = 1
+		var steps_before := live.result.steps.size()
+		screen.stage.confirm_selection()
+		_check(screen.stage.in_tech_submenu and live.result.steps.size() == steps_before, "menu refuses to re-deploy a spent TECH")
+	screen.queue_free()
+
+func test_guard_survives_miss() -> void:
+	# Seeded live sessions: find one where the Syndikat shot after a DEFEND misses, then check the
+	# guard is still up (like a pending shield); a landed hit is the one that spends it.
+	var seen_miss := false
+	for s in range(1, 200):
+		var sess := _flat_session("falke", "goliath", false, s)
+		sess.execute_next_turn(SkirmishEngine.CommandType.DEFEND)   # Falke (SPD 34+8) acts first
+		var shot := sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)  # Goliath fires
+		if shot.is_miss:
+			seen_miss = true
+			_check(sess.atk_state.defending, "a MISS does not spend the guard (seed %d)" % s)
+			break
+		else:
+			_check(not sess.atk_state.defending and shot.status_text in ["GUARDED (-50%)", "CRITICAL HIT!"], "a landed hit is guarded and spends the guard (seed %d)" % s)
+	_check(seen_miss, "found a seed where the shot after DEFEND misses")
+	# An enemy support TECH leaves the guard up too
+	var det := _flat_session("falke", "goliath")
+	det.execute_next_turn(SkirmishEngine.CommandType.DEFEND)
+	det.execute_next_turn(SkirmishEngine.CommandType.TECH, "ferro_bulkhead")
+	_check(det.atk_state.defending, "an enemy support TECH does not spend the guard")
+
+func test_auto_pilot_uses_command_select() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	screen._auto_pilot = true
+	var sess := _flat_session("vanguard", "moloch", false, 99)
+	screen.start_session(sess)
+	_check(screen.stage.auto_pilot, "stage inherits auto-pilot")
+	var ticks := 0
+	while not screen._all_steps_done and ticks < 4000:
+		screen._process(1.0 / 30.0)
+		ticks += 1
+	_check(screen._all_steps_done and sess.is_finished, "auto-pilot plays the whole fight on its own (%d ticks)" % ticks)
+	var coalition_steps := 0
+	for st in sess.result.steps:
+		if st.actor_side == "atk":
+			coalition_steps += 1
+	_check(coalition_steps > 0, "auto-pilot committed the player's turns")
+	screen.queue_free()
