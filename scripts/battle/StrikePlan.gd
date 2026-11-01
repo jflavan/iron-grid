@@ -18,20 +18,25 @@ var step: Dictionary = {}             # MechData.get_step_fuel_breakdown of laun
 var advice: int = ADV_NONE
 var move_to: Vector2i = Vector2i(-1, -1)  # the launch tile ADV_MOVE_TO points at
 
-## "PATH 2 + MTN 5 + HEAVY 1 + CLIMB 1": the terms always add up to needs.
-func breakdown_text(sep: String = " + ") -> String:
-	if step.is_empty():
-		return ""
+## The strike's fuel terms, e.g. ["PATH 2", "MTN 5", "HEAVY 1", "CLIMB 1"]: they add up to needs.
+func breakdown_terms() -> PackedStringArray:
 	var parts: PackedStringArray = []
+	if step.is_empty():
+		return parts
 	if path_fuel > 0:
 		parts.append("PATH %d" % path_fuel)
 	parts.append("%s %d" % [step["terrain"], int(step["base"])])
-	if int(step["chassis"]) != 0:
+	var ch: int = int(step["chassis"])
+	if ch != 0:
 		var label: String = step["chassis_label"] if step["chassis_label"] != "" else "CHASSIS"
-		parts.append("%s %d" % [label, int(step["chassis"])] if int(step["chassis"]) > 0 else "%s -%d" % [label, -int(step["chassis"])])
+		parts.append("%s %d" % [label, ch] if ch > 0 else "%s -%d" % [label, -ch])
 	if int(step["climb"]) > 0:
 		parts.append("CLIMB %d" % int(step["climb"]))
-	return sep.join(parts)
+	return parts
+
+## "PATH 2 + MTN 5 + HEAVY 1 + CLIMB 1".
+func breakdown_text(sep: String = " + ") -> String:
+	return sep.join(breakdown_terms())
 
 func advice_text() -> String:
 	match advice:
@@ -48,16 +53,31 @@ func advice_text() -> String:
 	return ""
 
 ## Body of the HUD box (under its OUT OF REACH title) for IN_STRIKING_DISTANCE, or the single quiet
-## line for BEYOND_RANGE / NO_APPROACH. Empty when the enemy is reachable.
-func panel_lines() -> PackedStringArray:
+## line for BEYOND_RANGE / NO_APPROACH, wrapped to max_px. The breakdown wraps between terms only,
+## so "MTN" never ends up on a different line from its "5". Empty when the enemy is reachable.
+func panel_lines(max_px: float = INF) -> PackedStringArray:
+	var out := PackedStringArray()
 	match severity:
 		IN_STRIKING_DISTANCE:
-			return PackedStringArray(["STRIKE NEEDS %dF, YOU HAVE %dF" % [needs, have], breakdown_text(), advice_text()])
+			out.append_array(_wrap("NEEDS %dF, HAVE %dF" % [needs, have], max_px))
+			var line := ""
+			for term in breakdown_terms():
+				var candidate := term if line == "" else line + " +" + term
+				if line != "" and PixelFont.text_width(CrtUI.sanitize(candidate)) > max_px:
+					out.append(line)
+					line = "+" + term
+				else:
+					line = candidate
+			out.append(line)
+			out.append_array(_wrap(advice_text(), max_px))
 		BEYOND_RANGE:
-			return PackedStringArray(["BEYOND MOVE RANGE (NEEDS %dF)" % needs])
+			out.append_array(_wrap("BEYOND MOVE RANGE (NEEDS %dF)" % needs, max_px))
 		NO_APPROACH:
-			return PackedStringArray(["NO OPEN APPROACH TILE"])
-	return PackedStringArray()
+			out.append_array(_wrap("NO OPEN APPROACH TILE", max_px))
+	return out
+
+static func _wrap(s: String, max_px: float) -> PackedStringArray:
+	return PackedStringArray([CrtUI.sanitize(s)]) if max_px == INF else CrtUI.wrap_lines(s, max_px)
 
 func log_line(attacker_callsign: String, target_callsign: String) -> String:
 	return "%s CANNOT REACH %s: STRIKE NEEDS %dF (%s), %dF LEFT." % [

@@ -30,6 +30,7 @@ func _ready() -> void:
 		"test_step_breakdown_sums", "test_strike_plan_goliath_mountain", "test_strike_plan_matches_reachable",
 		"test_strike_plan_beyond_range", "test_strike_plan_skips_occupied_launch_tiles", "test_strike_plan_advice_is_true",
 		"test_out_of_reach_hover_and_click", "test_terrain_panel_draws_plan",
+		"test_rules_chapters_fit", "test_rules_numbers_come_from_data", "test_rules_navigation",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -997,12 +998,97 @@ func test_terrain_panel_draws_plan() -> void:
 	var spinne := _unit_by_callsign(bf, "SPINNE-4")
 	ov.strike_plan = bf.grid_map.compute_strike_plan(titan.mech_data, spinne.mech_data.grid_pos, bf.unit_container.build_occupied_map(titan))
 	var h1: float = ov._terrain_panel_height()
-	var wrapped := 0
-	for l in ov.strike_plan.panel_lines():
-		wrapped += CrtUI.wrap_lines(l, UIOverlay.RIGHT_W - 24).size()
+	var wrapped := ov.strike_plan.panel_lines(UIOverlay.RIGHT_W - 24).size()
 	_check(h1 - h0 >= (1 + wrapped) * CrtUI.LINE, "panel grows to fit the OUT OF REACH box (%s -> %s for %d lines)" % [h0, h1, wrapped])
+	var long_plan := StrikePlan.new()
+	long_plan.severity = StrikePlan.IN_STRIKING_DISTANCE
+	long_plan.path_fuel = 12
+	long_plan.step = {"base": 5, "terrain": "MTN", "chassis": -2, "chassis_label": "CLIMB GEAR", "climb": 2, "total": 5}
+	long_plan.needs = 17
+	long_plan.have = 9
+	long_plan.advice = StrikePlan.ADV_MULTI_TURN
+	var packed := long_plan.panel_lines(UIOverlay.RIGHT_W - 24)
+	var all_fit := packed.size() > 0
+	for l in packed:
+		all_fit = all_fit and PixelFont.text_width(l) <= UIOverlay.RIGHT_W - 24
+	var joined := " ".join(packed)
+	_check(all_fit and "PATH 12" in joined and "CLIMB GEAR -2" in joined and "CLIMB 2" in joined, "packed breakdown fits the HUD and never splits a term (%s)" % [packed])
+	var lines := ov.strike_plan.panel_lines()
+	_check(CrtUI.wrap_lines(lines[0], UIOverlay.RIGHT_W - 24).size() == 1 and CrtUI.wrap_lines(lines[1], UIOverlay.RIGHT_W - 24).size() == 1, "fuel and breakdown lines fit one HUD line each (%s)" % [lines])
 	ov.root_ctrl.queue_redraw()
 	await get_tree().process_frame
 	_check(true, "terrain panel draws with a strike plan without errors")
 	bf.queue_free()
+	await get_tree().process_frame
+
+# ---------------------------------------------------------------- Rules of Engagement page
+func _all_rules_text() -> String:
+	var parts: PackedStringArray = []
+	for ch in RulesContent.chapters():
+		parts.append(ch["title"])
+		for b in ch["blocks"]:
+			if b.has("table"):
+				for row in b["table"]:
+					parts.append(" ".join(row))
+			else:
+				parts.append(b.get("p", b.get("key", "")))
+	return "\n".join(parts)
+
+func test_rules_chapters_fit() -> void:
+	var chapters := RulesContent.chapters()
+	_check(chapters.size() == 7, "seven chapters (got %d)" % chapters.size())
+	var titles := chapters.map(func(c): return c["title"])
+	_check(titles == ["HOW YOU WIN", "MOVEMENT & FUEL", "TERRAIN & HIGH GROUND", "THE CLASH", "AFTER THE CLASH", "CHASSIS ROLES", "FIELD TIPS"], "chapter titles verbatim (got %s)" % [titles])
+	var lay: Dictionary = MainMenu.rules_layout(Vector2(CrtUI.DESIGN))
+	var body: Rect2 = lay["body"]
+	var inner_w: float = body.size.x - 2 * MainMenu.RULES_PAD
+	for ch in chapters:
+		var h: float = RulesContent.chapter_height(ch, inner_w)
+		_check(MainMenu.RULES_BODY_TOP + h <= body.size.y - MainMenu.RULES_PAD, "chapter '%s' fits the body at 720x450 (%s + %s vs %s)" % [ch["title"], MainMenu.RULES_BODY_TOP, h, body.size.y])
+		for b in ch["blocks"]:
+			if b.has("table"):
+				_check(RulesContent.table_width(b["table"]) <= inner_w, "table in '%s' fits the body width" % ch["title"])
+	var list_w: float = (lay["list"] as Rect2).size.x - 2 * MainMenu.RULES_PAD - 12
+	for t in titles:
+		_check(PixelFont.text_width("%d %s" % [titles.find(t) + 1, t]) <= list_w, "chapter list entry '%s' fits" % t)
+
+func test_rules_numbers_come_from_data() -> void:
+	var chapters := RulesContent.chapters()
+	var fuel_text := ""
+	for b in chapters[1]["blocks"]:
+		fuel_text += (" ".join(b["table"].map(func(r): return " ".join(r))) if b.has("table") else b.get("p", b.get("key", ""))) + "\n"
+	var g: MechData = GlobalState.chassis_catalog["goliath"]
+	var mtn := GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3)
+	_check(("%d+%d" % [g.max_fuel, g.passive_refuel]) in fuel_text, "movement chapter quotes the goliath's tank and refuel from the catalog")
+	_check(str(mtn.get_base_fuel_cost()) in fuel_text, "movement chapter quotes the mountain fuel cost")
+	var need := g.get_step_fuel_cost(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 2), mtn)
+	_check(RulesContent.worked_example_needs() == need, "worked example needs == goliath plain(L2)->mountain(L3) step (%d vs %d)" % [RulesContent.worked_example_needs(), need])
+	_check(("= %d" % need) in fuel_text, "the worked example shows its total")
+	var missing := {}
+	for ch in CrtUI.sanitize(_all_rules_text()):
+		if ch != " " and ch != "\n" and not PixelFont.has_glyph(ch):
+			missing[ch] = true
+	_check(missing.is_empty(), "every rules glyph is drawable (missing %s)" % [missing.keys()])
+
+func test_rules_navigation() -> void:
+	var menu: MainMenu = load("res://scenes/MainMenu.tscn").instantiate()
+	add_child(menu)
+	await get_tree().process_frame
+	_check(not menu.show_rules, "rules page starts closed")
+	menu._activate("rules")
+	_check(menu.show_rules and menu.rules_chapter == 0, "activating 'rules' opens chapter 1")
+	_check(menu._key_action(KEY_DOWN) == "rules:1", "Down moves to chapter 2 (got %s)" % menu._key_action(KEY_DOWN))
+	menu._activate(menu._key_action(KEY_DOWN))
+	_check(menu.rules_chapter == 1, "chapter 2 selected")
+	menu._activate(menu._key_action(KEY_7))
+	_check(menu.rules_chapter == 6, "key 7 jumps to the last chapter")
+	_check(menu._key_action(KEY_ENTER) == "" and menu._key_action(KEY_SPACE) == "", "Enter/Space do nothing on the rules page")
+	_check(menu._key_action(KEY_ESCAPE) == "rules_back", "Esc goes back")
+	menu._activate("rules_back")
+	_check(not menu.show_rules, "back closes the rules page")
+	_check(menu._key_action(KEY_R) == "rules", "R opens the rules page from Command HQ")
+	_check(menu._key_action(KEY_ENTER) == "launch", "Enter still launches from Command HQ")
+	menu.queue_redraw()
+	await get_tree().process_frame
+	menu.queue_free()
 	await get_tree().process_frame

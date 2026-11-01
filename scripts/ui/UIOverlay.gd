@@ -346,12 +346,9 @@ func _objective_text() -> String:
 
 ## Wrapped body lines of the strike-plan box (OUT OF REACH or the quiet one-liner).
 func _plan_lines(inner_w: float) -> PackedStringArray:
-	var out := PackedStringArray()
 	if strike_plan == null:
-		return out
-	for l in strike_plan.panel_lines():
-		out.append_array(CrtUI.wrap_lines(l, inner_w))
-	return out
+		return PackedStringArray()
+	return strike_plan.panel_lines(inner_w)
 
 func _plan_box_h(inner_w: float) -> float:
 	if strike_plan == null or strike_plan.severity == StrikePlan.REACHABLE:

@@ -11,6 +11,9 @@ extends Node2D
 @onready var ui_overlay: UIOverlay = $UIOverlay
 
 var current_map_def: MapDefinition
+
+## Hull lost by a defender that loses the clash with no open tile to retreat to.
+const CRUSH_DAMAGE: int = 15
 var selected_unit: MechUnit = null
 var _is_animating_move: bool = false
 var _phase_before_resolution: GlobalState.TurnPhase = GlobalState.TurnPhase.PLAYER_PHASE
@@ -454,7 +457,7 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 				GlobalState.add_log("%s retreated to (%d,%d)!" % [_pending_defender.mech_data.callsign, retreat_coords.x, retreat_coords.y])
 			else:
 				# Defender has no retreat tile -> overrun crush damage, attacker steps back to approach tile
-				_pending_defender.mech_data.current_armor = maxi(0, _pending_defender.mech_data.current_armor - 15)
+				_pending_defender.mech_data.current_armor = maxi(0, _pending_defender.mech_data.current_armor - CRUSH_DAMAGE)
 				if not _pending_defender.mech_data.is_alive():
 					GlobalState.add_log("%s crushed with no line of retreat!" % _pending_defender.mech_data.callsign)
 					unit_container.remove_destroyed_unit(_pending_defender)
