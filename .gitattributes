@@ -1,0 +1,10 @@
+# Keep line endings stable across macOS/Linux and Windows checkouts.
+* text=auto
+
+# Shell scripts must stay LF or bash/sh fails on them; PowerShell scripts are CRLF-native on Windows.
+*.sh  text eol=lf
+*.ps1 text eol=crlf
+
+# Generated battle art: the generator writes LF JSON, and `generate.py --check` compares bytes.
+assets/battle/**/*.json text eol=lf
+*.png binary

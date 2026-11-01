@@ -198,6 +198,12 @@ godot --headless --path . res://tests/Playtest.tscn          # exit code = numbe
 PLAYTEST_POLICIES=greedy PLAYTEST_VERBOSE=1 godot --headless --path . res://tests/Playtest.tscn
 ```
 
+```powershell
+# Windows PowerShell equivalent of the environment-variable form
+$env:PLAYTEST_POLICIES = 'greedy'; $env:PLAYTEST_VERBOSE = '1'; godot --headless --path . res://tests/Playtest.tscn
+Remove-Item Env:PLAYTEST_POLICIES, Env:PLAYTEST_VERBOSE
+```
+
 ## Battle Art Pipeline
 
 All battle screen art is generated pixel art. `tools/battle_sprites/generate.py` builds every chassis from shaded parts. The legs are a two-bone hip→knee→ankle IK rig, re-solved for every pose so the feet stay planted.
@@ -211,6 +217,22 @@ python3 -m unittest discover -s tools/battle_sprites
 tests/run_battle_tests.sh                          # battle screen unit tests (headless)
 godot --path . res://scenes/dev/BattlePreview.tscn # browse chassis, cards, terrains and endings
 ```
+
+On Windows, run the same commands in PowerShell (5.1 or 7+):
+
+```powershell
+py -3 tools\battle_sprites\generate.py
+py -3 tools\battle_sprites\generate.py --check
+py -3 -m unittest discover -s tools\battle_sprites
+.\tests\run_battle_tests.ps1                       # or: .\tests\run_battle_tests.ps1 -Godot C:\path\to\Godot_v4.7-stable_win64_console.exe
+godot --path . res://scenes/dev/BattlePreview.tscn
+```
+
+Some notes for Windows:
+
+- **Use the console build of Godot.** The test runner reads Godot's output. On Windows that only works with the `*_console.exe` build, which the runner finds on `PATH` or through `$env:GODOT`.
+- **If scripts are blocked, unblock them.** PowerShell may refuse to run local scripts. Allow them once with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+- **Line endings are handled.** The generator writes the same bytes on every OS, and `.gitattributes` keeps the generated JSON as LF, so `--check` passes on Windows too.
 
 After regenerating, run `godot --headless --path . --import` so Godot picks up the new PNGs.
 
