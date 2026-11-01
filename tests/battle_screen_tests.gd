@@ -13,6 +13,7 @@ func _ready() -> void:
 	for t in [
 		"test_sprite_bank_loads", "test_anchor_mirrors", "test_recoil_moves_muzzle",
 		"test_side_from_approach", "test_elevation_offsets", "test_wrap_long_headline",
+		"test_damage_sums", "test_hold_at_one", "test_ai_attacker_panels", "test_followup_flags", "test_capture_text",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -69,3 +70,70 @@ func test_wrap_long_headline() -> void:
 	for l in lines:
 		_check(PixelFont.text_width(l) <= 344, "wrapped line fits 344px: '%s'" % l)
 	_check(PixelFont.has_glyph("Ä") and PixelFont.has_glyph("ä"), "umlauts are drawable")
+
+# ---------------------------------------------------------------- timeline
+func _fight(atk_chassis: String, def_chassis: String, atk_faction: int = 0, def_armor: int = -1) -> SkirmishEngine.SkirmishResult:
+	var atk := GlobalState.create_mech_instance(atk_chassis, atk_faction as MechData.Faction, "ATK-1 (Test)", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance(def_chassis, (1 - atk_faction) as MechData.Faction, "DEF-2 (Test)", Vector2i(4, 2), "d")
+	if def_armor >= 0:
+		dfn.current_armor = def_armor
+	var from := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var target := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.PLAIN, 1)
+	return SkirmishEngine.resolve_skirmish(atk, dfn, from, target, false)
+
+func test_damage_sums() -> void:
+	for pair in [["vanguard", "moloch"], ["falke", "goliath"], ["kommandant", "donner"]]:
+		var r := _fight(pair[0], pair[1])
+		var tl := BattleTimeline.build(r)
+		_check(tl.beats.size() == r.steps.size(), "one beat per step")
+		var to_def := 0
+		var to_atk := 0
+		for b in tl.beats:
+			if b["actor"] == "atk":
+				to_def += int(b["damage"])
+			else:
+				to_atk += int(b["damage"])
+		_check(to_def == r.total_dmg_to_defender, "%s beats sum to defender damage" % pair[0])
+		_check(to_atk == r.total_dmg_to_attacker, "%s beats sum to attacker damage" % pair[0])
+		_check(tl.start_hull["atk"] == r.atk_armor_before and tl.end_hull["def"] == r.def_armor_after, "start/end hull match result")
+
+func test_hold_at_one() -> void:
+	var r := _fight("goliath", "falke", 0, 5)
+	var tl := BattleTimeline.build(r)
+	for b in tl.beats:
+		_check(int(b["hull_after"]["def"]) >= 1, "defender held at >= 1 during playback (step %d)" % b["step"])
+	_check(tl.end_hull["def"] == 0, "defender ends at 0")
+	_check(tl.ending == "destroy_def", "ending is destroy_def, got %s" % tl.ending)
+
+func test_ai_attacker_panels() -> void:
+	var r := _fight("moloch", "vanguard", 1)
+	var tl := BattleTimeline.build(r)
+	_check(tl.coalition_side == "def", "coalition is the defender when the AI attacks")
+	for b in tl.beats:
+		if b["actor"] == "atk":
+			_check(b["command_row"] == -1, "syndikat actions show no command box")
+		elif b["card_type"] in ["BALLISTIC", "ARTILLERY", "THERMAL"]:
+			_check(b["command_row"] == 0, "coalition weapon actions point at FIGHT")
+
+func test_followup_flags() -> void:
+	var r := _fight("vanguard", "moloch")
+	var tl := BattleTimeline.build(r)
+	_check(tl.beats[2]["card_id"] == "krupp_plate", "step 2 is Krupp plate")
+	_check(tl.beats[2]["needs_followup"] == true, "armor card needs a follow-up shot")
+	_check(tl.beats[0]["needs_followup"] == false, "weapon card needs no follow-up")
+	_check(tl.beats[2]["command_row"] == 2, "armor card points at ARMOR")
+	_check(tl.beats[3]["soften_from"] == "krupp_plate", "next incoming hit is softened by Krupp")
+	_check(tl.beats[5]["soften_from"] == "", "soften is consumed once")
+
+func test_capture_text() -> void:
+	var seen := false
+	for pair in [["vanguard", "moloch"], ["kommandant", "falke"], ["donner", "goliath"], ["moloch", "kommandant"]]:
+		var r := _fight(pair[0], pair[1])
+		var tl := BattleTimeline.build(r)
+		for i in r.steps.size():
+			if r.steps[i].flipped_slots.size() > 0:
+				seen = true
+				_check(tl.beats[i]["capture_text"] != "", "captures produce text (step %d)" % i)
+			else:
+				_check(tl.beats[i]["capture_text"] == "", "no capture, no text (step %d)" % i)
+	_check(seen, "at least one sampled fight has a capture")
