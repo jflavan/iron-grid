@@ -15,6 +15,7 @@ func _ready() -> void:
 		"test_side_from_approach", "test_elevation_offsets", "test_wrap_long_headline",
 		"test_damage_sums", "test_hold_at_one", "test_ai_attacker_panels", "test_followup_flags", "test_capture_text",
 		"test_skip_confirm_reuse", "test_full_playback_finishes",
+		"test_every_weapon_has_anim",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -178,3 +179,19 @@ func test_full_playback_finishes() -> void:
 	_check(screen._all_steps_done, "playback reaches the result on its own (%d ticks)" % steps)
 	_check(screen.stage.hull_display["def"] == 0, "destroyed defender shows 0 hull at the end")
 	screen.queue_free()
+
+# ---------------------------------------------------------------- animations
+func test_every_weapon_has_anim() -> void:
+	var n := 0
+	for id in GlobalState.card_catalog:
+		var card: EquipmentCard = GlobalState.card_catalog[id]
+		if not BattleTimeline.is_weapon(card.category):
+			continue
+		n += 1
+		_check(WeaponAnims.has_anim(id), "%s has a dedicated weapon animation" % id)
+		for quick in [false, true]:
+			var d := WeaponAnims.duration(id, quick)
+			var imp := WeaponAnims.impact_time(id, quick)
+			_check(d > 0.0 and imp > 0.0 and imp < d, "%s (quick=%s) impact inside duration" % [id, quick])
+		_check(WeaponAnims.duration(id, true) < WeaponAnims.duration(id, false), "%s follow-up is shorter" % id)
+	_check(n == 9, "nine weapon cards in the catalog, got %d" % n)
