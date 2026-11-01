@@ -15,7 +15,8 @@ func _ready() -> void:
 		"test_side_from_approach", "test_elevation_offsets", "test_wrap_long_headline",
 		"test_damage_sums", "test_hold_at_one", "test_ai_attacker_panels", "test_followup_flags", "test_capture_text",
 		"test_skip_confirm_reuse", "test_full_playback_finishes",
-		"test_every_weapon_has_anim",
+		"test_every_weapon_has_anim", "test_every_support_has_anim", "test_persistent_effects_after_skip",
+		"test_pairings_play_to_result", "test_attachment_textures_cached",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -195,3 +196,67 @@ func test_every_weapon_has_anim() -> void:
 			_check(d > 0.0 and imp > 0.0 and imp < d, "%s (quick=%s) impact inside duration" % [id, quick])
 		_check(WeaponAnims.duration(id, true) < WeaponAnims.duration(id, false), "%s follow-up is shorter" % id)
 	_check(n == 9, "nine weapon cards in the catalog, got %d" % n)
+
+func test_every_support_has_anim() -> void:
+	var n := 0
+	for id in GlobalState.card_catalog:
+		var card: EquipmentCard = GlobalState.card_catalog[id]
+		if BattleTimeline.is_weapon(card.category):
+			continue
+		n += 1
+		_check(SupportAnims.has_anim(id), "%s has a support animation" % id)
+		_check(SupportAnims.duration(id) > 0.0, "%s support duration > 0" % id)
+	_check(n == 9, "nine armor/tactical cards in the catalog, got %d" % n)
+
+func _screen_for(r: SkirmishEngine.SkirmishResult) -> BattleScreen:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	screen.start_showdown(r)
+	return screen
+
+func test_persistent_effects_after_skip() -> void:
+	# Spinne plays Anchor Struts on step 4 -> braced sheet; Siegebreaker drops its slab on step 2;
+	# Brenner arms its bricks on step 4 and the defender's step-5 hit detonates them.
+	var s1 := _screen_for(_fight("donner", "vanguard"))
+	await get_tree().process_frame
+	s1._on_skip_pressed()
+	_check(s1.stage.mechs["atk"]["sheet"] == "donner_braced", "Spinne ends braced after skip")
+	s1.queue_free()
+	var s2 := _screen_for(_fight("goliath", "falke"))
+	await get_tree().process_frame
+	s2._on_skip_pressed()
+	_check(s2.stage.mechs["atk"]["slab"] == true, "Siegebreaker slab stays up after skip")
+	s2.queue_free()
+	var s3 := _screen_for(_fight("moloch", "kommandant"))
+	await get_tree().process_frame
+	s3._on_skip_pressed()
+	_check(s3.stage.mechs["atk"]["sheet"] == "moloch_spent", "Brenner bricks are spent after the next hit")
+	s3.queue_free()
+	var s4 := _screen_for(_fight("goliath", "falke", 0, 5))
+	await get_tree().process_frame
+	s4._on_skip_pressed()
+	_check(s4.stage.mechs["def"]["dark"] == true, "destroyed defender is shown as a wreck")
+	s4.queue_free()
+
+func test_pairings_play_to_result() -> void:
+	Engine.time_scale = 30.0
+	var pairs := [["vanguard", "goliath"], ["goliath", "falke"], ["falke", "donner"], ["donner", "kommandant"],
+		["kommandant", "moloch"], ["moloch", "vanguard"], ["falke", "moloch"], ["kommandant", "vanguard"]]
+	for i in pairs.size():
+		var screen := _screen_for(_fight(pairs[i][0], pairs[i][1], i % 2, 5 if i % 3 == 0 else -1))
+		var frames := 0
+		while not screen._all_steps_done and frames < 3000:
+			await get_tree().process_frame
+			frames += 1
+		_check(screen._all_steps_done, "%s vs %s plays through to the result (%d frames)" % [pairs[i][0], pairs[i][1], frames])
+		_check(screen.stage.hull_display["atk"] == screen.current_result.atk_armor_after, "%s final hull matches result" % pairs[i][0])
+		screen.queue_free()
+	Engine.time_scale = 1.0
+
+func test_attachment_textures_cached() -> void:
+	# Draw commands keep only the RID; an uncached texture loaded in _draw is freed before rendering.
+	var m := {"faction": 0}
+	for att in ["slab", "mast", "rangefinder"]:
+		_check(SupportAnims._attach_tex(att, m) != null, "%s attachment texture loads" % att)
+	# held by the static cache, not just by the caller
+	_check(SupportAnims._attach_cache.size() >= 3, "attachment textures are retained across frames")
