@@ -125,16 +125,7 @@ func skip_to_end() -> void:
 		return
 	# If running an interactive BattleSession, auto-resolve remaining turns first
 	if session != null and not session.is_finished:
-		var guard := 0
-		while not session.is_finished and guard < 64:
-			var next_side := session.get_next_actor_side()
-			if next_side == "":
-				break
-			var cmd := session.choose_ai_command(next_side)
-			var step := session.execute_next_turn(int(cmd["command"]), String(cmd["ability_id"]))
-			if step != null:
-				timeline.append_step(step)
-			guard += 1
+		session.auto_resolve(func(step: SkirmishEngine.TurnStep): timeline.append_step(step))
 		timeline.sync_ending_from_result(result)
 
 	hull_display = timeline.end_hull.duplicate()
@@ -301,31 +292,32 @@ func handle_mouse_click(stage_pos: Vector2) -> bool:
 		return true
 	return false
 
+## Auto-Pilot: the AI plays the player's turn from command_select.
 func _trigger_auto_player_command() -> void:
 	if session == null or session.is_finished:
 		return
-	var next_side := session.get_next_actor_side()
-	if next_side == "":
-		return
-	var cmd := session.choose_ai_command(next_side)
 	in_tech_submenu = false
-	_commit_session_turn(int(cmd["command"]), String(cmd["ability_id"]))
+	_show_committed_turn(_record_step(session.run_ai_turn()))
 
-## Runs one live-session turn and appends its beat. Returns false when the session produced no
-## step (it had already concluded), in which case the stage should move on to the ending.
+## Appends a live-session step's beat and syncs the ending once the session concludes. Returns
+## false when there was no step (the session had already concluded).
 ## Unit HP/EN are written back once, by BattleScreen._finish(), when the whole fight is over.
-func _play_session_turn(cmd_type: int, ability_id: String) -> bool:
-	var step := session.execute_next_turn(cmd_type, ability_id)
+func _record_step(step: SkirmishEngine.TurnStep) -> bool:
 	if step != null:
 		timeline.append_step(step)
 	if session.is_finished:
 		timeline.sync_ending_from_result(result)
 	return step != null
 
+## Player chose a command from the menu.
 func _commit_session_turn(cmd_type: int, ability_id: String) -> void:
 	if session == null or session.is_finished:
 		return
-	if not _play_session_turn(cmd_type, ability_id):
+	_show_committed_turn(_record_step(session.execute_next_turn(cmd_type, ability_id)))
+
+## Starts animating the beat a player (or Auto-Pilot) turn just produced.
+func _show_committed_turn(had_step: bool) -> void:
+	if not had_step:
 		_enter("ending")
 		return
 	beat_idx = timeline.beats.size() - 1
@@ -390,9 +382,7 @@ func _start_beat(i: int) -> void:
 				SoundManager.play("ui_click")
 			return
 		if next_side != "":
-			# Syndikat turn: let the AI pick and append its beat
-			var cmd := session.choose_ai_command(next_side)
-			_play_session_turn(int(cmd["command"]), String(cmd["ability_id"]))
+			_record_step(session.run_ai_turn())  # Syndikat turn
 		elif session.is_finished:
 			timeline.sync_ending_from_result(result)
 

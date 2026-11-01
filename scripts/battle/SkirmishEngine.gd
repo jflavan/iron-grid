@@ -20,6 +20,7 @@ const ROUND1_ENTRENCHED_SPD_BONUS: int = 6
 const ENTRENCHED_SPD_BONUS: int = 4
 const ENTRENCHED_EVA_BONUS: int = 5
 const ENTRENCHED_ACC_BONUS: int = 6
+const CRIT_DAMAGE_MULT: float = 1.42  # live crit multiplier; the deterministic forecast folds the same bonus in by expectation
 
 class TurnStep extends RefCounted:
 	var step_index: int = 0
@@ -151,8 +152,10 @@ class CombatantState extends RefCounted:
 		var badges: Array[String] = []
 		if defending:
 			badges.append("GUARD")
-		if def_buff_pct > 0 or pending_soften != "":
-			badges.append("ARM+" if def_buff_pct >= 0 else "ARM-")
+		if pending_soften != "":
+			badges.append("SHIELD")
+		if def_buff_pct != 0:
+			badges.append("ARM+" if def_buff_pct > 0 else "ARM-")
 		if atk_buff_pct > 0 or crit_buff_pct > 0:
 			badges.append("LOCK")
 		if eva_buff_pct > 0 or spd_buff_pct > 0:
@@ -269,16 +272,18 @@ class BattleSession extends RefCounted:
 		var actor := get_combatant(side)
 		var target := get_opponent(side)
 
-		# 1. Check if we can finish off the target right now with a Weapon TECH or basic ATTACK
-		var basic_est := estimate_attack_damage(actor, target, null)
+		# 1. Check if we can finish off the target right now with a Weapon TECH or basic ATTACK.
+		# expected_strike_damage() is what _resolve_weapon_strike will deal in this mode, so a
+		# forecast never commits to a finisher that the engine then scales below the kill.
+		var basic_est := expected_strike_damage(actor, target, null)
 		if basic_est >= target.hp:
 			return {"command": CommandType.ATTACK, "ability_id": ""}
 
 		var best_weapon: CombatAbility = null
 		var best_weapon_dmg: int = basic_est
 		for ab in actor.mech.abilities:
-			if ab.is_weapon() and actor.en >= ab.energy_cost:
-				var est := estimate_attack_damage(actor, target, ab)
+			if ab.is_weapon() and actor.can_use(ab):
+				var est := expected_strike_damage(actor, target, ab)
 				if est >= target.hp:
 					return {"command": CommandType.TECH, "ability_id": ab.ability_id}
 				if est > best_weapon_dmg:
@@ -292,8 +297,9 @@ class BattleSession extends RefCounted:
 		var holding_vital_objective: bool = (side == "def" and result.target_tile != null and result.target_tile.is_objective)
 		var can_escape_tile: bool = (side == "atk" or can_defender_retreat)
 		# A guard still raised here has not been spent (guards last until the first enemy shot lands),
-		# so it really will halve the next incoming hit and belongs in the estimate.
-		var enemy_est := estimate_attack_damage(target, actor, null)
+		# so it really will halve the next incoming hit and belongs in the estimate. The enemy will
+		# fire its strongest affordable weapon TECH (step 4), not just its basic gun.
+		var enemy_est := strongest_strike_estimate(target, actor)
 		var in_lethal_danger: bool = (hp_ratio <= 0.38 or (actor.hp <= enemy_est + 6 and target.hp > actor.hp + 10))
 		if not deterministic_mode and round_number >= 2 and in_lethal_danger and target.hp > best_weapon_dmg and not holding_vital_objective and can_escape_tile and not actor.retreat_attempted:
 			var esc_chance := compute_escape_chance(actor, target)
@@ -309,10 +315,36 @@ class BattleSession extends RefCounted:
 						return {"command": CommandType.TECH, "ability_id": ab.ability_id}
 
 		# 4. Otherwise use strongest affordable Weapon TECH or Basic Attack
-		if best_weapon != null and actor.en >= best_weapon.energy_cost:
+		if best_weapon != null and actor.can_use(best_weapon):
 			return {"command": CommandType.TECH, "ability_id": best_weapon.ability_id}
 
 		return {"command": CommandType.ATTACK, "ability_id": ""}
+
+	## Strongest shot `shooter` can take at `victim` right now: basic gun or any weapon TECH it can use.
+	func strongest_strike_estimate(shooter: CombatantState, victim: CombatantState) -> int:
+		var best := expected_strike_damage(shooter, victim, null)
+		for ab in shooter.mech.abilities:
+			if ab.is_weapon() and shooter.can_use(ab):
+				best = maxi(best, expected_strike_damage(shooter, victim, ab))
+		return best
+
+	func hit_chance_for(actor: CombatantState, target: CombatantState, weapon_tech: CombatAbility) -> int:
+		var base_w_acc: int = weapon_tech.accuracy if weapon_tech != null else 94
+		return clampi(actor.get_effective_accuracy(base_w_acc) - target.get_effective_evasion(), 28, 100)
+
+	func crit_chance_for(actor: CombatantState, weapon_tech: CombatAbility) -> int:
+		return actor.get_effective_crit(weapon_tech.crit_bonus if weapon_tech != null else 0)
+
+	## Pre-roll damage of a shot in this session's mode: the raw estimate when dice are live, or the
+	## expectation over hit and crit chance in deterministic mode. _resolve_weapon_strike deals
+	## exactly this (before variance/crit rolls), so AI decisions and forecasts cannot drift from it.
+	func expected_strike_damage(actor: CombatantState, target: CombatantState, weapon_tech: CombatAbility) -> int:
+		var dmg := estimate_attack_damage(actor, target, weapon_tech)
+		if deterministic_mode:
+			var hit := float(hit_chance_for(actor, target, weapon_tech)) / 100.0
+			var crit := float(crit_chance_for(actor, weapon_tech)) / 100.0
+			dmg = maxi(5, int(round(float(dmg) * hit * (1.0 + crit * (CRIT_DAMAGE_MULT - 1.0)))))
+		return dmg
 
 	func compute_escape_chance(actor: CombatantState, target: CombatantState) -> int:
 		if actor.side == "def" and not can_defender_retreat:
@@ -432,8 +464,7 @@ class BattleSession extends RefCounted:
 			step.ability_category = "ATTACK"
 		step.is_support_only = false
 
-		var base_w_acc: int = weapon_tech.accuracy if weapon_tech != null else 94
-		var hit_chance: int = clampi(actor.get_effective_accuracy(base_w_acc) - target.get_effective_evasion(), 28, 100)
+		var hit_chance: int = hit_chance_for(actor, target, weapon_tech)
 		var hit_roll: int = 1 if deterministic_mode else rng.randi_range(1, 100)
 
 		if hit_roll > hit_chance:
@@ -443,20 +474,15 @@ class BattleSession extends RefCounted:
 			step.description = "%s fired [%s] -> MISSED (%s evaded)!" % [actor.mech.callsign, step.ability_name, target.mech.callsign]
 			return
 
-		var w_crit: int = weapon_tech.crit_bonus if weapon_tech != null else 0
-		var crit_chance: int = actor.get_effective_crit(w_crit)
+		var crit_chance: int = crit_chance_for(actor, weapon_tech)
 		var crit_roll: int = 100 if deterministic_mode else rng.randi_range(1, 100)
 		var is_crit: bool = (crit_roll <= crit_chance)
 		step.is_crit = is_crit
 
-		var dmg: int = estimate_attack_damage(actor, target, weapon_tech)
-		if deterministic_mode:
-			# Fold expected accuracy & crit into deterministic forecast damage
-			var expected_scale: float = (float(hit_chance) / 100.0) * (1.0 + (float(crit_chance) / 100.0) * 0.35)
-			dmg = maxi(5, int(round(float(dmg) * expected_scale)))
-		else:
+		var dmg: int = expected_strike_damage(actor, target, weapon_tech)
+		if not deterministic_mode:
 			if is_crit:
-				dmg = int(round(float(dmg) * 1.42))
+				dmg = int(round(float(dmg) * CRIT_DAMAGE_MULT))
 			# Slight +/- 6% classic RPG damage variance
 			var variance: float = rng.randf_range(0.94, 1.06)
 			dmg = clampi(int(round(float(dmg) * variance)), 4, 120)
@@ -475,7 +501,7 @@ class BattleSession extends RefCounted:
 			result.total_dmg_to_attacker += dmg
 
 		if is_crit:
-			step.status_text = "CRITICAL HIT!"
+			step.status_text = "CRITICAL HIT! // GUARDED" if target.defending else "CRITICAL HIT!"
 		elif target.defending:
 			step.status_text = "GUARDED (-50%)"
 		elif step.soften_from != "":
@@ -585,12 +611,34 @@ class BattleSession extends RefCounted:
 				result.attacker_won_clash = false
 				result.summary_headline = "ASSAULT REPELLED — %s FALLS BACK!" % [result.attacker.callsign]
 
+	## Lets the AI pick and play the next turn. Returns the TurnStep, or null once the session is over.
+	func run_ai_turn() -> TurnStep:
+		var side := get_next_actor_side()
+		if side == "":
+			return null
+		var cmd := choose_ai_command(side)
+		return execute_next_turn(int(cmd["command"]), String(cmd["ability_id"]))
+
+	## Plays the rest of the battle with the AI commanding both sides; `on_step` sees every TurnStep.
+	func auto_resolve(on_step: Callable = Callable()) -> void:
+		var safety := 0
+		while not is_finished and safety < 64:
+			var step := run_ai_turn()
+			if step == null:
+				break
+			if on_step.is_valid():
+				on_step.call(step)
+			safety += 1
+
 	func apply_to_units() -> void:
 		result.attacker.current_armor = result.atk_armor_after
 		result.defender.current_armor = result.def_armor_after
 		result.attacker.current_energy = result.atk_energy_after
 		result.defender.current_energy = result.def_energy_after
-		result.defender.is_entrenched = false
+		# Only a dislodged defender (destroyed, routed or pushed back) loses its entrenchment; an
+		# attacker that breaks off or is repelled cannot de-fortify a garrison for free.
+		if result.attacker_won_clash:
+			result.defender.is_entrenched = false
 
 ## Computes terrain, elevation, and stat modifiers and initializes a SkirmishResult header.
 static func _init_result_modifiers(
@@ -673,8 +721,27 @@ static func create_deterministic_session(
 ) -> BattleSession:
 	return BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, true)
 
+## Forecasts are deterministic, so identical inputs are served from this cache. The HUD asks on
+## every hover and the AI once per reachable tile x adjacent enemy, each a full simulated battle.
+static var _forecast_cache: Dictionary = {}
+const FORECAST_CACHE_LIMIT: int = 4096
+
+static func clear_forecast_cache() -> void:
+	_forecast_cache.clear()
+
+static func _forecast_key(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData) -> Array:
+	return [
+		attacker.unit_id, attacker.chassis_id, int(attacker.faction), attacker.current_armor, attacker.current_energy, attacker.is_entrenched,
+		defender.unit_id, defender.chassis_id, int(defender.faction), defender.current_armor, defender.current_energy, defender.is_entrenched,
+		int(from_tile.terrain_type), from_tile.elevation, int(target_tile.terrain_type), target_tile.elevation, target_tile.is_objective,
+		BalanceProbe.def_pct[int(defender.faction)],
+	]
+
 ## Computes a fast, deterministic tactical forecast before committing to an engagement.
 static func compute_forecast(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData) -> Dictionary:
+	var key := _forecast_key(attacker, defender, from_tile, target_tile)
+	if _forecast_cache.has(key):
+		return (_forecast_cache[key] as Dictionary).duplicate()
 	var sim_atk := attacker.duplicate_mech()
 	var sim_def := defender.duplicate_mech()
 	var res := resolve_skirmish(sim_atk, sim_def, from_tile, target_tile, false, true)
@@ -688,7 +755,9 @@ static func compute_forecast(attacker: MechData, defender: MechData, from_tile: 
 	else:
 		favor = "UNFAVORABLE EXCHANGE"
 
-	return {
+	if _forecast_cache.size() >= FORECAST_CACHE_LIMIT:
+		_forecast_cache.clear()
+	var forecast := {
 		"atk_mod_pct": res.atk_total_mod_pct,
 		"def_mod_pct": res.def_total_mod_pct,
 		"elev_diff": res.elev_diff,
@@ -704,6 +773,8 @@ static func compute_forecast(attacker: MechData, defender: MechData, from_tile: 
 		"win_favor": favor,
 		"approach_summary": res.approach_summary
 	}
+	_forecast_cache[key] = forecast
+	return forecast.duplicate()
 
 ## Executes a complete turn-based battle resolution (used by forecasts, AI simulations, and tests).
 ## If `apply_to_units` is true, mutates `attacker` and `defender` Hull and Energy.
@@ -716,15 +787,7 @@ static func resolve_skirmish(
 	deterministic: bool = true
 ) -> SkirmishResult:
 	var session := BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, deterministic)
-	var safety := 0
-	while not session.is_finished and safety < 64:
-		var side := session.get_next_actor_side()
-		if side == "":
-			break
-		var cmd := session.choose_ai_command(side)
-		session.execute_next_turn(int(cmd["command"]), String(cmd["ability_id"]))
-		safety += 1
-
+	session.auto_resolve()
 	if apply_to_units:
 		session.apply_to_units()
 	return session.result

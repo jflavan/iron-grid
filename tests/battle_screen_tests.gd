@@ -22,7 +22,8 @@ func _ready() -> void:
 		"test_crt_pixel_scale", "test_crt_glyph_coverage", "test_menu_mechs_never_overlap",
 		"test_menu_header_click_is_inert", "test_basic_weapon_single_source", "test_guard_survives_initiative_flip",
 		"test_forecast_initiative_matches_queue", "test_seeded_sessions_replay", "test_support_tech_is_single_use",
-		"test_guard_survives_miss", "test_auto_pilot_uses_command_select",
+		"test_guard_survives_miss", "test_auto_pilot_uses_command_select", "test_repelled_attacker_leaves_entrenchment",
+		"test_forecast_damage_matches_ai_estimate", "test_forecast_cache", "test_status_badges",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -568,7 +569,7 @@ func test_guard_survives_miss() -> void:
 			_check(sess.atk_state.defending, "a MISS does not spend the guard (seed %d)" % s)
 			break
 		else:
-			_check(not sess.atk_state.defending and shot.status_text in ["GUARDED (-50%)", "CRITICAL HIT!"], "a landed hit is guarded and spends the guard (seed %d)" % s)
+			_check(not sess.atk_state.defending and shot.status_text in ["GUARDED (-50%)", "CRITICAL HIT! // GUARDED"], "a landed hit is guarded and spends the guard (seed %d)" % s)
 	_check(seen_miss, "found a seed where the shot after DEFEND misses")
 	# An enemy support TECH leaves the guard up too
 	var det := _flat_session("falke", "goliath")
@@ -595,3 +596,75 @@ func test_auto_pilot_uses_command_select() -> void:
 			coalition_steps += 1
 	_check(coalition_steps > 0, "auto-pilot committed the player's turns")
 	screen.queue_free()
+
+func test_repelled_attacker_leaves_entrenchment() -> void:
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var atk := GlobalState.create_mech_instance("falke", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance("goliath", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	dfn.is_entrenched = true
+	var sess := SkirmishEngine.BattleSession.new(atk, dfn, flat, flat, true, 5)
+	sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)  # Falke opens
+	sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)  # Goliath answers
+	var ret := sess.execute_next_turn(SkirmishEngine.CommandType.RETREAT)
+	while not sess.is_finished and not ret.escaped:
+		sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
+		if sess.is_finished:
+			break
+		ret = sess.execute_next_turn(SkirmishEngine.CommandType.RETREAT)
+	if sess.result.attacker_retreated:
+		sess.apply_to_units()
+		_check(dfn.is_entrenched, "an attacker that breaks off leaves the defender entrenched")
+	else:
+		_check(true, "retreat never succeeded with this seed; skipping entrenchment check")
+	var win := _fight("goliath", "falke", 0, 5)
+	_check(win.defender_destroyed and not win.defender.is_entrenched, "a destroyed defender is no longer entrenched")
+
+func test_forecast_damage_matches_ai_estimate() -> void:
+	# In deterministic mode the AI's kill check must see the same number the strike will deal
+	for pair in [["vanguard", "moloch"], ["falke", "goliath"], ["donner", "kommandant"], ["moloch", "falke"]]:
+		var sess := _flat_session(pair[0], pair[1])
+		var side := sess.get_next_actor_side()
+		var actor := sess.get_combatant(side)
+		var target := sess.get_opponent(side)
+		var est := sess.expected_strike_damage(actor, target, null)
+		var raw := sess.estimate_attack_damage(actor, target, null)
+		var hp_before := target.hp
+		var step := sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
+		_check(step.damage_dealt == mini(est, hp_before), "%s deterministic strike deals its expected damage (%d vs %d)" % [actor.mech.chassis_id, step.damage_dealt, est])
+		_check(est <= raw, "%s expected damage folds hit/crit chance in (%d <= %d)" % [actor.mech.chassis_id, est, raw])
+	# The retreat estimate counts the enemy's affordable weapon TECHs, not just its basic gun
+	var s2 := _flat_session("vanguard", "moloch")
+	var basic := s2.expected_strike_damage(s2.def_state, s2.atk_state, null)
+	var strongest := s2.strongest_strike_estimate(s2.def_state, s2.atk_state)
+	_check(strongest > basic, "Brenner's pile-bunker raises the strongest-strike estimate above its basic lance (%d > %d)" % [strongest, basic])
+
+func test_forecast_cache() -> void:
+	SkirmishEngine.clear_forecast_cache()
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	var f1 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
+	var f2 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
+	_check(f1 == f2 and SkirmishEngine._forecast_cache.size() == 1, "identical inputs are served from one cache entry")
+	f2["est_dmg_to_def"] = -1
+	_check(SkirmishEngine.compute_forecast(atk, dfn, flat, flat)["est_dmg_to_def"] == f1["est_dmg_to_def"], "callers get a copy, not the cached dictionary")
+	dfn.current_armor -= 20
+	var f3 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
+	_check(SkirmishEngine._forecast_cache.size() == 2 and f3["est_dmg_to_def"] <= f1["est_dmg_to_def"], "changed hull is a different key")
+	dfn.is_entrenched = true
+	SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
+	_check(SkirmishEngine._forecast_cache.size() == 3, "entrenchment is part of the key")
+	SkirmishEngine.clear_forecast_cache()
+	_check(SkirmishEngine._forecast_cache.is_empty(), "cache clears")
+
+func test_status_badges() -> void:
+	var sess := _flat_session("falke", "goliath")
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "gyro_thruster")
+	var badges := sess.atk_state.get_status_badges()
+	_check("SHIELD" in badges and "HASTE" in badges and not ("ARM+" in badges), "Gyro thrusters show SHIELD + HASTE, not ARM+ (got %s)" % [badges])
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "ferro_bulkhead")
+	_check("ARM+" in sess.def_state.get_status_badges() and not ("SHIELD" in sess.def_state.get_status_badges()), "Ferro bulkhead shows ARM+ without SHIELD")
+	var s2 := _flat_session("kommandant", "vanguard")
+	s2.execute_next_turn(SkirmishEngine.CommandType.TECH, "enigma_ecm")
+	var jammed := s2.def_state.get_status_badges()
+	_check("ARM-" in jammed and "JAM" in jammed, "an ECM-jammed unit shows ARM- and JAM (got %s)" % [jammed])

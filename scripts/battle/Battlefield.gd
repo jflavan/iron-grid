@@ -50,6 +50,7 @@ func start_mission(map_idx: int) -> void:
 	_pending_defender = null
 	var idx: int = clampi(map_idx, 0, GlobalState.maps.size() - 1)
 	current_map_def = GlobalState.maps[idx]
+	SkirmishEngine.clear_forecast_cache()
 	ui_overlay.map_def = current_map_def
 	ui_overlay.show_game_over_modal = false
 
@@ -394,6 +395,7 @@ func _trigger_skirmish_resolution(attacker: MechUnit, defender: MechUnit, start_
 	ui_overlay.show_skirmish_session(session)
 
 func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
+	BalanceProbe.record_outcome(result)
 	GlobalState.add_log("COMBAT RESULT: " + result.summary_headline)
 
 	var atk_alive: bool = (_pending_attacker != null and is_instance_valid(_pending_attacker) and _pending_attacker.mech_data.is_alive())
