@@ -19,31 +19,45 @@ const RIGHT_W := 164
 const LOG_H := 64
 const TOP_H := 30
 
-const MANUAL_LINES := [
-	"1. TURN FLOW & FUEL MOBILITY:",
-	"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
-	"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
-	"   - [WAIT / REFUEL] entrenches (+15% DEF, +5% EVA, +6% Hit, +4 SPD) & restores +5 Fuel / +4 EN (+8 Hull in a City). Cities repair +12 Hull, +4 Fuel, +3 EN each turn.",
-	"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
-	"",
-	"2. TERRAIN CHART (FUEL COST / ATTACK MOD / DEFENSE MOD):",
-	"   - TRANSIT ROAD (ROD):   1 Fuel /  +5% ATK /   0% DEF  (Fastest artery for Heavy Walkers)",
-	"   - OPEN PLAIN (PLN):     2 Fuel /   0% ATK /  +5% DEF  (Standard maneuvering ground)",
-	"   - FORTIFIED CITY (CTY): 2 Fuel / +10% ATK / +25% DEF  (Repairs +12 Hull, +4 Fuel & +3 EN each turn!)",
-	"   - TRENCH TIMBER (TRN):  3 Fuel /  +5% ATK / +15% DEF  (Prepared defensive cover, +8% EVA)",
-	"   - RIVER FORD (RIV):     4 Fuel / -15% ATK / -15% DEF  (Bogged down & exposed, -10% EVA! Avoid stopping here!)",
-	"   - MOUNTAIN CRAG (MTN):  5 Fuel / +15% ATK / +30% DEF  (Commanding rock bastion, +10% EVA)",
-	"",
-	"3. ELEVATION & HIGH GROUND ADVANTAGE:",
-	"   - Attacking from higher elevation down onto an enemy grants +12% Firepower, +10% Armor, +4% Hit, +4% EVA and +5% Crit per level!",
-	"   - Attacking uphill suffers -10% Firepower and -4% Hit Accuracy per elevation level (the defender above gains +12% Firepower & Armor).",
-	"",
-	"4. TURN-BASED RPG COMBAT (ATTACK / TECH / DEFEND / RETREAT):",
-	"   - Moving onto an enemy-occupied node triggers a classic Final Fantasy turn-based battle.",
-	"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +8 SPD; an Entrenched Defender answers with +10.",
-	"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-50% DMG on the enemy's next hit, +2 EN), or RETREAT.",
-	"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands; it cannot be stacked.",
-]
+## The H Field Manual. Numbers are read from the game data (GridTileData, MechData, SkirmishEngine,
+## BalanceProbe defaults) so it agrees with the Rules of Engagement page after a balance change.
+static func manual_lines() -> Array[String]:
+	var S := SkirmishEngine
+	var lines: Array[String] = [
+		"1. TURN FLOW & FUEL MOBILITY:",
+		"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
+		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
+		"   - Attacking moves onto the enemy's tile: you pay ITS fuel cost (terrain + chassis surcharge + climb). Hover an enemy to see what a strike needs.",
+		"   - [WAIT / REFUEL] entrenches (%+d%% DEF, %+d%% EVA, %+d%% Hit, +%d SPD) & restores +%d Fuel / +%d EN (+%d Hull in a City). Cities repair +%d Hull, +%d Fuel, +%d EN each turn." % [
+			BalanceProbe.def_pct[0], S.ENTRENCHED_EVA_BONUS, S.ENTRENCHED_ACC_BONUS, S.ENTRENCHED_SPD_BONUS,
+			MechData.WAIT_FUEL, MechData.WAIT_ENERGY, BalanceProbe.patch[0], BalanceProbe.upkeep[0], MechData.CITY_FUEL, MechData.CITY_ENERGY],
+		"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
+		"",
+		"2. TERRAIN CHART (FUEL COST / ATTACK / DEFENSE / EVASION MOD):",
+	]
+	for t in RulesContent.TERRAIN_ORDER:
+		var td := GridTileData.new(Vector2i.ZERO, t, 1)
+		lines.append("   - %s (%s): %d Fuel / %+d%% ATK / %+d%% DEF / %+d%% EVA" % [
+			td.get_terrain_name().to_upper(), td.get_terrain_short_code(), td.get_base_fuel_cost(), td.get_attack_modifier_pct(), td.get_defense_modifier_pct(), td.get_evasion_modifier_pct()])
+	lines.append_array([
+		"",
+		"3. ELEVATION & HIGH GROUND ADVANTAGE:",
+		"   - Attacking from higher elevation down onto an enemy grants +%d%% Firepower, +%d%% Armor, +%d%% Hit, +%d%% EVA and +%d%% Crit per level!" % [
+			S.ELEV_HIGH_FP_PCT, S.ELEV_HIGH_ARMOR_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_EVA_PER_LEVEL, S.ELEV_CRIT_PER_LEVEL],
+		"   - Attacking uphill suffers -%d%% Firepower and -%d%% Hit Accuracy per elevation level (the defender above gains +%d%% Firepower & Armor)." % [
+			S.ELEV_CLIMB_FP_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_CLIMB_ENEMY_FP_PCT],
+		"",
+		"4. TURN-BASED RPG COMBAT (ATTACK / TECH / DEFEND / RETREAT):",
+		"   - Moving onto an enemy-occupied node triggers a classic Final Fantasy turn-based battle.",
+		"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +%d SPD; an Entrenched Defender answers with +%d." % [
+			S.ROUND1_ATTACKER_SPD_BONUS, S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS],
+		"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-%d%% DMG on the enemy's next hit, +%d EN), or RETREAT." % [
+			100 - int(round(S.GUARD_DAMAGE_MULT * 100.0)), S.DEFEND_EN_GAIN],
+		"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands; it cannot be stacked.",
+		"   - Full rules: RULES OF ENGAGEMENT on the Command HQ screen (press R there).",
+	])
+	return lines
+
 
 var root_ctrl: Control
 var skirmish_modal: BattleScreen
@@ -53,6 +67,8 @@ var hovered_mech: MechData = null
 var hovered_tile: GridTileData = null
 var hovered_reach_info: Dictionary = {}
 var current_forecast: Dictionary = {}
+var strike_plan: StrikePlan = null       # why the hovered enemy can't be struck (Battlefield.strike_plan_for)
+var step_cost_mech: MechData = null      # ready selected walker whose real step cost the sector panel shows
 
 var map_def: MapDefinition = null
 var player_unit_count: int = 0
@@ -317,28 +333,66 @@ func _gear_note(m: MechData) -> String:
 		return "HEAVY CHASSIS (+1 FUEL OFF-ROAD)"
 	return "STANDARD TREAD/LEG GEAR"
 
-func _draw_terrain_panel(rect: Rect2) -> void:
-	var x := rect.position.x + 6
-	var w := rect.size.x - 12
-	var right := x + w
-	var rows: Array = []   # [label, value, colour]
+## Sector panel rows: [label, value, colour].
+func _terrain_rows() -> Array:
+	var rows: Array = []
 	var atk_m: int = hovered_tile.get_attack_modifier_pct()
 	var def_m: int = hovered_tile.get_defense_modifier_pct()
 	rows.append(["ELEVATION", "%dM L%d" % [hovered_tile.get_elevation_meters(), hovered_tile.elevation], CrtUI.C_NUM])
-	rows.append(["FUEL COST", "%d/TILE" % hovered_tile.get_base_fuel_cost(), CrtUI.C_NUM])
+	if step_cost_mech != null:
+		# Entering from the same level: the chassis surcharge/gear applies, climb depends on the approach.
+		var own: int = step_cost_mech.get_step_fuel_cost(hovered_tile, hovered_tile)
+		rows.append(["YOUR STEP COST", "%dF +CLIMB" % own, CrtUI.C_NUM])
+	else:
+		rows.append(["FUEL COST", "%d/TILE" % hovered_tile.get_base_fuel_cost(), CrtUI.C_NUM])
 	rows.append(["ATTACK MOD", "%+d%%" % atk_m, CrtUI.C_LABEL if atk_m >= 0 else CrtUI.C_HOSTILE])
 	rows.append(["DEFENSE MOD", "%+d%%" % def_m, CrtUI.C_LABEL if def_m >= 0 else CrtUI.C_HOSTILE])
 	if not hovered_reach_info.is_empty():
 		rows.append(["PATH FUEL", "-%d (%d LEFT)" % [hovered_reach_info["fuel_spent"], hovered_reach_info["fuel_left"]], CrtUI.C_CURSOR])
-	var obj_text := ""
-	if hovered_tile.is_objective:
-		var owner_txt := "8TH IRON DIV" if hovered_tile.controlled_by == 0 else ("SYNDIKAT" if hovered_tile.controlled_by == 1 else "CONTESTED")
-		obj_text = "OBJECTIVE: %s (%s)" % [hovered_tile.objective_label, owner_txt]
+	return rows
+
+func _objective_text() -> String:
+	if not hovered_tile.is_objective:
+		return ""
+	var owner_txt := "8TH IRON DIV" if hovered_tile.controlled_by == 0 else ("SYNDIKAT" if hovered_tile.controlled_by == 1 else "CONTESTED")
+	return "OBJECTIVE: %s (%s)" % [hovered_tile.objective_label, owner_txt]
+
+## Everything the sector panel draws, wrapped for inner width `w`, plus its total height. Computed
+## once per draw and shared by the drawing code and _terrain_panel_height so they cannot disagree.
+func _terrain_layout(w: float) -> Dictionary:
+	var rows := _terrain_rows()
+	var obj_text := _objective_text()
 	var obj_lines := CrtUI.wrap_lines(obj_text, w) if obj_text != "" else PackedStringArray()
 	var has_forecast := not current_forecast.is_empty()
 	var summary_lines := CrtUI.wrap_lines(str(current_forecast.get("approach_summary", "")), w - 12) if has_forecast else PackedStringArray()
-	var forecast_h := 6 + 12 + summary_lines.size() * CrtUI.LINE + 4 + 4 * 11 + 4 + 12 if has_forecast else 0
-	rect.size.y = 6 + 22 + rows.size() * 11 + (obj_lines.size() * CrtUI.LINE + 4 if obj_text != "" else 0) + (forecast_h + 6 if has_forecast else 0) + 2
+	var forecast_h: float = 6 + 12 + summary_lines.size() * CrtUI.LINE + 4 + 4 * 11 + 4 + 12 if has_forecast else 0
+	var plan_lines := PackedStringArray()
+	var plan_h := 0.0
+	if strike_plan != null and strike_plan.severity != StrikePlan.REACHABLE:
+		plan_lines = strike_plan.panel_lines(w - 12)
+		plan_h = (6 + 12 + plan_lines.size() * CrtUI.LINE + 4) if strike_plan.severity == StrikePlan.IN_STRIKING_DISTANCE else (plan_lines.size() * CrtUI.LINE + 2)
+	var height: float = 6 + 22 + rows.size() * 11 + (obj_lines.size() * CrtUI.LINE + 4 if not obj_lines.is_empty() else 0) \
+		+ (forecast_h + 6 if has_forecast else 0) + (plan_h + 6 if plan_h > 0 else 0) + 2
+	return {
+		"rows": rows, "obj_lines": obj_lines, "summary_lines": summary_lines, "forecast_h": forecast_h,
+		"plan_lines": plan_lines, "plan_h": plan_h, "height": height,
+	}
+
+## Height of the sector panel for the current hover state at inner width `w`.
+func _terrain_panel_height(w: float = RIGHT_W - 12) -> float:
+	return _terrain_layout(w)["height"]
+
+func _draw_terrain_panel(rect: Rect2) -> void:
+	var x := rect.position.x + 6
+	var w := rect.size.x - 12
+	var right := x + w
+	var lay := _terrain_layout(w)
+	var rows: Array = lay["rows"]
+	var obj_lines: PackedStringArray = lay["obj_lines"]
+	var has_forecast := not current_forecast.is_empty()
+	var summary_lines: PackedStringArray = lay["summary_lines"]
+	var forecast_h: float = lay["forecast_h"]
+	rect.size.y = lay["height"]
 	CrtUI.panel(root_ctrl, rect)
 
 	var y := rect.position.y + 6
@@ -350,7 +404,7 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 		_t(r[0], Vector2(x, y), CrtUI.C_LABEL)
 		_tr(r[1], right, y, r[2])
 		y += 11
-	if obj_text != "":
+	if not obj_lines.is_empty():
 		y += 2
 		for l in obj_lines:
 			_t(l, Vector2(x, y), CrtUI.C_NAME)
@@ -384,6 +438,22 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 		fy += 15
 		_t("CLICK ENEMY TO ENGAGE", Vector2(fx, fy), CrtUI.C_HOSTILE)
 
+	var plan_h: float = lay["plan_h"]
+	if plan_h > 0:
+		y += 4
+		if strike_plan.severity == StrikePlan.IN_STRIKING_DISTANCE:
+			CrtUI.panel(root_ctrl, Rect2(x - 2, y, w + 4, plan_h), CrtUI.C_CURSOR)
+			var py := y + 6
+			_t("OUT OF REACH", Vector2(x + 4, py), CrtUI.C_CURSOR)
+			py += 12
+			for l in lay["plan_lines"]:
+				_t(l, Vector2(x + 4, py), CrtUI.C_NUM)
+				py += CrtUI.LINE
+		else:
+			for l in lay["plan_lines"]:
+				_t(l, Vector2(x + 4, y), CrtUI.C_LABEL_DIM)
+				y += CrtUI.LINE
+
 ## Bottom-right command menu; bottom edge sits at rect.position.y.
 func _draw_commands(rect: Rect2) -> void:
 	var rows: Array = []
@@ -415,7 +485,7 @@ func _draw_manual_modal(v: Vector2) -> void:
 	var w := minf(v.x - 24, 680.0)
 	var inner := w - 20
 	var lines: Array = []   # [text, x offset, colour]
-	for l: String in MANUAL_LINES:
+	for l: String in manual_lines():
 		if l == "":
 			lines.append(["", 0, CrtUI.C_NUM])
 		elif l.begins_with("   - "):

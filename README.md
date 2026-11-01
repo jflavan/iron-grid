@@ -14,6 +14,10 @@
 
 *Command HQ briefing console: 3 selectable battle theaters, satellite reconnaissance preview, and interactive Armored Walker Hangar Codex.*
 
+![Rules of Engagement](screenshot_rules.png)
+
+*Rules of Engagement (press `R` in Command HQ): seven chapters on how the battle works, with every number read from the game's data.*
+
 ---
 
 ## Core Gameplay & Turn Loop
@@ -25,6 +29,7 @@ Each turn cycles through three phases:
 1. **Player Command Phase**:
    - Select any friendly Armored Fighting Walker (AFW) to compute reachable movement nodes within its current **Diesel Fuel** budget (using Dijkstra pathfinding across terrain and elevation climbs).
    - Hover over reachable enemy nodes to inspect a real-time **Skirmish Engagement Forecast** detailing approach vectors, terrain/elevation modifiers, initiative order, and estimated hull damage.
+   - **Attacking is a move onto the enemy's node, so a strike pays that node's fuel**: its terrain cost, the chassis surcharge or gear discount, and the climb. A Goliath striking a mountain one level up pays `5 + 1 + 1 = 7` of its `10` fuel. When the selected walker could reach a tile next to an enemy this turn but can't afford the final step, hovering that enemy shows an **OUT OF REACH** box with the fuel it needs, the breakdown, and advice that has been checked against next turn's refuel (wait here, move to a named tile, or refuel over several turns). Clicking it writes the same reason to the Comms Log. Enemies simply too far away show a quiet `BEYOND MOVE RANGE` line. While a walker is selected, the sector panel shows **its own** step cost for the hovered terrain.
    - Move to secure strategic **Objective Cities**, press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF`, `+5 Fuel`, `+4 EN`, and `+8 Hull` when holding a City), or move directly onto an enemy-occupied node to trigger a combat encounter.
 2. **Combat Encounter Phase (Final Fantasy Turn-Based Battle)**:
    - When two opposing walkers occupy the same node, the game cuts from the isometric grid to a side-view **Final Fantasy-style Turn-Based Battle** against a terrain backdrop matching the contested sector.
@@ -59,7 +64,7 @@ Each turn cycles through three phases:
 | **Mountain Crag** | `MTN` | `5` | `+15%` | `+30%` | `+10%` | Commanding rock bastion (`Donner` quad legs reduce climb cost) |
 
 ### Elevation (`0m` – `400m`)
-- **Climbing Fuel Surcharge**: Moving uphill costs `+1 Fuel` per `100m` elevation level gained.
+- **Climbing Fuel Surcharge**: Moving uphill costs `+1 Fuel` per `100m` elevation level gained, and that includes the final step of an attack onto a higher enemy.
 - **High Ground Plunging Fire**: Whichever walker holds the higher tile gains **+4% Hit Accuracy**, **+4% Evasion** and **+5% Crit** per elevation level. Attacking downhill also grants **+12% Firepower** and **+10% Armor deflection** per level, while the defender below loses **8% Firepower and Armor** per level.
 - **Uphill Assault Penalty**: Attacking uphill suffers **-10% Firepower** and **-4% Hit Accuracy** per level, and the defender above gains **+12% Firepower and Armor** per level.
 
@@ -109,10 +114,11 @@ Stats are read from `autoload/GlobalState.gd`; `EN (+n)` is the reactor pool and
 | **Right / Middle Mouse Drag** | Pan tactical camera |
 | **WASD / Arrow Keys** | Pan tactical camera (or navigate battle command menu) |
 | **Mouse Wheel Up / Down** | Zoom camera in / out |
-| **`R`** | Wait, Entrench (`+15% DEF`), & Refuel (`+5 Fuel`, `+4 EN`) selected walker |
+| **`R`** (battlefield) | Wait, Entrench (`+15% DEF`), & Refuel (`+5 Fuel`, `+4 EN`) selected walker |
 | **`E`** | End Player Command Phase |
 | **`C`** | Reset & center camera on battlefield |
 | **`H`** | Toggle Tactical Field Manual & Terrain Chart |
+| **`R`** (Command HQ) | Open the **Rules of Engagement** page: 7 chapters on winning, fuel, terrain & high ground, the clash, its aftermath, chassis roles and field tips. `Up` / `Down` / `1`–`7` pick a chapter, `Esc` returns |
 | **`Up` / `Down` / Mouse Hover** | Battle screen: highlight `ATTACK` / `TECH` / `DEFEND` / `RETREAT` |
 | **`Space` / `Enter` / Left Click** | Battle screen: confirm command or confirm battle result |
 | **`Esc` / `Backspace` / Right Click** | Battle screen: exit `TECH` sub-menu (or deselect unit on map) |
@@ -128,6 +134,7 @@ iron-grid/
 ├── project.godot                   # Godot 4.7 project configuration & autoloads
 ├── icon.svg                        # Custom vector project icon
 ├── screenshot_main_menu.png        # Command HQ briefing & codex screenshot
+├── screenshot_rules.png            # Rules of Engagement page screenshot
 ├── screenshot_gameplay.png         # Tactical isometric battlefield screenshot
 ├── autoload/
 │   ├── GlobalState.gd              # Global turn/phase state, ability/mech/map catalogs, combat log
@@ -139,7 +146,7 @@ iron-grid/
 │   └── font/                       # 5x7 bitmap font
 ├── tools/battle_sprites/           # Stdlib-only Python generator for everything in assets/battle
 ├── scenes/
-│   ├── MainMenu.tscn               # Command HQ briefing console, 3-map selector & Mech Hangar Codex
+│   ├── MainMenu.tscn               # Command HQ briefing console, 3-map selector, Mech Hangar Codex & Rules of Engagement
 │   ├── Battlefield.tscn            # Root battle scene (GridMap, UnitContainer, Camera2D, UIOverlay)
 │   └── dev/BattlePreview.tscn      # Dev-only battle screen preview (every chassis, ability, terrain)
 └── scripts/
@@ -150,7 +157,8 @@ iron-grid/
     │   └── MechData.gd             # Core walker struct (hull, energy, firepower, armor, speed, abilities)
     ├── battle/
     │   ├── Battlefield.gd          # Turn flow controller (Player -> Combat Encounter -> AI)
-    │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer & Dijkstra fuel pathfinder
+    │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer, Dijkstra fuel pathfinder & strike plans
+    │   ├── StrikePlan.gd           # Why an enemy can't be struck: fuel needed, breakdown & checked advice
     │   ├── UnitContainer.gd        # Y-sorted mech manager, collision checks & knockback logic
     │   ├── MechUnit.gd             # Procedural multi-part isometric mech renderer & animator
     │   ├── SkirmishEngine.gd       # Final Fantasy turn-based battle session & tactical AI resolver
@@ -167,13 +175,14 @@ iron-grid/
     │   ├── PixelFont.gd            # 5x7 bitmap text & wrapping
     │   └── BattlePreview.gd        # Dev preview controller
     └── ui/
-        ├── MainMenu.gd             # War-room menu & interactive Mech Hangar Codex
-        └── UIOverlay.gd            # In-game CRT telemetry HUD, terrain inspector & forecast
+        ├── MainMenu.gd             # War-room menu, interactive Mech Hangar Codex & Rules of Engagement page
+        ├── RulesContent.gd         # Rules of Engagement chapter text, built from live game data
+        └── UIOverlay.gd            # In-game CRT telemetry HUD, terrain inspector, forecast & OUT OF REACH box
 └── tests/
     ├── Playtest.tscn               # Headless automated playtest entry scene
     ├── playtest.gd                 # Rule checks + full-mission playthroughs with per-frame invariants
-    ├── BattleScreenTests.tscn      # Battle screen unit tests (timeline, layout, anims, screen contract)
-    └── run_battle_tests.sh         # Headless runner for the battle screen tests
+    ├── BattleScreenTests.tscn      # Battle screen, strike plan & rules page unit tests
+    └── run_battle_tests.sh         # Headless runner for those tests (fails on any SCRIPT ERROR too)
 ```
 
 ---

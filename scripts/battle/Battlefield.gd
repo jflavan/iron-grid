@@ -11,6 +11,12 @@ extends Node2D
 @onready var ui_overlay: UIOverlay = $UIOverlay
 
 var current_map_def: MapDefinition
+
+## Hull lost by a defender that loses the clash with no open tile to retreat to.
+const CRUSH_DAMAGE: int = 15
+
+var _strike_plan_key: Array = []
+var _strike_plan_cached: StrikePlan = null
 var selected_unit: MechUnit = null
 var _is_animating_move: bool = false
 var _phase_before_resolution: GlobalState.TurnPhase = GlobalState.TurnPhase.PLAYER_PHASE
@@ -164,12 +170,11 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 		u.position = grid_map.grid_to_screen(m.grid_pos, true)
 		if not include_refuel:
 			continue
-		var refuel_amt: int = m.passive_refuel
-		var energy_amt: int = m.passive_energy_regen
 		var tile := grid_map.get_tile(m.grid_pos)
+		var refuel_amt: int = m.upkeep_refuel(tile)
+		var energy_amt: int = m.passive_energy_regen
 		if tile != null and tile.terrain_type == GridTileData.TerrainType.CITY:
-			refuel_amt += 4
-			energy_amt += 3
+			energy_amt += MechData.CITY_ENERGY
 			var healed: int = mini(BalanceProbe.upkeep[int(m.faction)], m.max_armor - m.current_armor)
 			m.current_armor += healed
 			BalanceProbe.upkeep_healed[int(m.faction)] += healed
@@ -183,9 +188,9 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 func _entrench_unit(m: MechData) -> int:
 	m.has_moved = true
 	m.is_entrenched = true
-	var gained_fuel: int = mini(5, m.max_fuel - m.current_fuel)
+	var gained_fuel: int = m.wait_fuel_gain(m.current_fuel)
 	m.current_fuel += gained_fuel
-	m.current_energy = mini(m.max_energy, m.current_energy + 4)
+	m.current_energy = mini(m.max_energy, m.current_energy + MechData.WAIT_ENERGY)
 	var td := grid_map.get_tile(m.grid_pos)
 	BalanceProbe.entrench_actions[int(m.faction)] += 1
 	if td != null and td.terrain_type == GridTileData.TerrainType.CITY:
@@ -225,7 +230,14 @@ func _deselect_unit() -> void:
 	ui_overlay.selected_mech = null
 	ui_overlay.hovered_reach_info = {}
 	ui_overlay.current_forecast = {}
+	_clear_strike_readout()
 	grid_map.clear_highlights()
+
+## Drops the OUT OF REACH box and the YOUR STEP COST row: the selected walker has used its order
+## (or there is no selection), so neither applies any more.
+func _clear_strike_readout() -> void:
+	ui_overlay.strike_plan = null
+	ui_overlay.step_cost_mech = null
 
 func _on_tile_hovered(coords: Vector2i, _tile: GridTileData) -> void:
 	_refresh_hover_telemetry(coords)
@@ -235,6 +247,8 @@ func _refresh_hover_telemetry(coords: Vector2i) -> void:
 	ui_overlay.hovered_tile = td
 	var u_at := unit_container.get_unit_at(coords)
 	ui_overlay.hovered_mech = u_at.mech_data if u_at != null else null
+	ui_overlay.strike_plan = strike_plan_for(coords)
+	ui_overlay.step_cost_mech = selected_unit.mech_data if _has_ready_player_selection() else null
 
 	if grid_map.reachable_info.has(coords):
 		var r_info: Dictionary = grid_map.reachable_info[coords]
@@ -252,6 +266,30 @@ func _refresh_hover_telemetry(coords: Vector2i) -> void:
 		ui_overlay.hovered_reach_info = {}
 		ui_overlay.current_forecast = {}
 
+func _has_ready_player_selection() -> bool:
+	return (GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and selected_unit != null
+		and is_instance_valid(selected_unit) and selected_unit.mech_data.faction == MechData.Faction.PLAYER
+		and not selected_unit.mech_data.has_moved)
+
+## Why the selected walker cannot strike the enemy on `coords`, or null when there is nothing to
+## explain: not the player phase, no ready player walker selected, no enemy there, or the enemy is
+## already a highlighted attack target.
+func strike_plan_for(coords: Vector2i) -> StrikePlan:
+	if not _has_ready_player_selection() or grid_map.reachable_info.has(coords):
+		return null
+	var u_at := unit_container.get_unit_at(coords)
+	if u_at == null or u_at.mech_data.faction == selected_unit.mech_data.faction:
+		return null
+	# Hover and the click that follows ask the same question: answer it once per board state.
+	var m := selected_unit.mech_data
+	var occ := unit_container.build_occupied_map(selected_unit)
+	var key := [m, m.grid_pos, m.current_fuel, coords, occ.keys()]
+	if _strike_plan_key == key:
+		return _strike_plan_cached
+	_strike_plan_key = key
+	_strike_plan_cached = grid_map.compute_strike_plan(m, coords, occ)
+	return _strike_plan_cached
+
 func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 	if GlobalState.current_phase != GlobalState.TurnPhase.PLAYER_PHASE or _is_animating_move:
 		return
@@ -267,9 +305,15 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 			_execute_unit_movement(selected_unit, coords, move_path, move_fuel)
 			return
 
-	# 2. Otherwise, clicking any unit selects it to inspect its telemetry & fuel range
+	# 2. Otherwise, clicking any unit selects it to inspect its telemetry & fuel range.
+	# An enemy the selected walker could almost strike says why it can't (OUT OF REACH).
 	if clicked_unit != null:
-		SoundManager.play("ui_click")
+		var plan := strike_plan_for(coords)
+		if plan != null and plan.severity == StrikePlan.IN_STRIKING_DISTANCE:
+			SoundManager.play("ui_cancel")
+			GlobalState.add_log(plan.log_line(selected_unit.mech_data.callsign, clicked_unit.mech_data.callsign))
+		else:
+			SoundManager.play("ui_click")
 		_select_unit(clicked_unit)
 	else:
 		SoundManager.play("ui_cancel")
@@ -297,6 +341,7 @@ func _execute_unit_movement(unit: MechUnit, target_coords: Vector2i, path: Array
 	grid_map.clear_highlights()
 	ui_overlay.hovered_reach_info = {}
 	ui_overlay.current_forecast = {}
+	_clear_strike_readout()
 
 	unit.animate_move_along_screen_points(screen_pts, func():
 		if is_instance_valid(unit):
@@ -347,8 +392,10 @@ func _on_wait_refuel_requested() -> void:
 	var m := selected_unit.mech_data
 	var gained_fuel: int = _entrench_unit(m)
 
-	GlobalState.add_log("%s entrenched at (%d,%d) [+15%% DEF, +%d Fuel, +4 EN]." % [m.callsign, m.grid_pos.x, m.grid_pos.y, gained_fuel])
+	GlobalState.add_log("%s entrenched at (%d,%d) [%+d%% DEF, +%d Fuel, +%d EN]." % [
+		m.callsign, m.grid_pos.x, m.grid_pos.y, BalanceProbe.def_pct[int(m.faction)], gained_fuel, MechData.WAIT_ENERGY])
 	grid_map.clear_highlights()
+	_clear_strike_readout()
 	selected_unit.queue_redraw()
 	_check_auto_advance_player_phase()
 
@@ -428,7 +475,7 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 				GlobalState.add_log("%s retreated to (%d,%d)!" % [_pending_defender.mech_data.callsign, retreat_coords.x, retreat_coords.y])
 			else:
 				# Defender has no retreat tile -> overrun crush damage, attacker steps back to approach tile
-				_pending_defender.mech_data.current_armor = maxi(0, _pending_defender.mech_data.current_armor - 15)
+				_pending_defender.mech_data.current_armor = maxi(0, _pending_defender.mech_data.current_armor - CRUSH_DAMAGE)
 				if not _pending_defender.mech_data.is_alive():
 					GlobalState.add_log("%s crushed with no line of retreat!" % _pending_defender.mech_data.callsign)
 					unit_container.remove_destroyed_unit(_pending_defender)

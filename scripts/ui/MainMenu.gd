@@ -1,13 +1,19 @@
 class_name MainMenu
 extends Control
 
-## Command HQ: theater select with briefing and recon map, plus the Hangar Codex (6 chassis).
+## Command HQ: theater select with briefing and recon map, plus the Hangar Codex (6 chassis), and
+## the Rules of Engagement page (RulesContent) opened from the header.
 ## Drawn in the battle screen's CRT menu style (CrtUI) at an integer pixel scale.
-## Controls: Up/Down or 1-3 pick a theater, Left/Right pick a chassis, Enter/Space launch.
+## Controls: Up/Down or 1-3 pick a theater, Left/Right pick a chassis, Enter/Space launch, R opens
+## the rules. On the rules page: Up/Down or 1-7 pick a chapter, Esc/Backspace returns.
 ## Every menu row is also clickable.
 
 const HANGAR_W := 300       # right column width (virtual px); fits two of the largest sprites side by side
 const RECON_CELL := Vector2i(14, 10)
+const RULES_LIST_W := 176   # chapter list column width (virtual px)
+const RULES_PAD := 10       # inner padding of the rules panels
+const RULES_BODY_TOP := 26  # first block's offset below the body panel's top (title row above it)
+const RULES_ROW := 14       # chapter list row pitch
 
 var selected_map_idx: int = 0
 var selected_chassis_idx: int = 0
@@ -16,6 +22,10 @@ var _anim_time: float = 0.0
 var _scale: int = 2
 var _hot := CrtHotspots.new()
 var _stat_max := {"hull": 1, "en": 1, "armor": 1, "fire": 1, "spd": 1, "fuel": 1}
+var show_rules: bool = false
+var rules_chapter: int = 0
+var _rules: Array[Dictionary] = []
+var _rules_cache: Dictionary = {}   # "chapter:width" -> laid-out blocks (content is fixed while the menu lives)
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -30,6 +40,7 @@ func _ready() -> void:
 		_stat_max["fire"] = maxi(_stat_max["fire"], m.firepower)
 		_stat_max["spd"] = maxi(_stat_max["spd"], m.speed)
 		_stat_max["fuel"] = maxi(_stat_max["fuel"], m.max_fuel)
+	_rules = RulesContent.chapters()
 
 func _process(delta: float) -> void:
 	_anim_time += delta
@@ -39,19 +50,40 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
-	match event.keycode:
+	var id := _key_action(event.keycode)
+	if id != "":
+		_activate(id)
+		get_viewport().set_input_as_handled()
+
+## The hotspot id a key press stands for on the current screen ("" when the key does nothing here).
+func _key_action(keycode: int) -> String:
+	if show_rules:
+		match keycode:
+			KEY_ESCAPE, KEY_BACKSPACE:
+				return "rules_back"
+			KEY_UP:
+				return "rules:%d" % maxi(0, rules_chapter - 1)
+			KEY_DOWN:
+				return "rules:%d" % mini(_rules.size() - 1, rules_chapter + 1)
+		if keycode >= KEY_1 and keycode < KEY_1 + _rules.size():
+			return "rules:%d" % (keycode - KEY_1)
+		return ""
+	match keycode:
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
-			_on_launch_pressed()
+			return "launch"
 		KEY_1, KEY_2, KEY_3:
-			_select_map(event.keycode - KEY_1)
+			return "map:%d" % (keycode - KEY_1)
 		KEY_UP:
-			_select_map(selected_map_idx - 1)
+			return "map:%d" % (selected_map_idx - 1)
 		KEY_DOWN:
-			_select_map(selected_map_idx + 1)
+			return "map:%d" % (selected_map_idx + 1)
 		KEY_LEFT:
-			_select_chassis(selected_chassis_idx - 1)
+			return "chassis:%d" % (selected_chassis_idx - 1)
 		KEY_RIGHT:
-			_select_chassis(selected_chassis_idx + 1)
+			return "chassis:%d" % (selected_chassis_idx + 1)
+		KEY_R:
+			return "rules"
+	return ""
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
@@ -70,6 +102,17 @@ func _activate(id: String) -> void:
 		_select_chassis(int(id.substr(8)))
 	elif id == "launch":
 		_on_launch_pressed()
+	elif id == "rules":
+		SoundManager.play("ui_click")
+		show_rules = true
+	elif id == "rules_back":
+		SoundManager.play("ui_cancel")
+		show_rules = false
+	elif id.begins_with("rules:"):
+		var i := clampi(int(id.substr(6)), 0, _rules.size() - 1)
+		if i != rules_chapter:
+			SoundManager.play("ui_click")
+			rules_chapter = i
 	elif id == "exit":
 		SoundManager.play("ui_cancel")
 		get_tree().quit()
@@ -106,6 +149,9 @@ func _draw() -> void:
 	var v := CrtUI.virtual_size(vp, _scale)
 	CrtUI.begin(self, _scale)
 	_hot.clear()
+	if show_rules:
+		_draw_rules(v)
+		return
 
 	# Header
 	CrtUI.panel(self, Rect2(6, 6, v.x - 12, 30))
@@ -116,6 +162,13 @@ func _draw() -> void:
 	if _hot.hovered == "exit":
 		CrtUI.cursor(self, Vector2(v.x - 16 - PixelFont.text_width("EXIT") - 10, 12))
 	_hot.add("exit", exit_r)
+
+	var rules_lbl := "RULES OF ENGAGEMENT [R]"
+	var rules_right := v.x - 16 - PixelFont.text_width("EXIT") - 24
+	CrtUI.text_right(self, rules_lbl, rules_right, 12, _row_color("rules", false))
+	if _hot.hovered == "rules":
+		CrtUI.cursor(self, Vector2(rules_right - PixelFont.text_width(rules_lbl) - 10, 12))
+	_hot.add("rules", Rect2(rules_right - PixelFont.text_width(rules_lbl) - 12, 9, PixelFont.text_width(rules_lbl) + 16, 12))
 
 	_draw_theaters(Rect2(6, 40, v.x - 16 - HANGAR_W, v.y - 46))
 	_draw_hangar(Rect2(v.x - 6 - HANGAR_W, 40, HANGAR_W, v.y - 46))
@@ -252,3 +305,75 @@ func _stat(r: Rect2, label: String, value: int, max_value: int, col: Color, valu
 	var vtxt := value_text if value_text != "" else str(value)
 	CrtUI.gauge(self, Rect2(r.position.x + 30, r.position.y + 3, r.size.x - 30 - PixelFont.text_width(vtxt) - 6, 3), float(value) / float(max_value), col)
 	CrtUI.text_right(self, vtxt, r.end.x, r.position.y, CrtUI.C_NUM)
+
+# ---------------------------------------------------------------- rules of engagement
+## Panels of the rules page at virtual size v: header strip, chapter list, chapter body.
+static func rules_layout(v: Vector2) -> Dictionary:
+	return {
+		"header": Rect2(6, 6, v.x - 12, 30),
+		"list": Rect2(6, 40, RULES_LIST_W, v.y - 46),
+		"body": Rect2(6 + RULES_LIST_W + 4, 40, v.x - 12 - RULES_LIST_W - 4, v.y - 46),
+	}
+
+func _draw_rules(v: Vector2) -> void:
+	var lay := rules_layout(v)
+	var hdr: Rect2 = lay["header"]
+	CrtUI.panel(self, hdr)
+	CrtUI.text(self, "RULES OF ENGAGEMENT", hdr.position + Vector2(10, 6), CrtUI.C_NAME)
+	CrtUI.text(self, "HOW THE BATTLE WORKS // FIELD TIPS", hdr.position + Vector2(10, 17), CrtUI.C_LABEL_DIM)
+	var back_lbl := "[ESC] COMMAND HQ"
+	var back_right := hdr.end.x - 10
+	CrtUI.text_right(self, back_lbl, back_right, hdr.position.y + 6, _row_color("rules_back", false))
+	if _hot.hovered == "rules_back":
+		CrtUI.cursor(self, Vector2(back_right - PixelFont.text_width(back_lbl) - 10, hdr.position.y + 6))
+	_hot.add("rules_back", Rect2(back_right - PixelFont.text_width(back_lbl) - 12, hdr.position.y + 3, PixelFont.text_width(back_lbl) + 14, 12))
+
+	var lst: Rect2 = lay["list"]
+	CrtUI.panel(self, lst)
+	var lx := lst.position.x + RULES_PAD
+	CrtUI.text(self, "CHAPTERS", Vector2(lx, lst.position.y + 8), CrtUI.C_LABEL)
+	for i in _rules.size():
+		var y := lst.position.y + RULES_BODY_TOP + i * RULES_ROW
+		var id := "rules:%d" % i
+		CrtUI.text(self, "%d %s" % [i + 1, _rules[i]["title"]], Vector2(lx + 12, y), _row_color(id, i == rules_chapter))
+		if i == rules_chapter:
+			CrtUI.cursor(self, Vector2(lx + 2, y))
+		_hot.add(id, Rect2(lst.position.x + 2, y - 3, lst.size.x - 4, RULES_ROW))
+	CrtUI.paragraph(self, "UP/DOWN OR 1-%d: CHAPTER  ESC: BACK" % _rules.size(), Vector2(lx, lst.end.y - 28), lst.size.x - 2 * RULES_PAD, CrtUI.C_LABEL_DIM)
+
+	var body: Rect2 = lay["body"]
+	CrtUI.panel(self, body)
+	var ch: Dictionary = _rules[rules_chapter]
+	var bx := body.position.x + RULES_PAD
+	var inner_w := body.size.x - 2 * RULES_PAD
+	CrtUI.text(self, "%d. %s" % [rules_chapter + 1, ch["title"]], Vector2(bx, body.position.y + 8), CrtUI.C_NAME)
+	var y := body.position.y + RULES_BODY_TOP
+	for blk: Dictionary in _rules_render(rules_chapter, inner_w):
+		if blk.has("rows"):
+			var xs: PackedFloat32Array = blk["xs"]
+			var rows: Array = blk["rows"]
+			for r in rows.size():
+				var row: PackedStringArray = rows[r]
+				for c in row.size():
+					CrtUI.text(self, row[c], Vector2(bx + xs[c], y), CrtUI.C_LABEL if r == 0 else CrtUI.C_NUM)
+				y += CrtUI.LINE
+		else:
+			for l in blk["lines"]:
+				CrtUI.text(self, l, Vector2(bx, y), blk["col"])
+				y += CrtUI.LINE
+		y += RulesContent.BLOCK_GAP
+
+## A chapter's blocks wrapped / measured for `inner_w`, cached: _draw runs every frame.
+## Each item is {"rows", "xs"} for a table or {"lines", "col"} for text.
+func _rules_render(chapter: int, inner_w: float) -> Array:
+	var key := "%d:%d" % [chapter, int(inner_w)]
+	if _rules_cache.has(key):
+		return _rules_cache[key]
+	var out: Array = []
+	for b: Dictionary in _rules[chapter]["blocks"]:
+		if b.has("table"):
+			out.append({"rows": b["table"], "xs": RulesContent.table_col_x(b["table"])})
+		else:
+			out.append({"lines": RulesContent.block_lines(b, inner_w), "col": CrtUI.C_CURSOR if b.has("key") else CrtUI.C_NUM})
+	_rules_cache[key] = out
+	return out

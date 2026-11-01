@@ -131,55 +131,9 @@ func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dict
 
 	var start: Vector2i = unit.grid_pos
 	var max_budget: int = unit.current_fuel
-
-	var best_cost: Dictionary = { start: 0 }
-	var came_from: Dictionary = { start: start }
-	var queue: Array[Vector2i] = [start]
-
-	var dirs: Array[Vector2i] = [
-		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)
-	]
-
-	while not queue.is_empty():
-		# Pop lowest fuel cost node (Dijkstra)
-		var best_idx: int = 0
-		var best_val: int = best_cost[queue[0]]
-		for i in range(1, queue.size()):
-			var c_val: int = best_cost[queue[i]]
-			if c_val < best_val:
-				best_val = c_val
-				best_idx = i
-		var current: Vector2i = queue[best_idx]
-		queue.remove_at(best_idx)
-
-		var cur_cost: int = best_cost[current]
-		var cur_tile: GridTileData = get_tile(current)
-
-		# Do not expand THROUGH an enemy unit (entering an enemy node triggers immediate collision)
-		if current != start and occupied_units.has(current):
-			var occ_unit: MechData = occupied_units[current]
-			if occ_unit.faction != unit.faction:
-				continue
-
-		for d in dirs:
-			var next_pos: Vector2i = current + d
-			if not is_valid_coords(next_pos):
-				continue
-			# Cannot launch an engagement onto an enemy node from a tile occupied by another friendly unit
-			if occupied_units.has(next_pos) and occupied_units[next_pos].faction != unit.faction:
-				if current != start and occupied_units.has(current):
-					continue
-			var next_tile: GridTileData = get_tile(next_pos)
-			var step_fuel: int = unit.get_step_fuel_cost(cur_tile, next_tile)
-			var new_cost: int = cur_cost + step_fuel
-			if new_cost > max_budget:
-				continue
-
-			if not best_cost.has(next_pos) or new_cost < best_cost[next_pos]:
-				best_cost[next_pos] = new_cost
-				came_from[next_pos] = current
-				if not queue.has(next_pos):
-					queue.append(next_pos)
+	var search: Array = _shortest_costs(unit, occupied_units, max_budget)
+	var best_cost: Dictionary = search[0]
+	var came_from: Dictionary = search[1]
 
 	# Build reachable_info dictionary (excluding tiles occupied by OTHER friendly units)
 	for pos_key in best_cost.keys():
@@ -210,6 +164,150 @@ func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dict
 
 	queue_redraw()
 	return reachable_info
+
+const _NO_FUEL_CAP: int = 1 << 30
+const _DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+
+## Dijkstra over fuel cost from unit.grid_pos, shared by movement ranges and strike plans so both
+## always agree. Returns [best_cost, came_from] (Vector2i -> int / Vector2i). Rules: never expand
+## through an enemy node, never launch an engagement from a node held by another friendly unit,
+## and drop any step whose running cost would exceed `budget`.
+## `settle`, when given, stops the search once every listed node has been popped (its cost is final).
+func _shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
+	var start: Vector2i = unit.grid_pos
+	var best_cost: Dictionary = { start: 0 }
+	var came_from: Dictionary = { start: start }
+	var queue: Array[Vector2i] = [start]
+	var pending: Dictionary = {}
+	for p in settle:
+		pending[p] = true
+
+	while not queue.is_empty():
+		# Pop lowest fuel cost node (Dijkstra)
+		var best_idx: int = 0
+		var best_val: int = best_cost[queue[0]]
+		for i in range(1, queue.size()):
+			var c_val: int = best_cost[queue[i]]
+			if c_val < best_val:
+				best_val = c_val
+				best_idx = i
+		var current: Vector2i = queue[best_idx]
+		queue.remove_at(best_idx)
+		if not pending.is_empty():
+			pending.erase(current)
+			if pending.is_empty():
+				break
+
+		var cur_cost: int = best_cost[current]
+		var cur_tile: GridTileData = get_tile(current)
+
+		# Do not expand THROUGH an enemy unit (entering an enemy node triggers immediate collision)
+		if current != start and occupied_units.has(current):
+			var occ_unit: MechData = occupied_units[current]
+			if occ_unit.faction != unit.faction:
+				continue
+
+		for d in _DIRS:
+			var next_pos: Vector2i = current + d
+			if not is_valid_coords(next_pos):
+				continue
+			# Cannot launch an engagement onto an enemy node from a tile occupied by another friendly unit
+			if occupied_units.has(next_pos) and occupied_units[next_pos].faction != unit.faction:
+				if current != start and occupied_units.has(current):
+					continue
+			var next_tile: GridTileData = get_tile(next_pos)
+			var step_fuel: int = unit.get_step_fuel_cost(cur_tile, next_tile)
+			var new_cost: int = cur_cost + step_fuel
+			if new_cost > budget:
+				continue
+
+			if not best_cost.has(next_pos) or new_cost < best_cost[next_pos]:
+				best_cost[next_pos] = new_cost
+				came_from[next_pos] = current
+				if not queue.has(next_pos):
+					queue.append(next_pos)
+	return [best_cost, came_from]
+
+## Explains whether `unit` can strike the enemy at `target` this turn, and if not, why and what to
+## do (see StrikePlan). Uses the same search and costs as compute_reachable_tiles, without its fuel
+## cap, and never touches reachable_info. The advice replays next turn under the real WAIT and
+## upkeep rules, assuming the enemy holds its tile.
+func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dictionary) -> StrikePlan:
+	var plan := StrikePlan.new()
+	plan.have = unit.current_fuel
+	var start: Vector2i = unit.grid_pos
+	var neighbours: Array[Vector2i] = []
+	for d in _DIRS:
+		if is_valid_coords(target + d):
+			neighbours.append(target + d)
+	# Only the launch tiles' costs matter: stop as soon as they are all final.
+	var costs: Dictionary = _shortest_costs(unit, occupied_units, _NO_FUEL_CAP, neighbours)[0]
+	var target_tile := get_tile(target)
+
+	# Launch tiles: enemy neighbours the search reached that the attacker may stand on and fire from.
+	var launches: Array[Dictionary] = []   # {pos, path, step: breakdown}
+	for d in _DIRS:
+		var l: Vector2i = target + d
+		if not costs.has(l):
+			continue
+		if l != start and occupied_units.has(l):
+			continue
+		launches.append({"pos": l, "path": int(costs[l]), "step": unit.get_step_fuel_breakdown(get_tile(l), target_tile)})
+	if launches.is_empty():
+		plan.severity = StrikePlan.NO_APPROACH
+		return plan
+
+	# Cheapest strike; ties go to the start tile, then to the cheaper final step.
+	var best: Dictionary = launches[0]
+	for c in launches:
+		var c_total: int = c["path"] + int(c["step"]["total"])
+		var b_total: int = best["path"] + int(best["step"]["total"])
+		if c_total < b_total or (c_total == b_total and (
+				(c["pos"] == start and best["pos"] != start) or
+				(best["pos"] != start and int(c["step"]["total"]) < int(best["step"]["total"])))):
+			best = c
+	plan.launch = best["pos"]
+	plan.path_fuel = best["path"]
+	plan.step = best["step"]
+	plan.needs = plan.path_fuel + int(plan.step["total"])
+
+	if plan.needs <= plan.have:
+		plan.severity = StrikePlan.REACHABLE
+		return plan
+	var in_reach: Array[Dictionary] = launches.filter(func(c): return int(c["path"]) <= plan.have)
+	if in_reach.is_empty():
+		plan.severity = StrikePlan.BEYOND_RANGE
+		return plan
+	plan.severity = StrikePlan.IN_STRIKING_DISTANCE
+
+	# Advice ladder (the first that holds wins).
+	var max_f: int = unit.max_fuel
+	var cheapest_step: int = launches.map(func(c): return int(c["step"]["total"])).min()
+	var fuel_after_wait: int = unit.next_turn_fuel(plan.have, get_tile(start), true)
+	if cheapest_step > max_f:
+		plan.advice = StrikePlan.ADV_IMPOSSIBLE
+		return plan
+	for c in in_reach:
+		if c["pos"] == start and fuel_after_wait >= int(c["step"]["total"]):
+			plan.advice = StrikePlan.ADV_WAIT_HERE
+			return plan
+	var best_spare: int = -1
+	for c in in_reach:
+		if c["pos"] == start:
+			continue
+		var next_fuel: int = unit.next_turn_fuel(plan.have - int(c["path"]), get_tile(c["pos"]), false)
+		var spare: int = next_fuel - int(c["step"]["total"])
+		if spare >= 0 and spare > best_spare:
+			best_spare = spare
+			plan.move_to = c["pos"]
+	if best_spare >= 0:
+		plan.advice = StrikePlan.ADV_MOVE_TO
+		return plan
+	if fuel_after_wait >= plan.needs:
+		plan.advice = StrikePlan.ADV_WAIT
+		return plan
+	plan.advice = StrikePlan.ADV_MULTI_TURN
+	return plan
 
 func clear_highlights() -> void:
 	reachable_info = {}

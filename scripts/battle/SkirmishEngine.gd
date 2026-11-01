@@ -26,6 +26,21 @@ const DAMAGE_VARIANCE_MAX: float = 1.06
 const DAMAGE_MIN: int = 4            # every landed shot deals at least this, in every mode
 const BASE_DAMAGE_MAX: int = 95      # cap on the pre-roll estimate (forecasts never exceed it)
 const LIVE_DAMAGE_MAX: int = 120     # a live crit on a capped shot may run up to this
+# Elevation, per level of height difference (also quoted by the Rules of Engagement page)
+const ELEV_HIGH_FP_PCT: int = 12         # attacker firing down: +FP
+const ELEV_HIGH_ENEMY_FP_PCT: int = 8    # ...and the defender below loses FP and armor
+const ELEV_HIGH_ARMOR_PCT: int = 10      # ...and the attacker gains armor
+const ELEV_CLIMB_FP_PCT: int = 10        # attacker firing uphill: -FP
+const ELEV_CLIMB_ENEMY_FP_PCT: int = 12  # ...and the defender above gains FP and armor
+const ELEV_EVA_PER_LEVEL: int = 4        # the higher walker's EVA
+const ELEV_CRIT_PER_LEVEL: int = 5       # the higher walker's crit
+const ELEV_ACC_PER_LEVEL: int = 4        # hit chance, + for the higher walker, - for the lower
+const GUARD_DAMAGE_MULT: float = 0.50    # DEFEND: the next landed hit is halved
+const DEFEND_EN_GAIN: int = 2
+const ESCAPE_BASE_PCT: int = 58          # RETREAT chance = base + per-SPD x speed lead, clamped
+const ESCAPE_PER_SPD_PCT: int = 2
+const ESCAPE_MIN_PCT: int = 25
+const ESCAPE_MAX_PCT: int = 92
 
 class TurnStep extends RefCounted:
 	var step_index: int = 0
@@ -225,9 +240,9 @@ class BattleSession extends RefCounted:
 		st.base_atk = eff_atk
 		st.base_def = eff_def
 		st.base_spd = m.speed
-		st.base_eva = clampi(m.evasion + tile.get_evasion_modifier_pct() + maxi(0, my_elev_adv) * 4, 0, 55)
-		st.base_crit = clampi(m.crit_chance + maxi(0, my_elev_adv) * 5, 4, 50)
-		st.base_acc = 94 + my_elev_adv * 4
+		st.base_eva = clampi(m.evasion + tile.get_evasion_modifier_pct() + maxi(0, my_elev_adv) * ELEV_EVA_PER_LEVEL, 0, 55)
+		st.base_crit = clampi(m.crit_chance + maxi(0, my_elev_adv) * ELEV_CRIT_PER_LEVEL, 4, 50)
+		st.base_acc = 94 + my_elev_adv * ELEV_ACC_PER_LEVEL
 		if side == "def" and m.is_entrenched:
 			st.base_spd += ENTRENCHED_SPD_BONUS
 			st.base_eva += ENTRENCHED_EVA_BONUS
@@ -359,7 +374,7 @@ class BattleSession extends RefCounted:
 		if actor.side == "def" and not can_defender_retreat:
 			return 0
 		var spd_diff := actor.get_effective_speed() - target.get_effective_speed()
-		return clampi(58 + spd_diff * 2, 25, 92)
+		return clampi(ESCAPE_BASE_PCT + spd_diff * ESCAPE_PER_SPD_PCT, ESCAPE_MIN_PCT, ESCAPE_MAX_PCT)
 
 	func estimate_attack_damage(actor: CombatantState, target: CombatantState, weapon_tech: CombatAbility) -> int:
 		var mult: float = weapon_tech.power_multiplier if weapon_tech != null else 1.0
@@ -369,7 +384,7 @@ class BattleSession extends RefCounted:
 		var eff_def: float = float(target.get_effective_def()) * (1.0 - pierce)
 		var raw: float = eff_atk * 0.62 - eff_def * 0.34
 		if target.defending:
-			raw *= 0.50
+			raw *= GUARD_DAMAGE_MULT
 		if target.pending_soften == "ablative_shield":
 			raw *= 0.52
 		elif target.pending_soften != "":
@@ -427,7 +442,7 @@ class BattleSession extends RefCounted:
 					_resolve_support_tech(step, actor, target, chosen_ability)
 			CommandType.DEFEND:
 				actor.defending = true
-				actor.en = mini(actor.max_en, actor.en + 2)
+				actor.en = mini(actor.max_en, actor.en + DEFEND_EN_GAIN)
 				step.ability_id = "defend"
 				step.ability_name = "DEFEND / BRACE"
 				step.ability_category = "DEFEND"
@@ -692,12 +707,12 @@ static func _init_result_modifiers(
 	res.def_terrain_mod_pct = target_tile.get_defense_modifier_pct() + entrench_bonus
 
 	if res.elev_diff > 0:
-		res.atk_elev_mod_pct = res.elev_diff * 12
-		res.def_elev_mod_pct = -res.elev_diff * 8
+		res.atk_elev_mod_pct = res.elev_diff * ELEV_HIGH_FP_PCT
+		res.def_elev_mod_pct = -res.elev_diff * ELEV_HIGH_ENEMY_FP_PCT
 	elif res.elev_diff < 0:
 		var climb_levels: int = -res.elev_diff
-		res.atk_elev_mod_pct = -climb_levels * 10
-		res.def_elev_mod_pct = climb_levels * 12
+		res.atk_elev_mod_pct = -climb_levels * ELEV_CLIMB_FP_PCT
+		res.def_elev_mod_pct = climb_levels * ELEV_CLIMB_ENEMY_FP_PCT
 	else:
 		res.atk_elev_mod_pct = 0
 		res.def_elev_mod_pct = 0
@@ -706,7 +721,7 @@ static func _init_result_modifiers(
 	res.def_total_mod_pct = res.def_terrain_mod_pct + res.def_elev_mod_pct
 
 	res.atk_effective_firepower = maxi(10, int(round(float(attacker.firepower) * (1.0 + float(res.atk_total_mod_pct) / 100.0))))
-	var atk_elev_armor_pct: int = maxi(0, res.elev_diff) * 10
+	var atk_elev_armor_pct: int = maxi(0, res.elev_diff) * ELEV_HIGH_ARMOR_PCT
 	res.atk_effective_armor = maxi(8, int(round(float(attacker.armor_rating) * (1.0 + float(from_tile.get_defense_modifier_pct() + atk_elev_armor_pct) / 100.0))))
 
 	res.def_effective_firepower = maxi(10, int(round(float(defender.firepower) * (1.0 + float(target_tile.get_attack_modifier_pct() + res.def_elev_mod_pct) / 100.0))))

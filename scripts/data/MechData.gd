@@ -6,6 +6,13 @@ extends RefCounted
 ## armor rating (DEF), firepower (ATK), speed (SPD), evasion (EVA), crit chance (CRIT),
 ## fuel capacity & fuel usage profile, and the 3-ability TECH Loadout.
 
+## WAIT / REFUEL order and City Depot resupply (applied by Battlefield; read by the HUD advice and the
+## Rules of Engagement page so the numbers never drift).
+const WAIT_FUEL: int = 5
+const WAIT_ENERGY: int = 4
+const CITY_FUEL: int = 4
+const CITY_ENERGY: int = 3
+
 enum Faction {
 	PLAYER = 0, # 8th Iron Coalition (Olive / Amber)
 	AI = 1      # Kriegs-Syndikat Red (Crimson / Gunmetal)
@@ -100,26 +107,61 @@ func _init(
 	basic_weapon_id = p_basic_weapon
 
 ## Calculates exact fuel needed for this mech to step from `from_tile` to `to_tile`.
+## Hot path (every Dijkstra edge): plain ints, no Dictionary.
 func get_step_fuel_cost(from_tile: GridTileData, to_tile: GridTileData) -> int:
-	var cost: int = to_tile.get_base_fuel_cost()
-	
+	var t := _step_terms(from_tile, to_tile)
+	return maxi(1, t.x + t.y + t.z)
+
+## The step cost split into the terms the HUD and Rules page show. base + chassis + climb == total.
+## chassis_label: "HEAVY" / "LIGHT" (fuel_efficiency_mod off-road), "AMPHIB" (river with
+## amphibious_gear), "CLIMB GEAR" (mountain with mountain_gear) or "" when no adjustment applies.
+func get_step_fuel_breakdown(from_tile: GridTileData, to_tile: GridTileData) -> Dictionary:
+	var t := _step_terms(from_tile, to_tile)
+	var total: int = maxi(1, t.x + t.y + t.z)
+	var label: String = ""
+	if to_tile.terrain_type == GridTileData.TerrainType.RIVER and amphibious_gear:
+		label = "AMPHIB"
+	elif to_tile.terrain_type == GridTileData.TerrainType.MOUNTAIN and mountain_gear:
+		label = "CLIMB GEAR"
+	elif t.y != 0:
+		label = "HEAVY" if fuel_efficiency_mod > 0 else "LIGHT"
+	return {
+		"base": t.x, "terrain": to_tile.get_terrain_short_code(),
+		# The 1-fuel floor is credited to the chassis term so the parts still add up to the total.
+		"chassis": t.y + total - (t.x + t.y + t.z), "chassis_label": label,
+		"climb": t.z, "total": total,
+	}
+
+## (terrain base, chassis adjustment, climb) before the 1-fuel floor.
+func _step_terms(from_tile: GridTileData, to_tile: GridTileData) -> Vector3i:
+	var base: int = to_tile.get_base_fuel_cost()
+	var chassis: int = 0
 	# Chassis-specific terrain adaptations
 	if to_tile.terrain_type == GridTileData.TerrainType.RIVER and amphibious_gear:
-		cost -= 2
+		chassis = -2
 	elif to_tile.terrain_type == GridTileData.TerrainType.MOUNTAIN and mountain_gear:
-		cost -= 2
+		chassis = -2
 	elif to_tile.terrain_type != GridTileData.TerrainType.ROAD:
-		cost += fuel_efficiency_mod
-	
-	# Elevation climb penalty (+1 fuel per 100m of upward climb)
+		chassis = fuel_efficiency_mod
+	# Elevation climb penalty (+1 fuel per 100m of upward climb); mountain gear absorbs one level
 	var climb_diff: int = maxi(0, to_tile.elevation - from_tile.elevation)
-	if climb_diff > 0:
-		if mountain_gear:
-			cost += maxi(0, climb_diff - 1)
-		else:
-			cost += climb_diff
-			
-	return maxi(1, cost)
+	var climb: int = maxi(0, climb_diff - 1) if mountain_gear else climb_diff
+	return Vector3i(base, chassis, climb)
+
+## Fuel the WAIT / REFUEL order adds right now (capped by the tank).
+func wait_fuel_gain(fuel_now: int) -> int:
+	return mini(WAIT_FUEL, max_fuel - fuel_now)
+
+## Fuel regained at the start of this walker's next turn while standing on `tile`.
+func upkeep_refuel(tile: GridTileData) -> int:
+	var city: bool = tile != null and tile.terrain_type == GridTileData.TerrainType.CITY
+	return passive_refuel + (CITY_FUEL if city else 0)
+
+## Fuel this walker will have at the start of its next turn if it ends this turn on `tile` with
+## `fuel_now`, optionally after a WAIT / REFUEL order. Battlefield applies exactly these rules.
+func next_turn_fuel(fuel_now: int, tile: GridTileData, waited: bool) -> int:
+	var f: int = fuel_now + (wait_fuel_gain(fuel_now) if waited else 0)
+	return mini(max_fuel, f + upkeep_refuel(tile))
 
 func is_alive() -> bool:
 	return current_armor > 0

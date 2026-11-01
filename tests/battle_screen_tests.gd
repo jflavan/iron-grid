@@ -27,6 +27,13 @@ func _ready() -> void:
 		"test_miss_plays_no_impact", "test_seed_counter_resets_per_mission", "test_sure_kill_allows_for_variance",
 		"test_guard_cannot_stack", "test_status_text_lists_every_effect", "test_identical_walkers_share_forecast",
 		"test_apply_before_conclusion_is_ignored", "test_fast_forward_is_quiet",
+		"test_step_breakdown_sums", "test_strike_plan_goliath_mountain", "test_strike_plan_matches_reachable",
+		"test_strike_plan_beyond_range", "test_strike_plan_skips_occupied_launch_tiles", "test_strike_plan_advice_is_true",
+		"test_out_of_reach_hover_and_click", "test_terrain_panel_draws_plan",
+		"test_rules_chapters_fit", "test_rules_numbers_come_from_data", "test_rules_navigation",
+		"test_hud_plan_clears_after_order", "test_rules_offense_final_turn", "test_rules_example_follows_chassis_data",
+		"test_next_turn_fuel_matches_upkeep", "test_manual_numbers_come_from_data", "test_rules_render_is_cached",
+		"test_strike_plan_reused_until_state_changes",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -391,7 +398,7 @@ func test_crt_glyph_coverage() -> void:
 		strings.append_array([ch.callsign, ch.unit_name, ch.chassis_class, ch.lore_blurb])
 		for ab: CombatAbility in ch.abilities:
 			strings.append_array([ab.ability_name, ab.category, ab.description])
-	strings.append_array(UIOverlay.MANUAL_LINES)
+	strings.append_array(UIOverlay.manual_lines())
 	var missing := {}
 	for s in strings:
 		for ch in CrtUI.sanitize(s):
@@ -795,3 +802,391 @@ func test_fast_forward_is_quiet() -> void:
 	_check(screen.stage.numbers.is_empty(), "fast-forwarding to the next prompt leaves no stacked damage numbers")
 	_check(not screen.stage._fast_forwarding, "fast-forward flag is cleared afterwards")
 	screen.queue_free()
+
+# ---------------------------------------------------------------- strike plan (out-of-reach feedback)
+const ALL_CHASSIS := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+
+func _grid(map_idx: int) -> IsoGridMap:
+	var gm := IsoGridMap.new()
+	gm.load_from_definition(GlobalState.maps[map_idx])
+	return gm
+
+func _unit(chassis: String, faction: MechData.Faction, pos: Vector2i, tag: String = "u") -> MechData:
+	return GlobalState.create_mech_instance(chassis, faction, tag.to_upper() + "-1", pos, tag)
+
+
+func test_step_breakdown_sums() -> void:
+	var bad := 0
+	for c in ALL_CHASSIS:
+		var m := _unit(c, MechData.Faction.PLAYER, Vector2i.ZERO)
+		for tt in GridTileData.TerrainType.values():
+			for climb in 3:
+				var from := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 1)
+				var to := GridTileData.new(Vector2i.ONE, tt, 1 + climb)
+				var b: Dictionary = m.get_step_fuel_breakdown(from, to)
+				if int(b["base"]) + int(b["chassis"]) + int(b["climb"]) != int(b["total"]) or int(b["total"]) != m.get_step_fuel_cost(from, to):
+					bad += 1
+	_check(bad == 0, "step breakdown terms sum to total == get_step_fuel_cost for every chassis/terrain/climb (%d bad)" % bad)
+	var g := _unit("goliath", MechData.Faction.PLAYER, Vector2i.ZERO)
+	var gb: Dictionary = g.get_step_fuel_breakdown(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.FOREST, 2), GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3))
+	_check(gb["base"] == 5 and gb["chassis"] == 1 and gb["chassis_label"] == "HEAVY" and gb["climb"] == 1 and gb["total"] == 7 and gb["terrain"] == "MTN", "goliath into a mountain one level up is MTN 5 + HEAVY 1 + CLIMB 1 = 7 (got %s)" % gb)
+	var d := _unit("donner", MechData.Faction.PLAYER, Vector2i.ZERO)
+	var db: Dictionary = d.get_step_fuel_breakdown(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 1), GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3))
+	_check(db["chassis_label"] == "CLIMB GEAR" and db["chassis"] == -2 and db["climb"] == 1, "donner mountain gear shows CLIMB GEAR -2 and a discounted climb (got %s)" % db)
+
+func test_strike_plan_goliath_mountain() -> void:
+	# Iron Bridge: (7,7) is trench at L2, (8,7) a mountain at L3.
+	var gm := _grid(0)
+	var titan := _unit("goliath", MechData.Faction.PLAYER, Vector2i(7, 7), "t")
+	titan.current_fuel = 4
+	var foe := _unit("donner", MechData.Faction.AI, Vector2i(8, 7), "f")
+	var plan: StrikePlan = gm.compute_strike_plan(titan, foe.grid_pos, {foe.grid_pos: foe})
+	_check(plan.severity == StrikePlan.IN_STRIKING_DISTANCE, "adjacent titan with 4F is in striking distance (got %d)" % plan.severity)
+	_check(plan.needs == 7 and plan.have == 4 and plan.path_fuel == 0, "strike needs 7, have 4, no path fuel (got %d/%d/%d)" % [plan.needs, plan.have, plan.path_fuel])
+	_check(plan.advice == StrikePlan.ADV_WAIT_HERE, "advice is WAIT/REFUEL HERE (got %d)" % plan.advice)
+	_check(plan.breakdown_text() == "MTN 5 + HEAVY 1 + CLIMB 1", "breakdown text (got '%s')" % plan.breakdown_text())
+	gm.free()
+
+func test_strike_plan_matches_reachable() -> void:
+	var mismatches: Array = []
+	for mi in GlobalState.maps.size():
+		var gm := _grid(mi)
+		for c in ["vanguard", "goliath"]:
+			for start: Vector2i in gm.tiles.keys():
+				if start.x % 2 != 0 or start.y % 2 != 0:
+					continue
+				for target: Vector2i in gm.tiles.keys():
+					var dist: int = absi(target.x - start.x) + absi(target.y - start.y)
+					if dist == 0 or dist > 4:
+						continue
+					var atk := _unit(c, MechData.Faction.PLAYER, start, "a")
+					var foe := _unit("vanguard", MechData.Faction.AI, target, "f")
+					var occ := {target: foe}
+					var reach: Dictionary = gm.compute_reachable_tiles(atk, occ)
+					var plan: StrikePlan = gm.compute_strike_plan(atk, target, occ)
+					if reach.has(target):
+						if plan.severity != StrikePlan.REACHABLE or plan.needs != int(reach[target]["fuel_spent"]):
+							mismatches.append([mi, c, start, target])
+					elif plan.severity == StrikePlan.REACHABLE:
+						mismatches.append([mi, c, start, target, "plan says reachable"])
+		gm.free()
+	_check(mismatches.is_empty(), "strike plan agrees with reachable_info (%d mismatches, first %s)" % [mismatches.size(), mismatches.slice(0, 1)])
+
+func test_strike_plan_beyond_range() -> void:
+	var gm := _grid(0)
+	var titan := _unit("goliath", MechData.Faction.PLAYER, Vector2i(0, 5), "t")
+	var foe := _unit("donner", MechData.Faction.AI, Vector2i(8, 7), "f")
+	var plan: StrikePlan = gm.compute_strike_plan(titan, foe.grid_pos, {foe.grid_pos: foe})
+	_check(plan.severity == StrikePlan.BEYOND_RANGE, "a distant enemy is beyond range (got %d)" % plan.severity)
+	_check(plan.needs > titan.max_fuel, "beyond-range needs exceeds the tank (got %d)" % plan.needs)
+	gm.free()
+
+func test_strike_plan_skips_occupied_launch_tiles() -> void:
+	var gm := _grid(0)
+	var atk := _unit("vanguard", MechData.Faction.PLAYER, Vector2i(3, 3), "a")
+	var foe := _unit("vanguard", MechData.Faction.AI, Vector2i(0, 0), "f")
+	var occ := {
+		Vector2i(0, 0): foe,
+		Vector2i(1, 0): _unit("falke", MechData.Faction.PLAYER, Vector2i(1, 0), "b"),
+		Vector2i(0, 1): _unit("falke", MechData.Faction.PLAYER, Vector2i(0, 1), "c"),
+	}
+	var plan: StrikePlan = gm.compute_strike_plan(atk, foe.grid_pos, occ)
+	_check(plan.severity == StrikePlan.NO_APPROACH, "an enemy whose launch tiles are all friendly-held has no approach (got %d)" % plan.severity)
+	gm.free()
+
+func test_strike_plan_advice_is_true() -> void:
+	var lies: Array = []
+	var seen := {}
+	for mi in GlobalState.maps.size():
+		var gm := _grid(mi)
+		for c in ["vanguard", "goliath"]:
+			for start: Vector2i in gm.tiles.keys():
+				for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(2, 0), Vector2i(1, 1), Vector2i(0, 2)]:
+					var target: Vector2i = start + d
+					if not gm.is_valid_coords(target):
+						continue
+					var proto := _unit(c, MechData.Faction.PLAYER, start, "a")
+					for fuel in range(0, proto.max_fuel + 1, 2):
+						var atk := _unit(c, MechData.Faction.PLAYER, start, "a")
+						atk.current_fuel = fuel
+						var foe := _unit("vanguard", MechData.Faction.AI, target, "f")
+						var occ := {target: foe}
+						var plan: StrikePlan = gm.compute_strike_plan(atk, target, occ)
+						if plan.severity != StrikePlan.IN_STRIKING_DISTANCE:
+							continue
+						seen[plan.advice] = true
+						var tgt_tile := gm.get_tile(target)
+						match plan.advice:
+							StrikePlan.ADV_WAIT_HERE:
+								var nxt := atk.next_turn_fuel(fuel, gm.get_tile(start), true)
+								if nxt < atk.get_step_fuel_cost(gm.get_tile(start), tgt_tile):
+									lies.append([mi, c, start, target, fuel, "WAIT_HERE"])
+							StrikePlan.ADV_MOVE_TO:
+								var reach: Dictionary = gm.compute_reachable_tiles(atk, occ)
+								if not reach.has(plan.move_to) or absi(plan.move_to.x - target.x) + absi(plan.move_to.y - target.y) != 1:
+									lies.append([mi, c, start, target, fuel, "MOVE_TO not a reachable launch tile"])
+								else:
+									var left: int = fuel - int(reach[plan.move_to]["fuel_spent"])
+									var nxt2 := atk.next_turn_fuel(left, gm.get_tile(plan.move_to), false)
+									if nxt2 < atk.get_step_fuel_cost(gm.get_tile(plan.move_to), tgt_tile):
+										lies.append([mi, c, start, target, fuel, "MOVE_TO"])
+							StrikePlan.ADV_WAIT:
+								var nxt3 := atk.next_turn_fuel(fuel, gm.get_tile(start), true)
+								if nxt3 < plan.needs:
+									lies.append([mi, c, start, target, fuel, "WAIT"])
+		gm.free()
+	_check(lies.is_empty(), "every strike advice holds under the WAIT/upkeep rules (%d false, first %s)" % [lies.size(), lies.slice(0, 1)])
+	_check(seen.has(StrikePlan.ADV_WAIT_HERE) and seen.has(StrikePlan.ADV_MOVE_TO), "the advice sweep exercises WAIT_HERE and MOVE_TO (saw %s)" % [seen.keys()])
+
+# ---------------------------------------------------------------- out-of-reach HUD + comms log
+func _spawn_iron_bridge() -> Battlefield:
+	GlobalState.selected_map_index = 0
+	var bf: Battlefield = load("res://scenes/Battlefield.tscn").instantiate()
+	add_child(bf)
+	await get_tree().process_frame
+	return bf
+
+func _unit_by_callsign(bf: Battlefield, prefix: String) -> MechUnit:
+	for u in bf.unit_container.units:
+		if is_instance_valid(u) and u.mech_data.callsign.begins_with(prefix):
+			return u
+	return null
+
+func test_out_of_reach_hover_and_click() -> void:
+	var bf := await _spawn_iron_bridge()
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	var spinne := _unit_by_callsign(bf, "SPINNE-4")
+	titan.mech_data.grid_pos = Vector2i(7, 7)
+	titan.mech_data.current_fuel = 4
+	bf._select_unit(titan)
+	bf._refresh_hover_telemetry(Vector2i(8, 7))
+	var plan: StrikePlan = bf.ui_overlay.strike_plan
+	_check(plan != null and plan.severity == StrikePlan.IN_STRIKING_DISTANCE, "hovering SPINNE-4 from (7,7) with 4F shows an in-striking-distance plan")
+	_check(bf.ui_overlay.current_forecast.is_empty(), "no engagement forecast for an unreachable enemy")
+	_check(bf.ui_overlay.step_cost_mech == titan.mech_data, "YOUR STEP COST row follows the selected titan")
+	bf._refresh_hover_telemetry(Vector2i(5, 3))
+	_check(bf.ui_overlay.strike_plan == null, "hovering an empty tile clears the strike plan")
+
+	var log_before: int = GlobalState.combat_log.size()
+	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
+	var new_lines: Array = GlobalState.combat_log.slice(log_before)
+	var logged := new_lines.any(func(l): return "CANNOT REACH" in l and "STRIKE NEEDS 7F" in l)
+	_check(logged, "clicking the unreachable enemy logs why (got %s)" % [new_lines])
+	_check(bf.selected_unit == spinne, "the click still selects the enemy for inspection")
+
+	# A distant enemy is quiet: no log line.
+	var iron := _unit_by_callsign(bf, "IRON-1")
+	iron.mech_data.has_moved = false
+	bf._select_unit(iron)
+	var far: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
+	_check(far != null and far.severity == StrikePlan.BEYOND_RANGE, "SPINNE-4 is beyond IRON-1's range (got %s)" % [far.severity if far else null])
+	log_before = GlobalState.combat_log.size()
+	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
+	_check(GlobalState.combat_log.size() == log_before, "clicking a beyond-range enemy adds no log line")
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_terrain_panel_draws_plan() -> void:
+	var bf := await _spawn_iron_bridge()
+	var ov := bf.ui_overlay
+	ov.hovered_tile = bf.grid_map.get_tile(Vector2i(8, 7))
+	ov.strike_plan = null
+	var h0: float = ov._terrain_panel_height()
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	titan.mech_data.grid_pos = Vector2i(7, 7)
+	titan.mech_data.current_fuel = 4
+	var spinne := _unit_by_callsign(bf, "SPINNE-4")
+	ov.strike_plan = bf.grid_map.compute_strike_plan(titan.mech_data, spinne.mech_data.grid_pos, bf.unit_container.build_occupied_map(titan))
+	var h1: float = ov._terrain_panel_height()
+	var wrapped := ov.strike_plan.panel_lines(UIOverlay.RIGHT_W - 24).size()
+	_check(h1 - h0 >= (1 + wrapped) * CrtUI.LINE, "panel grows to fit the OUT OF REACH box (%s -> %s for %d lines)" % [h0, h1, wrapped])
+	var long_plan := StrikePlan.new()
+	long_plan.severity = StrikePlan.IN_STRIKING_DISTANCE
+	long_plan.path_fuel = 12
+	long_plan.step = {"base": 5, "terrain": "MTN", "chassis": -2, "chassis_label": "CLIMB GEAR", "climb": 2, "total": 5}
+	long_plan.needs = 17
+	long_plan.have = 9
+	long_plan.advice = StrikePlan.ADV_MULTI_TURN
+	var packed := long_plan.panel_lines(UIOverlay.RIGHT_W - 24)
+	var all_fit := packed.size() > 0
+	for l in packed:
+		all_fit = all_fit and PixelFont.text_width(l) <= UIOverlay.RIGHT_W - 24
+	var joined := " ".join(packed)
+	_check(all_fit and "PATH 12" in joined and "CLIMB GEAR -2" in joined and "CLIMB 2" in joined, "packed breakdown fits the HUD and never splits a term (%s)" % [packed])
+	var lines := ov.strike_plan.panel_lines()
+	_check(CrtUI.wrap_lines(lines[0], UIOverlay.RIGHT_W - 24).size() == 1 and CrtUI.wrap_lines(lines[1], UIOverlay.RIGHT_W - 24).size() == 1, "fuel and breakdown lines fit one HUD line each (%s)" % [lines])
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	_check(true, "terrain panel draws with a strike plan without errors")
+	bf.queue_free()
+	await get_tree().process_frame
+
+# ---------------------------------------------------------------- Rules of Engagement page
+func _all_rules_text() -> String:
+	var parts: PackedStringArray = []
+	for ch in RulesContent.chapters():
+		parts.append(ch["title"])
+		for b in ch["blocks"]:
+			if b.has("table"):
+				for row in b["table"]:
+					parts.append(" ".join(row))
+			else:
+				parts.append(b.get("p", b.get("key", "")))
+	return "\n".join(parts)
+
+func test_rules_chapters_fit() -> void:
+	var chapters := RulesContent.chapters()
+	_check(chapters.size() == 7, "seven chapters (got %d)" % chapters.size())
+	var titles := chapters.map(func(c): return c["title"])
+	_check(titles == ["HOW YOU WIN", "MOVEMENT & FUEL", "TERRAIN & HIGH GROUND", "THE CLASH", "AFTER THE CLASH", "CHASSIS ROLES", "FIELD TIPS"], "chapter titles verbatim (got %s)" % [titles])
+	var lay: Dictionary = MainMenu.rules_layout(Vector2(CrtUI.DESIGN))
+	var body: Rect2 = lay["body"]
+	var inner_w: float = body.size.x - 2 * MainMenu.RULES_PAD
+	for ch in chapters:
+		var h: float = RulesContent.chapter_height(ch, inner_w)
+		_check(MainMenu.RULES_BODY_TOP + h <= body.size.y - MainMenu.RULES_PAD, "chapter '%s' fits the body at 720x450 (%s + %s vs %s)" % [ch["title"], MainMenu.RULES_BODY_TOP, h, body.size.y])
+		for b in ch["blocks"]:
+			if b.has("table"):
+				_check(RulesContent.table_width(b["table"]) <= inner_w, "table in '%s' fits the body width" % ch["title"])
+	var list_w: float = (lay["list"] as Rect2).size.x - 2 * MainMenu.RULES_PAD - 12
+	for t in titles:
+		_check(PixelFont.text_width("%d %s" % [titles.find(t) + 1, t]) <= list_w, "chapter list entry '%s' fits" % t)
+
+func test_rules_numbers_come_from_data() -> void:
+	var chapters := RulesContent.chapters()
+	var fuel_text := ""
+	for b in chapters[1]["blocks"]:
+		fuel_text += (" ".join(b["table"].map(func(r): return " ".join(r))) if b.has("table") else b.get("p", b.get("key", ""))) + "\n"
+	var g: MechData = GlobalState.chassis_catalog["goliath"]
+	var mtn := GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3)
+	_check(("%d+%d" % [g.max_fuel, g.passive_refuel]) in fuel_text, "movement chapter quotes the goliath's tank and refuel from the catalog")
+	_check(str(mtn.get_base_fuel_cost()) in fuel_text, "movement chapter quotes the mountain fuel cost")
+	var need := g.get_step_fuel_cost(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 2), mtn)
+	_check(RulesContent.worked_example_needs() == need, "worked example needs == goliath plain(L2)->mountain(L3) step (%d vs %d)" % [RulesContent.worked_example_needs(), need])
+	_check(("= %d" % need) in fuel_text, "the worked example shows its total")
+	var missing := {}
+	for ch in CrtUI.sanitize(_all_rules_text()):
+		if ch != " " and ch != "\n" and not PixelFont.has_glyph(ch):
+			missing[ch] = true
+	_check(missing.is_empty(), "every rules glyph is drawable (missing %s)" % [missing.keys()])
+
+func test_rules_navigation() -> void:
+	var menu: MainMenu = load("res://scenes/MainMenu.tscn").instantiate()
+	add_child(menu)
+	await get_tree().process_frame
+	_check(not menu.show_rules, "rules page starts closed")
+	menu._activate("rules")
+	_check(menu.show_rules and menu.rules_chapter == 0, "activating 'rules' opens chapter 1")
+	_check(menu._key_action(KEY_DOWN) == "rules:1", "Down moves to chapter 2 (got %s)" % menu._key_action(KEY_DOWN))
+	menu._activate(menu._key_action(KEY_DOWN))
+	_check(menu.rules_chapter == 1, "chapter 2 selected")
+	menu._activate(menu._key_action(KEY_7))
+	_check(menu.rules_chapter == 6, "key 7 jumps to the last chapter")
+	_check(menu._key_action(KEY_ENTER) == "" and menu._key_action(KEY_SPACE) == "", "Enter/Space do nothing on the rules page")
+	_check(menu._key_action(KEY_ESCAPE) == "rules_back", "Esc goes back")
+	menu._activate("rules_back")
+	_check(not menu.show_rules, "back closes the rules page")
+	_check(menu._key_action(KEY_R) == "rules", "R opens the rules page from Command HQ")
+	_check(menu._key_action(KEY_ENTER) == "launch", "Enter still launches from Command HQ")
+	menu.queue_redraw()
+	await get_tree().process_frame
+	menu.queue_free()
+	await get_tree().process_frame
+
+# ---------------------------------------------------------------- code-review regression tests
+func test_hud_plan_clears_after_order() -> void:
+	var bf := await _spawn_iron_bridge()
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	titan.mech_data.grid_pos = Vector2i(7, 7)
+	titan.mech_data.current_fuel = 4
+	bf._select_unit(titan)
+	bf._refresh_hover_telemetry(Vector2i(8, 7))
+	_check(bf.ui_overlay.strike_plan != null, "precondition: OUT OF REACH plan is showing")
+	# The reviewer's case: TITAN-2 is the last walker with an order left, so WAIT selects nobody.
+	for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
+		if u != titan:
+			u.mech_data.has_moved = true
+	bf._on_wait_refuel_requested()
+	_check(bf.ui_overlay.strike_plan == null and bf.ui_overlay.step_cost_mech == null, "WAIT clears the strike plan and step-cost row")
+	var iron := _unit_by_callsign(bf, "IRON-1")
+	iron.mech_data.has_moved = false
+	bf._select_unit(iron)
+	bf._refresh_hover_telemetry(Vector2i(8, 7))
+	_check(bf.ui_overlay.step_cost_mech == iron.mech_data, "precondition: step-cost row follows IRON-1")
+	var dest: Vector2i = bf.grid_map.reachable_info.keys().filter(func(k): return k != iron.mech_data.grid_pos and not bf.grid_map.reachable_info[k]["is_attack"])[0]
+	bf._execute_unit_movement(iron, dest, bf.grid_map.reachable_info[dest]["path"], int(bf.grid_map.reachable_info[dest]["fuel_spent"]))
+	_check(bf.ui_overlay.strike_plan == null and bf.ui_overlay.step_cost_mech == null, "a move clears the strike plan and step-cost row while it animates")
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_rules_offense_final_turn() -> void:
+	var text := _all_rules_text().to_upper()
+	_check(not ("BEFORE THE TURN LIMIT" in text), "the offense rule does not say 'before the turn limit' (holding on the final turn still wins)")
+	_check("FINAL TURN" in text, "the offense rule says the final turn still counts")
+
+func test_rules_example_follows_chassis_data() -> void:
+	var g: MechData = GlobalState.chassis_catalog["goliath"]
+	var saved := g.fuel_efficiency_mod
+	g.fuel_efficiency_mod = -1
+	var text := _all_rules_text()
+	g.fuel_efficiency_mod = saved
+	var example := ""
+	for l in text.split("\n"):
+		if l.begins_with("EXAMPLE:"):
+			example = l.to_upper()
+	_check(example != "" and not ("HEAVY" in example), "with a -1 goliath the worked example says no HEAVY (%s)" % example)
+	_check("LIGHT -1" in example, "the example labels the -1 adjustment LIGHT")
+	_check(not ("+-" in text), "no '+-' sign glitch in the rules text")
+
+func test_next_turn_fuel_matches_upkeep() -> void:
+	var bf := await _spawn_iron_bridge()
+	var iron := _unit_by_callsign(bf, "IRON-1")
+	var m := iron.mech_data
+	for pos in [Vector2i(3, 1), Vector2i(2, 3)]:   # a city and a plain on Iron Bridge
+		for waited in [false, true]:
+			for fuel in [0, 3, m.max_fuel - 2, m.max_fuel]:
+				m.grid_pos = pos
+				m.current_fuel = fuel
+				var predicted: int = m.next_turn_fuel(fuel, bf.grid_map.get_tile(pos), waited)
+				if waited:
+					bf._entrench_unit(m)
+				var ps: Array[MechUnit] = [iron]
+				bf._apply_turn_upkeep(ps, true)
+				_check(m.current_fuel == predicted, "next_turn_fuel matches the real WAIT/upkeep at %s waited=%s fuel=%d (%d vs %d)" % [pos, waited, fuel, predicted, m.current_fuel])
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_manual_numbers_come_from_data() -> void:
+	var manual := "\n".join(UIOverlay.manual_lines())
+	_check(("+%d Fuel" % MechData.WAIT_FUEL) in manual and ("+%d EN" % MechData.WAIT_ENERGY) in manual, "manual WAIT line reads the WAIT constants")
+	var mtn := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.MOUNTAIN, 1)
+	_check(("%d Fuel" % mtn.get_base_fuel_cost()) in manual and ("%+d%% DEF" % mtn.get_defense_modifier_pct()) in manual, "manual terrain chart reads GridTileData")
+	_check(("+%d SPD" % SkirmishEngine.ROUND1_ATTACKER_SPD_BONUS) in manual, "manual initiative line reads SkirmishEngine")
+
+func test_rules_render_is_cached() -> void:
+	var menu: MainMenu = load("res://scenes/MainMenu.tscn").instantiate()
+	add_child(menu)
+	await get_tree().process_frame
+	var a = menu._rules_render(1, 500.0)
+	var b = menu._rules_render(1, 500.0)
+	_check(is_same(a, b), "rules chapter layout is cached per (chapter, width)")
+	_check(not is_same(a, menu._rules_render(2, 500.0)), "different chapters get their own layout")
+	menu.queue_free()
+	await get_tree().process_frame
+
+func test_strike_plan_reused_until_state_changes() -> void:
+	var bf := await _spawn_iron_bridge()
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	titan.mech_data.grid_pos = Vector2i(7, 7)
+	titan.mech_data.current_fuel = 4
+	bf._select_unit(titan)
+	var p1: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
+	_check(is_same(p1, bf.strike_plan_for(Vector2i(8, 7))), "hover then click reuse one strike plan (no second search)")
+	titan.mech_data.current_fuel = 3
+	var p2: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
+	_check(not is_same(p1, p2) and p2.have == 3, "a fuel change gives a fresh plan")
+	var spinne := _unit_by_callsign(bf, "SPINNE-4")
+	spinne.mech_data.grid_pos = Vector2i(9, 7)
+	_check(bf.strike_plan_for(Vector2i(8, 7)) == null, "the cache never answers for a tile the enemy left")
+	bf.queue_free()
+	await get_tree().process_frame
