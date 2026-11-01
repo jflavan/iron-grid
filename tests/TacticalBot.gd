@@ -1,7 +1,9 @@
 class_name TacticalBot
 extends RefCounted
-## Player-side mirror of AIController: same attack/positional scoring and weights, with the
-## map role flipped for the Coalition (garrison on DEFENSE maps, assault on OFFENSE maps).
+## Player-side commander built on AIController's attack and positional scoring, with the map role
+## flipped for the Coalition (garrison on DEFENSE maps, assault on OFFENSE maps). The garrison and
+## objective weights below were tuned separately from AIController's (which carries HQ-interception
+## bonuses instead), so this is a sibling, not a mirror: a shared scorer is a pending refactor.
 
 const ME := MechData.Faction.PLAYER
 const FOE := MechData.Faction.AI

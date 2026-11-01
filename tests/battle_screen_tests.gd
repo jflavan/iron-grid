@@ -25,6 +25,8 @@ func _ready() -> void:
 		"test_guard_survives_miss", "test_auto_pilot_uses_command_select", "test_repelled_attacker_leaves_entrenchment",
 		"test_forecast_damage_matches_ai_estimate", "test_forecast_cache", "test_status_badges",
 		"test_miss_plays_no_impact", "test_seed_counter_resets_per_mission", "test_sure_kill_allows_for_variance",
+		"test_guard_cannot_stack", "test_status_text_lists_every_effect", "test_identical_walkers_share_forecast",
+		"test_apply_before_conclusion_is_ignored", "test_fast_forward_is_quiet",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -570,7 +572,7 @@ func test_guard_survives_miss() -> void:
 			_check(sess.atk_state.defending, "a MISS does not spend the guard (seed %d)" % s)
 			break
 		else:
-			_check(not sess.atk_state.defending and shot.status_text in ["GUARDED (-50%)", "CRITICAL HIT! // GUARDED"], "a landed hit is guarded and spends the guard (seed %d)" % s)
+			_check(not sess.atk_state.defending and shot.status_text in ["GUARDED (-50%)", "CRITICAL HIT! // GUARDED (-50%)"], "a landed hit is guarded and spends the guard (seed %d)" % s)
 	_check(seen_miss, "found a seed where the shot after DEFEND misses")
 	# An enemy support TECH leaves the guard up too
 	var det := _flat_session("falke", "goliath")
@@ -722,4 +724,74 @@ func test_sure_kill_allows_for_variance() -> void:
 	screen.stage.advance(0.75)
 	screen.stage._commit_session_turn(SkirmishEngine.CommandType.TECH, "no_such_tech")
 	_check(screen.stage.phase == "command_select" and sess.result.steps.is_empty(), "an unknown TECH is rejected and the menu stays open")
+	screen.queue_free()
+
+func test_guard_cannot_stack() -> void:
+	var sess := _flat_session("falke", "goliath")
+	sess.execute_next_turn(SkirmishEngine.CommandType.DEFEND)                 # Falke guards
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "ferro_bulkhead")  # Goliath buffs: guard still up
+	var en_before := sess.atk_state.en
+	var again := sess.execute_next_turn(SkirmishEngine.CommandType.DEFEND)
+	_check(again == null and sess.atk_state.en == en_before and sess.get_next_actor_side() == "atk", "a second DEFEND while guarding is rejected and banks no EN")
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	var live := _flat_session("falke", "goliath", false, 11)
+	screen.start_session(live)
+	screen.stage.advance(0.75)
+	screen.stage.menu_cursor = 2
+	screen.stage.confirm_selection()
+	_check(live.atk_state.defending, "menu DEFEND raises the guard")
+	screen.stage.skip_to_next_command_or_end()
+	if screen.stage.phase == "command_select" and live.atk_state.defending:
+		var steps := live.result.steps.size()
+		screen.stage.menu_cursor = 2
+		screen.stage.confirm_selection()
+		_check(screen.stage.phase == "command_select" and live.result.steps.size() == steps, "menu refuses DEFEND while the guard is still up")
+	screen.queue_free()
+
+func test_status_text_lists_every_effect() -> void:
+	var sess := _flat_session("vanguard", "moloch")
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "krupp_plate")  # shield pending
+	sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)                # Brenner: consumes the shield
+	var shielded := sess.result.steps[1]
+	_check(shielded.status_text == "SHIELD DEFLECT!", "a shield alone reads SHIELD DEFLECT! (got '%s')" % shielded.status_text)
+	var s2 := _flat_session("vanguard", "moloch")
+	s2.execute_next_turn(SkirmishEngine.CommandType.TECH, "krupp_plate")
+	s2.execute_next_turn(SkirmishEngine.CommandType.TECH, "ablative_shield")  # Brenner buffs instead; Vanguard shield still pending
+	s2.execute_next_turn(SkirmishEngine.CommandType.DEFEND)                    # Vanguard guards on top
+	var hit := s2.execute_next_turn(SkirmishEngine.CommandType.ATTACK)        # Brenner fires into guard + shield
+	_check(hit.status_text == "GUARDED (-50%) // SHIELD DEFLECT!", "guard and shield are both reported (got '%s')" % hit.status_text)
+	_check(hit.soften_from == "krupp_plate" and not s2.atk_state.defending, "both the shield and the guard were spent by that shot")
+
+func test_identical_walkers_share_forecast() -> void:
+	SkirmishEngine.clear_forecast_cache()
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var a1 := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A1", Vector2i(3, 2), "a1")
+	var a2 := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A2", Vector2i(3, 3), "a2")
+	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	var f1 := SkirmishEngine.compute_forecast(a1, dfn, flat, flat)
+	var f2 := SkirmishEngine.compute_forecast(a2, dfn, flat, flat)
+	_check(f1 == f2 and SkirmishEngine._forecast_cache.size() == 1, "two identical walkers share one forecast entry")
+	SkirmishEngine.clear_forecast_cache()
+
+func test_apply_before_conclusion_is_ignored() -> void:
+	var sess := _flat_session("vanguard", "moloch")
+	var hp := sess.result.attacker.current_armor
+	sess.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
+	sess.apply_to_units()
+	_check(sess.result.attacker.current_armor == hp and sess.result.defender.current_armor == sess.result.defender.max_armor, "apply_to_units before the battle concludes leaves the units alone")
+
+func test_fast_forward_is_quiet() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	var live := _flat_session("vanguard", "moloch", false, 21)
+	screen.start_session(live)
+	screen.stage.advance(0.75)
+	screen.stage.menu_cursor = 0
+	screen.stage.confirm_selection()
+	screen.stage.skip_to_next_command_or_end()
+	_check(screen.stage.numbers.is_empty(), "fast-forwarding to the next prompt leaves no stacked damage numbers")
+	_check(not screen.stage._fast_forwarding, "fast-forward flag is cleared afterwards")
 	screen.queue_free()

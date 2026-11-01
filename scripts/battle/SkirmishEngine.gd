@@ -23,6 +23,9 @@ const ENTRENCHED_ACC_BONUS: int = 6
 const CRIT_DAMAGE_MULT: float = 1.42  # live crit multiplier; the deterministic forecast folds the same bonus in by expectation
 const DAMAGE_VARIANCE_MIN: float = 0.94  # live shots roll a +/-6% classic RPG variance
 const DAMAGE_VARIANCE_MAX: float = 1.06
+const DAMAGE_MIN: int = 4            # every landed shot deals at least this, in every mode
+const BASE_DAMAGE_MAX: int = 95      # cap on the pre-roll estimate (forecasts never exceed it)
+const LIVE_DAMAGE_MAX: int = 120     # a live crit on a capped shot may run up to this
 
 class TurnStep extends RefCounted:
 	var step_index: int = 0
@@ -344,7 +347,7 @@ class BattleSession extends RefCounted:
 		if deterministic_mode:
 			var hit := float(hit_chance_for(actor, target, weapon_tech)) / 100.0
 			var crit := float(crit_chance_for(actor, weapon_tech)) / 100.0
-			dmg = maxi(5, int(round(float(dmg) * hit * (1.0 + crit * (CRIT_DAMAGE_MULT - 1.0)))))
+			dmg = maxi(DAMAGE_MIN, int(round(float(dmg) * hit * (1.0 + crit * (CRIT_DAMAGE_MULT - 1.0)))))
 		return dmg
 
 	## True when a shot estimated at `est` kills `hp` even at the bottom of the live variance band.
@@ -371,7 +374,7 @@ class BattleSession extends RefCounted:
 			raw *= 0.52
 		elif target.pending_soften != "":
 			raw *= 0.68
-		return clampi(int(round(raw)), 6, 95)
+		return clampi(int(round(raw)), DAMAGE_MIN, BASE_DAMAGE_MAX)
 
 	## Executes the next turn in the queue with the chosen command and returns the resulting TurnStep.
 	func execute_next_turn(command_type: int, ability_id: String = "") -> TurnStep:
@@ -398,6 +401,10 @@ class BattleSession extends RefCounted:
 			if chosen_ability == null or not actor.can_use(chosen_ability):
 				push_warning("SkirmishEngine: %s cannot use TECH '%s'; command rejected" % [actor.mech.callsign, ability_id])
 				return null
+		# A guard that is still up cannot be stacked: DEFEND again would only bank +2 EN.
+		if command_type == CommandType.DEFEND and actor.defending:
+			push_warning("SkirmishEngine: %s is already guarding; DEFEND rejected" % actor.mech.callsign)
+			return null
 		turn_queue.pop_front()
 
 		var step := TurnStep.new()
@@ -493,7 +500,7 @@ class BattleSession extends RefCounted:
 				dmg = int(round(float(dmg) * CRIT_DAMAGE_MULT))
 			# Slight +/- 6% classic RPG damage variance
 			var variance: float = rng.randf_range(DAMAGE_VARIANCE_MIN, DAMAGE_VARIANCE_MAX)
-			dmg = clampi(int(round(float(dmg) * variance)), 4, 120)
+			dmg = clampi(int(round(float(dmg) * variance)), DAMAGE_MIN, LIVE_DAMAGE_MAX)
 
 		if target.pending_soften != "":
 			step.soften_from = target.pending_soften
@@ -508,12 +515,14 @@ class BattleSession extends RefCounted:
 		else:
 			result.total_dmg_to_attacker += dmg
 
+		var notes: Array[String] = []
 		if is_crit:
-			step.status_text = "CRITICAL HIT! // GUARDED" if target.defending else "CRITICAL HIT!"
-		elif target.defending:
-			step.status_text = "GUARDED (-50%)"
-		elif step.soften_from != "":
-			step.status_text = "SHIELD DEFLECT!"
+			notes.append("CRITICAL HIT!")
+		if target.defending:
+			notes.append("GUARDED (-50%)")
+		if step.soften_from != "":
+			notes.append("SHIELD DEFLECT!")
+		step.status_text = " // ".join(notes)
 		# Like a pending shield, a DEFEND guard is spent by the first enemy shot that lands. It is
 		# not cleared at the guarding unit's next turn start (an initiative flip would waste it) nor
 		# by a MISS, a support TECH or a failed RETREAT.
@@ -625,7 +634,13 @@ class BattleSession extends RefCounted:
 		if side == "":
 			return null
 		var cmd := choose_ai_command(side)
-		return execute_next_turn(int(cmd["command"]), String(cmd["ability_id"]))
+		var step := execute_next_turn(int(cmd["command"]), String(cmd["ability_id"]))
+		if step == null and not is_finished:
+			# The AI only asks for commands it can use; should that ever break, fall back to a basic
+			# shot rather than hand callers a null that reads as "battle over".
+			push_error("SkirmishEngine: AI command %s rejected for %s; firing basic weapon instead" % [cmd, side])
+			step = execute_next_turn(CommandType.ATTACK)
+		return step
 
 	## Plays the rest of the battle with the AI commanding both sides; `on_step` sees every TurnStep.
 	func auto_resolve(on_step: Callable = Callable()) -> void:
@@ -639,6 +654,9 @@ class BattleSession extends RefCounted:
 			safety += 1
 
 	func apply_to_units() -> void:
+		if not is_finished:
+			push_error("SkirmishEngine: apply_to_units() called before the battle concluded; ignored")
+			return
 		result.attacker.current_armor = result.atk_armor_after
 		result.defender.current_armor = result.def_armor_after
 		result.attacker.current_energy = result.atk_energy_after
@@ -737,13 +755,14 @@ const FORECAST_CACHE_LIMIT: int = 4096
 static func clear_forecast_cache() -> void:
 	_forecast_cache.clear()
 
-## Every MechData field the simulation reads, so a per-unit stat change can never serve a stale forecast.
+## Every MechData field the simulation reads (and nothing it does not, so identical walkers share an
+## entry); a per-unit stat change can never serve a stale forecast.
 static func _mech_key(m: MechData) -> Array:
 	var ability_ids: Array = []
 	for ab in m.abilities:
 		ability_ids.append(ab.ability_id)
 	return [
-		m.unit_id, m.chassis_id, int(m.faction), m.is_entrenched,
+		m.chassis_id, int(m.faction), m.is_entrenched,
 		m.current_armor, m.max_armor, m.current_energy, m.max_energy,
 		m.firepower, m.armor_rating, m.speed, m.evasion, m.crit_chance, ability_ids,
 	]

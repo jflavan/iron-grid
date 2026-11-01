@@ -26,7 +26,7 @@ Each turn cycles through three phases:
    - Select any friendly Armored Fighting Walker (AFW) to compute reachable movement nodes within its current **Diesel Fuel** budget (using Dijkstra pathfinding across terrain and elevation climbs).
    - Hover over reachable enemy nodes to inspect a real-time **Skirmish Engagement Forecast** detailing approach vectors, terrain/elevation modifiers, initiative order, and estimated hull damage.
    - Move to secure strategic **Objective Cities**, press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF`, `+5 Fuel`, `+4 EN`, and `+8 Hull` when holding a City), or move directly onto an enemy-occupied node to trigger a combat encounter.
-2. **Skirmish Resolution Phase (Final Fantasy Turn-Based Battle)**:
+2. **Combat Encounter Phase (Final Fantasy Turn-Based Battle)**:
    - When two opposing walkers occupy the same node, the game cuts from the isometric grid to a side-view **Final Fantasy-style Turn-Based Battle** against a terrain backdrop matching the contested sector.
    - **Initiative & Rounds**: Combat runs in classic turn-based rounds determined by each walker's **Effective Speed (`SPD`)**, with a Round-1 Assault Initiative bonus (`+8 SPD`) for the initiating Attacker. An **Entrenched** Defender answers with `+10 SPD` in Round 1 (`+4` for the rest of the fight) plus `+5% EVA` and `+6% Hit`. The forecast's `INITIATIVE` line is read from the same Round-1 queue the battle uses.
    - **4-Command Battle Menu**:
@@ -34,7 +34,7 @@ Each turn cycles through three phases:
      - **`TECH`**: Opens the chassis's 3 specialized **Combat Abilities** (`WEAPON`, `ARMOR`, and `TACTIC` modules) powered by **Reactor Energy (`EN`)**:
        - **Weapon TECHs**: Heavy ordnance, high-velocity AP shells, rocket salvos, and melee pile-bunkers with custom accuracy, critical hit bonuses, and armor penetration.
        - **Armor & Tactical TECHs**: Once-per-battle support/status turns that deploy physical shields (`Sloped Krupp Plate`, `Ferro-Bunker Bulkhead`, `Quad Anchor Struts`, `Reactive Shield Wall`), boost offensive/evasive telemetry (`Gyro-Flank Thrusters`, `Optical Rangefinder`, `Elevation Ballistics`, `Command Uplink`), or jam enemy targeting (`Enigma ECM Scrambler`).
-     - **`DEFEND`**: Braces hull plating (`-50%` damage from the enemy's next hit) and vents reactor coils (`+2 EN`). Like a shield, the guard holds through misses, support turns and an initiative flip, and is spent by the first shot that lands.
+     - **`DEFEND`**: Braces hull plating (`-50%` damage from the enemy's next hit) and vents reactor coils (`+2 EN`). Like a shield, the guard holds through misses, support turns and an initiative flip, and is spent by the first shot that lands; `DEFEND` is unavailable while a guard is already up.
      - **`RETREAT`**: Attempts an emergency combat disengagement based on relative Speed (`SPD`). If successful, the battle ends immediately and the retreating unit withdraws to an open adjacent sector. A defender only loses its entrenchment when it is destroyed, routed or pushed back, never because the attacker broke off.
    - Each encounter continues until one walker is destroyed (`0 HULL`), one side successfully retreats, or the 10-round safety limit is reached (dislodging the loser of the exchange).
 3. **Syndicate AI Phase**:
@@ -149,7 +149,7 @@ iron-grid/
     │   ├── MapDefinition.gd        # Arena layout, strategy mode, objectives & unit spawns
     │   └── MechData.gd             # Core walker struct (hull, energy, firepower, armor, speed, abilities)
     ├── battle/
-    │   ├── Battlefield.gd          # Turn flow controller (Player -> Skirmish Resolution -> AI)
+    │   ├── Battlefield.gd          # Turn flow controller (Player -> Combat Encounter -> AI)
     │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer & Dijkstra fuel pathfinder
     │   ├── UnitContainer.gd        # Y-sorted mech manager, collision checks & knockback logic
     │   ├── MechUnit.gd             # Procedural multi-part isometric mech renderer & animator
@@ -240,7 +240,7 @@ After regenerating, run `godot --headless --path . --import` so Godot picks up t
 
 ## Balance Experiments
 
-`tests/Balance.tscn` plays full missions with switchable entrenchment and City-healing rules (`scripts/battle/BalanceProbe.gd`; the defaults match the shipped rules) and prints one JSON line per mission. `tests/TacticalBot.gd` is a competent Coalition commander that mirrors the Syndicate AI's scoring; `tactical:N` adds seeded variety by picking among near-best moves.
+`tests/Balance.tscn` plays full missions with switchable entrenchment and City-healing rules (`scripts/battle/BalanceProbe.gd`; the defaults match the shipped rules) and prints one JSON line per mission. `tests/TacticalBot.gd` is a competent Coalition commander built on the Syndicate AI's attack and positional scoring, with its own garrison weights for the Coalition's map roles; `tactical:N` adds seeded variety by picking among near-best moves.
 
 ```bash
 BALANCE_VARIANT=full BALANCE_POLICIES=$(python3 -c "print(','.join(f'tactical:{i}' for i in range(1,41)))") \

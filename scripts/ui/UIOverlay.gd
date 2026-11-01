@@ -21,7 +21,7 @@ const TOP_H := 30
 
 const MANUAL_LINES := [
 	"1. TURN FLOW & FUEL MOBILITY:",
-	"   - Each Turn follows: PLAYER COMMAND PHASE -> SKIRMISH RESOLUTION PHASE -> SYNDICATE AI PHASE.",
+	"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
 	"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
 	"   - [WAIT / REFUEL] entrenches (+15% DEF, +5% EVA, +6% Hit, +4 SPD) & restores +5 Fuel / +4 EN (+8 Hull in a City). Cities repair +12 Hull, +4 Fuel, +3 EN each turn.",
 	"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
@@ -42,7 +42,7 @@ const MANUAL_LINES := [
 	"   - Moving onto an enemy-occupied node triggers a classic Final Fantasy turn-based battle.",
 	"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +8 SPD; an Entrenched Defender answers with +10.",
 	"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-50% DMG on the enemy's next hit, +2 EN), or RETREAT.",
-	"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands.",
+	"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands; it cannot be stacked.",
 ]
 
 var root_ctrl: Control

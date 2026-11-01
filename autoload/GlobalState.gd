@@ -94,7 +94,7 @@ func _init_ability_catalog() -> void:
 	ability_catalog["coax_mg"] = CombatAbility.new(
 		"coax_mg", "Twin MG-42 Salvo", "WEAPON",
 		3, 1.18, 10, 100, 12, 0.0, "",
-		"Unerring rapid-fire tracer barrage that pins evasive targets."
+		"Rapid-fire tracer barrage: 100% base accuracy and +12% crit, before the target's evasion."
 	)
 	ability_catalog["morser_210"] = CombatAbility.new(
 		"morser_210", "210mm Siege Howitzer", "WEAPON",

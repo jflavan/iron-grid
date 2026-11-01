@@ -64,6 +64,7 @@ var numbers: Array[Dictionary] = []
 var _impact_done: bool = false
 var _persist_done: Dictionary = {}   # beat index -> true once its ability's lasting effect applied
 var _fx: Array[Callable] = []
+var _fast_forwarding: bool = false   # skip_to_next_command_or_end: no sounds, no stacked numbers
 var _backdrop: Texture2D
 
 # Interactive Command Menu State
@@ -153,6 +154,7 @@ func skip_to_end() -> void:
 func skip_to_next_command_or_end() -> void:
 	if finished or phase == "command_select":
 		return
+	_fast_forwarding = true
 	var guard := 0
 	while phase not in ["result", "command_select"] and guard < 64:
 		if phase == "attack" and not _impact_done:
@@ -160,6 +162,8 @@ func skip_to_next_command_or_end() -> void:
 		phase_t = 0.0
 		_next_phase()
 		guard += 1
+	_fast_forwarding = false
+	numbers.clear()  # like skip_to_end: skipped beats leave no stacked damage numbers behind
 	queue_redraw()
 
 func advance(delta: float) -> void:
@@ -230,6 +234,9 @@ func confirm_selection() -> void:
 				in_tech_submenu = true
 				queue_redraw()
 			2: # DEFEND
+				if coa_state.defending:
+					SoundManager.play("ui_cancel")  # guard already up; it cannot be stacked
+					return
 				SoundManager.play("ui_confirm")
 				_commit_session_turn(SkirmishEngine.CommandType.DEFEND, "")
 			3: # RETREAT
@@ -322,14 +329,15 @@ func _commit_session_turn(cmd_type: int, ability_id: String) -> void:
 ## Starts animating the beat a player (or Auto-Pilot) turn just produced.
 func _show_committed_turn(had_step: bool) -> void:
 	if not had_step:
-		_enter("ending")
+		if session.is_finished:
+			_enter("ending")
 		return
 	beat_idx = timeline.beats.size() - 1
 	_impact_done = false
 	phase_t = 0.0
 	var b := current_beat()
 	energy_display[b["actor"]] = b["energy_after"][b["actor"]]
-	_enter("support" if b["is_support_only"] else "attack")
+	_enter_beat_anim(b)
 
 # ---------------------------------------------------------------- phase machine
 func _phase_duration() -> float:
@@ -356,7 +364,7 @@ func _next_phase() -> void:
 		"menu":
 			var b := current_beat()
 			energy_display[b["actor"]] = b["energy_after"][b["actor"]]
-			_enter("support" if b["is_support_only"] else "attack")
+			_enter_beat_anim(b)
 		"support":
 			_apply_persistent(beat_idx)
 			# Pure FF support/status turns finish their turn after the support animation (no follow-up shot)
@@ -397,6 +405,15 @@ func _start_beat(i: int) -> void:
 	_enter("menu")
 	if int(current_beat()["command_row"]) >= 0:
 		SoundManager.play("ui_click")
+
+## Starts a beat's animation phase, with the audio cue the beat type deserves.
+func _enter_beat_anim(b: Dictionary) -> void:
+	if not b["is_support_only"]:
+		_enter("attack")
+		return
+	_enter("support")
+	if not _fast_forwarding:
+		SoundManager.play("buff_up" if String(b["ability_id"]) in ["defend", "retreat"] else "tech_activate")
 
 func _enter(p: String) -> void:
 	phase = p
@@ -450,7 +467,8 @@ func _apply_impact(b: Dictionary) -> void:
 	var target: String = b["target"]
 	if b.get("is_miss", false):
 		numbers.append({"value": 0, "label": "MISS", "crit": false, "pos": point(mechs[target], "hull"), "age": 0.0})
-		SoundManager.play("ui_cancel", 1.25)
+		if not _fast_forwarding:
+			SoundManager.play("ui_cancel", 1.25)
 		return
 	true_hull[target] = int(true_hull[target]) - int(b["damage"])
 	if b["soften_from"] != "":
@@ -463,7 +481,8 @@ func _apply_impact(b: Dictionary) -> void:
 		"pos": point(mechs[target], "hull"),
 		"age": 0.0
 	})
-	SoundManager.play("cannon_fire", randf_range(0.9, 1.08))
+	if not _fast_forwarding:
+		SoundManager.play("cannon_fire", randf_range(0.9, 1.08))
 
 # ---------------------------------------------------------------- helpers for animations
 func fx(c: Callable) -> void:
@@ -728,7 +747,8 @@ func _draw_menu() -> void:
 		if not in_tech_submenu:
 			BattleFX.panel(self, CMD_BOX_RECT)
 			for i in COMMANDS.size():
-				var disabled: bool = (i == 3 and coa_side == "def" and session != null and not session.can_defender_retreat)
+				var disabled: bool = (i == 3 and coa_side == "def" and session != null and not session.can_defender_retreat) \
+					or (i == 2 and session != null and session.get_combatant(coa_side).defending)
 				var col := C_DIM if disabled else C_NAME
 				PixelFont.draw_text(self, COMMANDS[i], Vector2(130, _cmd_row_y(i)), col)
 			if int(clock / 0.2) % 2 == 0:

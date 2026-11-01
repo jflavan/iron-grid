@@ -117,7 +117,7 @@ func _holder_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 				return
 	_player_policy_step(bf, map_def, stats)
 
-## Competent commander: mirrors the Syndicate AI's scoring (TacticalBot) through the human click flow.
+## Competent commander: TacticalBot (AIController's attack/positional scoring with Coalition garrison weights) through the human click flow.
 func _tactical_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Dictionary) -> void:
 	var sel: MechUnit = bf.selected_unit
 	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
