@@ -21,10 +21,12 @@ const C_LABEL := Color("#3ad06a")
 const C_LABEL_DIM := Color("#2b9c4f")
 const C_NAME := Color("#e8b040")
 const C_NUM := Color("#e8e8d0")
+const C_DIM := Color("#586858")
 const C_CURSOR := Color("#ffe080")
 const C_HOSTILE := Color("#e05848")
 const C_GAUGE_BG := Color("#16301c")
 const C_FUEL := Color("#e0a030")
+const C_EN := Color("#38b8f0")
 const C_HULL := Color("#e04838")
 
 const LINE := 10        # line pitch for body text (8px glyphs + 2px leading)
@@ -102,7 +104,7 @@ static func panel(ci: CanvasItem, r: Rect2, border: Color = C_BORDER, alpha: flo
 	var rule := C_RULE if border == C_BORDER else Color(border, 0.35)
 	ci.draw_rect(Rect2(r.position + Vector2(2, 2), Vector2(r.size.x - 4, 1)), _a(rule, alpha))
 
-## Plain inset frame (portrait boxes, cards inside a panel).
+## Plain inset frame (portrait boxes, items inside a panel).
 static func frame(ci: CanvasItem, r: Rect2, border: Color = C_RULE) -> void:
 	r = Rect2(r.position.round(), r.size.round())
 	ci.draw_rect(r, C_FILL)

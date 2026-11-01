@@ -2,7 +2,7 @@ class_name AIController
 extends RefCounted
 
 ## Tactical AI Decision Engine for Kriegs-Syndikat Forces
-## Evaluates reachable tiles, approach vectors, terrain/elevation modifiers, and skirmish forecasts
+## Evaluates reachable tiles, approach vectors, terrain/elevation modifiers, and combat forecasts
 ## to choose between attacking player walkers, capturing objectives, holding high ground, or refueling.
 
 static func choose_best_action(
@@ -20,6 +20,7 @@ static func choose_best_action(
 	var start_tile: GridTileData = grid_map.get_tile(start_pos)
 	var obj_targets := _objective_targets(grid_map, map_def)
 	var deny_tiles := _imminent_defeat_tiles(grid_map, map_def)
+	var garrison: bool = (map_def.strategy_mode == MapDefinition.StrategyMode.OFFENSE)
 
 	# In-place baseline score (holding / entrenching & refueling)
 	var best_action: Dictionary = {
@@ -31,8 +32,8 @@ static func choose_best_action(
 	}
 
 	# On OFFENSE maps (where AI is the entrenched garrison), units standing on Objective Cities
-	# strongly prefer holding their bunker unless they can favorably smash an adjacent intruder.
-	if map_def.strategy_mode == MapDefinition.StrategyMode.OFFENSE and start_tile.is_objective and start_tile.controlled_by == MechData.Faction.AI:
+	# strongly prefer holding their bunker unless they can favorably smash an intruder.
+	if garrison and start_tile.is_objective and start_tile.controlled_by == MechData.Faction.AI:
 		best_action["score"] += 38.0
 
 	for pos_key in reachable.keys():
@@ -54,21 +55,28 @@ static func choose_best_action(
 			)
 			var est_dmg_def: int = forecast["est_dmg_to_def"]
 			var est_dmg_atk: int = forecast["est_dmg_to_atk"]
-			var card_diff: int = int(forecast["atk_cards_held"]) - int(forecast["def_cards_held"])
+			var atk_won: bool = bool(forecast.get("attacker_won", est_dmg_def >= est_dmg_atk))
 
 			var atk_score: float = 45.0
 			atk_score += float(est_dmg_def - est_dmg_atk) * 1.35
-			atk_score += float(card_diff) * 16.0
+			atk_score += 24.0 if atk_won else -20.0
 			atk_score += float(forecast["atk_mod_pct"] - forecast["def_mod_pct"]) * 0.45
 
-			# Huge bonus for finishing off an enemy walker
+			# Huge bonus for finishing off an enemy walker cleanly (scaled if mutual destruction)
 			if est_dmg_def >= target_unit.mech_data.current_armor:
-				atk_score += 130.0
+				atk_score += 130.0 if est_dmg_atk < m_data.current_armor else 35.0
 			# Dislodging a walker that is holding an objective contests the capture before turn end
 			if dest_tile.is_objective and dest_tile.controlled_by != MechData.Faction.AI:
 				atk_score += 30.0
 			if deny_tiles.has(dest_pos):
 				atk_score += 150.0
+			# On OFFENSE maps, prioritize intercepting player walkers threatening the HQ bunkers
+			if garrison:
+				for hq_pos in map_def.hq_positions:
+					var hq_dist: int = absi(dest_pos.x - hq_pos.x) + absi(dest_pos.y - hq_pos.y)
+					if hq_dist <= 3:
+						atk_score += 45.0
+						break
 			# Caution if the counter-attack would destroy the AI walker without a kill trade
 			if est_dmg_atk >= m_data.current_armor and est_dmg_def < target_unit.mech_data.current_armor:
 				atk_score -= 95.0
@@ -188,6 +196,8 @@ static func _score_positional_tile(
 			# On Offense map, AI is the defending garrison -> hold defensive line & stay near objectives
 			score -= min_obj_dist * 7.0
 			score -= min_enemy_dist * 2.2
+			if map_def.hq_positions.has(tile.coords):
+				score += 28.0
 		_:
 			# Pitched Battle -> balance closing on enemies & seizing central objectives
 			score -= min_enemy_dist * 4.8

@@ -21,27 +21,28 @@ const TOP_H := 30
 
 const MANUAL_LINES := [
 	"1. TURN FLOW & FUEL MOBILITY:",
-	"   - Each Turn follows: PLAYER COMMAND PHASE -> SKIRMISH RESOLUTION PHASE -> SYNDICATE AI PHASE.",
+	"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
 	"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
-	"   - [WAIT / REFUEL] entrenches (+15% DEF) & restores +5 Fuel. Starting a turn on a City adds +4 Fuel & +12 Armor.",
+	"   - [WAIT / REFUEL] entrenches (+15% DEF, +5% EVA, +6% Hit, +4 SPD) & restores +5 Fuel / +4 EN (+8 Hull in a City). Cities repair +12 Hull, +4 Fuel, +3 EN each turn.",
 	"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
 	"",
 	"2. TERRAIN CHART (FUEL COST / ATTACK MOD / DEFENSE MOD):",
 	"   - TRANSIT ROAD (ROD):   1 Fuel /  +5% ATK /   0% DEF  (Fastest artery for Heavy Walkers)",
 	"   - OPEN PLAIN (PLN):     2 Fuel /   0% ATK /  +5% DEF  (Standard maneuvering ground)",
-	"   - FORTIFIED CITY (CTY): 2 Fuel / +10% ATK / +25% DEF  (Repairs +12 Armor & +4 Fuel each turn!)",
-	"   - TRENCH TIMBER (TRN):  3 Fuel /  +5% ATK / +15% DEF  (Prepared defensive cover)",
-	"   - RIVER FORD (RIV):     4 Fuel / -15% ATK / -15% DEF  (Bogged down & exposed! Avoid stopping here!)",
-	"   - MOUNTAIN CRAG (MTN):  5 Fuel / +15% ATK / +30% DEF  (Commanding rock bastion)",
+	"   - FORTIFIED CITY (CTY): 2 Fuel / +10% ATK / +25% DEF  (Repairs +12 Hull, +4 Fuel & +3 EN each turn!)",
+	"   - TRENCH TIMBER (TRN):  3 Fuel /  +5% ATK / +15% DEF  (Prepared defensive cover, +8% EVA)",
+	"   - RIVER FORD (RIV):     4 Fuel / -15% ATK / -15% DEF  (Bogged down & exposed, -10% EVA! Avoid stopping here!)",
+	"   - MOUNTAIN CRAG (MTN):  5 Fuel / +15% ATK / +30% DEF  (Commanding rock bastion, +10% EVA)",
 	"",
 	"3. ELEVATION & HIGH GROUND ADVANTAGE:",
-	"   - Attacking from higher elevation down onto an enemy grants +12% Firepower, +10% Armor, and +1 Card Rank per level!",
-	"   - Attacking uphill suffers -10% Firepower and -1 Card Rank per elevation level.",
+	"   - Attacking from higher elevation down onto an enemy grants +12% Firepower, +10% Armor, +4% Hit, +4% EVA and +5% Crit per level!",
+	"   - Attacking uphill suffers -10% Firepower and -4% Hit Accuracy per elevation level (the defender above gains +12% Firepower & Armor).",
 	"",
-	"4. AUTOMATED SKIRMISH RESOLVER (TRIPLE TRIAD + STATS):",
-	"   - Moving onto an enemy-occupied node triggers a Collision & launches the 3x3 Equipment Deck Clash.",
-	"   - Cards compare directional ranks (N, E, S, W) against adjacent cards to flip/capture them!",
-	"   - Matching sums on 2+ adjacent edges triggers a TACTICAL PLUS combo capture!",
+	"4. TURN-BASED RPG COMBAT (ATTACK / TECH / DEFEND / RETREAT):",
+	"   - Moving onto an enemy-occupied node triggers a classic Final Fantasy turn-based battle.",
+	"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +8 SPD; an Entrenched Defender answers with +10.",
+	"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-50% DMG on the enemy's next hit, +2 EN), or RETREAT.",
+	"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands; it cannot be stacked.",
 ]
 
 var root_ctrl: Control
@@ -92,8 +93,8 @@ func trigger_phase_banner(text: String) -> void:
 	_banner_timer = 1.65
 	root_ctrl.queue_redraw()
 
-func show_skirmish_resolution(result: SkirmishEngine.SkirmishResult) -> void:
-	skirmish_modal.start_showdown(result)
+func show_skirmish_session(session: SkirmishEngine.BattleSession) -> void:
+	skirmish_modal.start_session(session)
 
 func trigger_game_over() -> void:
 	show_game_over_modal = true
@@ -253,10 +254,10 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	var is_player: bool = m.faction == MechData.Faction.PLAYER
 	var accent := CrtUI.C_LABEL if is_player else CrtUI.C_HOSTILE
 	var cell := MechSpriteBank.cell_size(m.chassis_id)
-	var deck_h := 12 + m.deck.size() * 22
+	var tech_h := 12 + m.abilities.size() * 20
 	var gear := _gear_note(m)
 	var gear_lines := CrtUI.wrap_lines("MOBILITY: " + gear, rect.size.x - 12).size()
-	rect.size.y = 6 + 40 + cell.y + 8 + 4 + 12 + 46 + gear_lines * CrtUI.LINE + 4 + deck_h + 2
+	rect.size.y = 6 + 40 + cell.y + 8 + 4 + 12 + 57 + gear_lines * CrtUI.LINE + 4 + tech_h + 2
 	CrtUI.panel(root_ctrl, rect, accent)
 
 	var x := rect.position.x + 6
@@ -281,26 +282,31 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	y += 12
 
 	_t("HULL", Vector2(x, y), CrtUI.C_LABEL)
-	_tr("%d/%d R%d" % [m.current_armor, m.max_armor, m.armor_rating], x + w, y, CrtUI.C_NUM)
+	_tr("%d/%d DEF%d" % [m.current_armor, m.max_armor, m.armor_rating], x + w, y, CrtUI.C_NUM)
 	CrtUI.gauge(root_ctrl, Rect2(x, y + 10, w, 3), m.get_armor_ratio(), CrtUI.C_HULL)
-	y += 16
+	y += 15
+	_t("EN", Vector2(x, y), CrtUI.C_LABEL)
+	_tr("%d/%d +%d" % [m.current_energy, m.max_energy, m.passive_energy_regen], x + w, y, CrtUI.C_NUM)
+	CrtUI.gauge(root_ctrl, Rect2(x, y + 10, w, 3), m.get_energy_ratio(), CrtUI.C_EN)
+	y += 15
 	_t("FUEL", Vector2(x, y), CrtUI.C_LABEL)
 	_tr("%d/%d +%d" % [m.current_fuel, m.max_fuel, m.passive_refuel], x + w, y, CrtUI.C_NUM)
 	CrtUI.gauge(root_ctrl, Rect2(x, y + 10, w, 3), m.get_fuel_ratio(), CrtUI.C_FUEL)
-	y += 16
-	_t("FIRE %d" % m.firepower, Vector2(x, y), CrtUI.C_LABEL)
-	_tr("POS %d,%d" % [m.grid_pos.x, m.grid_pos.y], x + w, y, CrtUI.C_NUM)
-	y += 14
+	y += 15
+	_t("ATK %d  SPD %d" % [m.firepower, m.speed], Vector2(x, y), CrtUI.C_LABEL)
+	_tr("EVA %d%%" % m.evasion, x + w, y, CrtUI.C_NUM)
+	y += 12
 	y = CrtUI.paragraph(root_ctrl, "MOBILITY: " + gear, Vector2(x, y), w, CrtUI.C_LABEL_DIM) + 4
 
-	_t("DECK", Vector2(x, y), CrtUI.C_LABEL)
-	_tr("DMG/SHD", x + w, y, CrtUI.C_LABEL_DIM)
+	_t("TECH SYSTEMS", Vector2(x, y), CrtUI.C_LABEL)
+	_tr("COST/CAT", x + w, y, CrtUI.C_LABEL_DIM)
 	y += 12
-	for c: EquipmentCard in m.deck:
-		_t(CrtUI.fit(c.card_name, w), Vector2(x, y), CrtUI.C_NAME)
-		_t("%s %s %s %s" % [EquipmentCard.format_rank(c.top), EquipmentCard.format_rank(c.right), EquipmentCard.format_rank(c.bottom), EquipmentCard.format_rank(c.left)], Vector2(x, y + 10), CrtUI.C_LABEL)
-		_tr("%d/%d" % [c.damage_rating, c.shield_rating], x + w, y + 10, CrtUI.C_NUM)
-		y += 22
+	for ab: CombatAbility in m.abilities:
+		_t(CrtUI.fit(ab.ability_name, w), Vector2(x, y), CrtUI.C_NAME)
+		_t("%d EN" % ab.energy_cost, Vector2(x, y + 9), CrtUI.C_EN)
+		var cat_spec := "X%.2f" % ab.power_multiplier if ab.category == "WEAPON" else ab.category
+		_tr(cat_spec, x + w, y + 9, CrtUI.C_NUM)
+		y += 20
 
 func _gear_note(m: MechData) -> String:
 	if m.amphibious_gear:
@@ -370,8 +376,8 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 		_t("ENEMY MOD", Vector2(fx, fy), CrtUI.C_HOSTILE)
 		_tr("%+d%% FP%d" % [int(current_forecast["def_mod_pct"]), int(current_forecast["def_eff_fp"])], fr, fy, CrtUI.C_NUM)
 		fy += 11
-		_t("CARDS", Vector2(fx, fy), CrtUI.C_LABEL)
-		_tr("%d VS %d" % [int(current_forecast["atk_cards_held"]), int(current_forecast["def_cards_held"])], fr, fy, CrtUI.C_NUM)
+		_t("INITIATIVE", Vector2(fx, fy), CrtUI.C_LABEL)
+		_tr(CrtUI.fit(str(current_forecast.get("first_striker", "ATK")), 78), fr, fy, CrtUI.C_CURSOR)
 		fy += 11
 		_t("EST DMG/RETURN", Vector2(fx, fy), CrtUI.C_LABEL)
 		_tr("%d/%d" % [int(current_forecast["est_dmg_to_def"]), int(current_forecast["est_dmg_to_atk"])], fr, fy, CrtUI.C_NUM)

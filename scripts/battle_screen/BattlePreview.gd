@@ -4,8 +4,8 @@ extends Node
 ## Run: godot --path . res://scenes/dev/BattlePreview.tscn
 ##   Left/Right  attacker chassis      Up/Down  defender chassis
 ##   T  terrain    E  elevation (attacker high/level/low)    F  swap factions
-##   D  low-hull defender (destruction ending)    1-6  jump to beat    Enter  replay
-##   S  1x/2x speed (BattleScreen)    Space  skip / restart after the result
+##   D  low-hull defender (destruction ending)    I  toggle interactive vs playback
+##   S  1x/2x speed (BattleScreen)    A  Auto-Pilot    Space  skip / confirm
 
 const CHASSIS := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
 const TERRAINS := [
@@ -19,6 +19,7 @@ var terrain_i := 0
 var elev_mode := 1 # 0 attacker high, 1 level, 2 attacker low
 var atk_faction := 0
 var low_hull := false
+var interactive_mode := true
 var screen: BattleScreen
 var _hud: Label
 
@@ -44,15 +45,19 @@ func _replay(jump_to: int = -1) -> void:
 	var elev_to: int = [1, 1, 3][elev_mode]
 	var from := GridTileData.new(Vector2i(3, 2), TERRAINS[terrain_i], elev_from)
 	var target := GridTileData.new(Vector2i(4, 2), TERRAINS[terrain_i], elev_to)
-	screen.start_showdown(SkirmishEngine.resolve_skirmish(atk, dfn, from, target, false))
+	if interactive_mode and jump_to < 0:
+		screen.start_session(SkirmishEngine.create_session(atk, dfn, from, target, true))
+	else:
+		screen.start_showdown(SkirmishEngine.resolve_skirmish(atk, dfn, from, target, false))
 	if jump_to >= 0:
 		var guard := 0
 		while screen.stage.beat_idx < jump_to and not screen.stage.finished and guard < 20000:
 			screen.stage.advance(1.0 / 60.0)
 			guard += 1
-	_hud.text = "ATK %s  DEF %s  TERRAIN %s  ELEV %s  ATK-FACTION %s%s   [←→ ↑↓ T E F D 1-6 Enter S Space]" % [
+	_hud.text = "ATK %s  DEF %s  TERRAIN %s  ELEV %s  ATK-FACTION %s%s  MODE:%s   [←→ ↑↓ T E F D I 1-6 S A Space]" % [
 		CHASSIS[atk_i], CHASSIS[def_i], BattleLayout.BACKDROP_BY_TERRAIN[TERRAINS[terrain_i]],
-		["high", "level", "low"][elev_mode], ["coalition", "syndikat"][atk_faction], "  LOW-HULL" if low_hull else ""]
+		["high", "level", "low"][elev_mode], ["coalition", "syndikat"][atk_faction],
+		"  LOW-HULL" if low_hull else "", "INTERACTIVE" if interactive_mode else "PLAYBACK"]
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
@@ -63,8 +68,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_RIGHT:
 			atk_i = (atk_i + 1) % CHASSIS.size()
 		KEY_UP:
+			if screen.stage.phase == "command_select":
+				return
 			def_i = (def_i + CHASSIS.size() - 1) % CHASSIS.size()
 		KEY_DOWN:
+			if screen.stage.phase == "command_select":
+				return
 			def_i = (def_i + 1) % CHASSIS.size()
 		KEY_T:
 			terrain_i = (terrain_i + 1) % TERRAINS.size()
@@ -74,8 +83,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			atk_faction = 1 - atk_faction
 		KEY_D:
 			low_hull = not low_hull
-		KEY_ENTER, KEY_KP_ENTER:
-			pass
+		KEY_I:
+			interactive_mode = not interactive_mode
 		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
 			_replay(int(event.keycode - KEY_1))
 			get_viewport().set_input_as_handled()

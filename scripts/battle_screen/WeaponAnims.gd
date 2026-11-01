@@ -3,8 +3,9 @@ extends RefCounted
 
 ## Weapon attack animations. Each runs as a pure function of local time t: it sets the actor and
 ## target poses/effects on their state dictionaries and queues FX draws on the stage.
-## `quick` is the shortened follow-up shot used after an armor/tactical card's effect.
 ## The stage applies the step's damage when local time crosses impact_time() (the first hit).
+## `hit` false (a MISS) plays the shot and its tracers but none of the impact: no explosion,
+## sparks or hit reaction on the target, which dodges instead (BattleStage._animate).
 ## Loading always happens inside the machine and is never shown.
 
 const PROFILES := {
@@ -26,39 +27,37 @@ static func has_anim(card_id: String) -> bool:
 static func _p(card_id: String) -> Dictionary:
 	return PROFILES.get(card_id, PROFILES[DEFAULT])
 
-static func fire_time(card_id: String, quick: bool) -> float:
-	var f: float = _p(card_id)["fire"]
-	return f * 0.3 if quick else f
+static func fire_time(card_id: String) -> float:
+	return float(_p(card_id)["fire"])
 
-static func impact_time(card_id: String, quick: bool) -> float:
-	return fire_time(card_id, quick) + float(_p(card_id)["travel"])
+static func impact_time(card_id: String) -> float:
+	return fire_time(card_id) + float(_p(card_id)["travel"])
 
-static func duration(card_id: String, quick: bool) -> float:
-	var tail: float = _p(card_id)["tail"]
-	return impact_time(card_id, quick) + (tail * 0.65 if quick else tail)
+static func duration(card_id: String) -> float:
+	return impact_time(card_id) + float(_p(card_id)["tail"])
 
-static func run(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: String, t: float, quick: bool) -> void:
+static func run(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: String, t: float, hit: bool = true) -> void:
 	var p := _p(card_id)
-	var fire := fire_time(card_id, quick)
-	var imp := impact_time(card_id, quick)
+	var fire := fire_time(card_id)
+	var imp := impact_time(card_id)
 	var id := card_id if PROFILES.has(card_id) else DEFAULT
 	match String(p["kind"]):
 		"shell":
-			_shell(stage, a, d, id, p, t, fire, imp, quick)
+			_shell(stage, a, d, id, p, t, fire, imp, hit)
 		"mg":
-			_rounds(stage, a, d, id, p, t, fire, imp, "mg")
+			_rounds(stage, a, d, id, p, t, fire, imp, "mg", hit)
 		"burst":
-			_rounds(stage, a, d, id, p, t, fire, imp, "burst")
+			_rounds(stage, a, d, id, p, t, fire, imp, "burst", hit)
 		"flak":
-			_rounds(stage, a, d, id, p, t, fire, imp, "flak")
+			_rounds(stage, a, d, id, p, t, fire, imp, "flak", hit)
 		"lob":
-			_lob(stage, a, d, id, p, t, fire, imp)
+			_lob(stage, a, d, id, p, t, fire, imp, hit)
 		"rockets":
-			_rockets(stage, a, d, id, p, t, fire, imp)
+			_rockets(stage, a, d, id, p, t, fire, imp, hit)
 		"flame":
-			_flame(stage, a, d, id, p, t, fire, imp)
+			_flame(stage, a, d, id, p, t, fire, imp, hit)
 		"ram":
-			_ram(stage, a, d, id, p, t, fire, imp)
+			_ram(stage, a, d, id, p, t, fire, imp, hit)
 
 # ---------------------------------------------------------------- shared building blocks
 static func recoil_pose(dt: float) -> String:
@@ -87,9 +86,9 @@ static func _muzzle(stage: BattleStage, a: Dictionary, id: String) -> Vector2:
 	return stage.point(a, "muzzles/" + id)
 
 # ---------------------------------------------------------------- single heavy shell (88mm, 105mm)
-static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, quick: bool) -> void:
+static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
 	a["pose"] = "brace"
-	if not quick and t >= fire - 0.15 and t < fire - 0.07:
+	if t >= fire - 0.15 and t < fire - 0.07:
 		a["pose"] = "chamber" # external breech jolt only; loading is internal
 	if t >= fire:
 		a["pose"] = recoil_pose(t - fire)
@@ -111,7 +110,7 @@ static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String,
 		var k := (t - fire) / (imp - fire)
 		var pos := muzzle.lerp(target, k) + Vector2(0, -sin(k * PI) * float(p["arc"]))
 		stage.fx(func(ci): BattleFX.tracer_shell(ci, pos, dir))
-	if t >= imp:
+	if hit and t >= imp:
 		var size: float = p["size"]
 		hit_reaction(stage, d, t - imp, size)
 		if t < imp + 0.63:
@@ -119,7 +118,7 @@ static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String,
 			stage.fx(func(ci): BattleFX.explosion(ci, target, k, size))
 
 # ---------------------------------------------------------------- multi-round fire (MG, autocannon, flak)
-static func _rounds(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, style: String) -> void:
+static func _rounds(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, style: String, hit: bool) -> void:
 	var n: int = p["rounds"]
 	var interval: float = p["interval"]
 	var travel: float = p["travel"]
@@ -154,7 +153,7 @@ static func _rounds(stage: BattleStage, a: Dictionary, d: Dictionary, id: String
 			else:
 				stage.fx(func(ci): BattleFX.tracer_shell(ci, pos, dir, 6))
 		var hit_t := t0 + travel
-		if t >= hit_t:
+		if hit and t >= hit_t:
 			hit_count += 1
 			var kk := (t - hit_t) / 0.4
 			if kk < 1.0:
@@ -167,14 +166,14 @@ static func _rounds(stage: BattleStage, a: Dictionary, d: Dictionary, id: String
 						BattleFX.sparks(ci, hp, kk, 6, 14.0, i))
 				else:
 					stage.fx(func(ci): BattleFX.explosion(ci, hp, kk, 0.6))
-	if t >= imp:
+	if hit and t >= imp:
 		hit_reaction(stage, d, t - imp, 0.7 if style == "mg" else 0.9)
 		# keep the target jittering while later rounds land
 		if hit_count > 1 and t < last_shot + travel + 0.1:
 			d["offset"] += Vector2(1 if int(t / 0.04) % 2 == 0 else -1, 0)
 
 # ---------------------------------------------------------------- 210mm Mörser lob
-static func _lob(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float) -> void:
+static func _lob(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
 	a["pose"] = "brace"
 	if t >= fire:
 		a["pose"] = recoil_pose((t - fire) * 0.7)
@@ -198,7 +197,7 @@ static func _lob(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p
 			BattleFX.blob(ci, pos, 3, BattleFX.OUTLINE)
 			BattleFX.blob(ci, pos, 2, BattleFX.SHELL)
 			ci.draw_rect(Rect2(pos.round() - Vector2(1, 1), Vector2(1, 1)), Color.WHITE))
-	if t >= imp:
+	if hit and t >= imp:
 		hit_reaction(stage, d, t - imp, 1.6)
 		if t < imp + 0.9:
 			var k := (t - imp) / 0.9
@@ -208,7 +207,7 @@ static func _lob(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p
 				BattleFX.explosion(ci, target, k, 1.6))
 
 # ---------------------------------------------------------------- Nebelwerfer rocket salvo
-static func _rockets(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, _imp: float) -> void:
+static func _rockets(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, _imp: float, hit: bool) -> void:
 	var n: int = p["rounds"]
 	var interval: float = p["interval"]
 	var travel: float = p["travel"]
@@ -238,17 +237,17 @@ static func _rockets(stage: BattleStage, a: Dictionary, d: Dictionary, id: Strin
 				ci.draw_rect(Rect2(pos.round() - Vector2(2, 2), Vector2(5, 4)), BattleFX.OUTLINE)
 				ci.draw_rect(Rect2(pos.round() - Vector2(1, 1), Vector2(3, 2)), BattleFX.SHELL))
 		var hit_t := t0 + travel
-		if t >= hit_t and t < hit_t + 0.5:
+		if hit and t >= hit_t and t < hit_t + 0.5:
 			var k := (t - hit_t) / 0.5
 			stage.fx(func(ci): BattleFX.explosion(ci, aim, k, 0.8))
 	var first := fire + travel
-	if t >= first:
+	if hit and t >= first:
 		hit_reaction(stage, d, t - first, 1.1)
 		if t < first + n * interval:
 			d["offset"] += Vector2(2 if int(t / 0.05) % 2 == 0 else -2, 0)
 
 # ---------------------------------------------------------------- Thermite flame lance
-static func _flame(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float) -> void:
+static func _flame(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
 	a["pose"] = "brace"
 	var dir: int = a["dir"]
 	var nozzle := _muzzle(stage, a, id)
@@ -275,7 +274,7 @@ static func _flame(stage: BattleStage, a: Dictionary, d: Dictionary, id: String,
 			for s in 6:
 				var hp := nozzle.lerp(target, (s + 0.5) / 6.0 * reach) + Vector2(sin(t * 23.0 + s) * 2.0, -8 - (s % 3) * 2)
 				ci.draw_rect(Rect2(hp.round(), Vector2(1, 1)), Color(1, 0.9, 0.6, 0.5)))
-	if t >= imp:
+	if hit and t >= imp:
 		hit_reaction(stage, d, t - imp, 0.8)
 		if t < stream_end + 0.9:
 			var k := (t - imp) / (stream_end + 0.9 - imp)
@@ -286,7 +285,7 @@ static func _flame(stage: BattleStage, a: Dictionary, d: Dictionary, id: String,
 					BattleFX.blob(ci, ep, int(3 * (1.0 - ph)) + 1, BattleFX.FIRE if ph > 0.4 else BattleFX.FLASH_ORANGE))
 
 # ---------------------------------------------------------------- Hydraulic pile-bunker ram
-static func _ram(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float) -> void:
+static func _ram(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
 	var dir: int = a["dir"]
 	var tip_rest := stage.point(a, "muzzles/" + id)
 	var target := stage.point(d, "glacis")
@@ -312,7 +311,7 @@ static func _ram(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p
 		stage.fx(func(ci):
 			ci.draw_rect(Rect2(tip.x - (0 if dir > 0 else 16), tip.y - 1, 16, 3), Color.WHITE)
 			BattleFX.blob(ci, tip, 6, BattleFX.FLASH_YELLOW))
-	if t >= imp:
+	if hit and t >= imp:
 		hit_reaction(stage, d, t - imp, 1.3)
 		if t < imp + 0.5:
 			var k := (t - imp) / 0.5

@@ -30,7 +30,7 @@ for m in range(3):
     rs=[r for r in rows if r['map']==m and r['variant']=='full']
     t=lambda k,i: sum(r[k][i] for r in rs)
     print(f"  {MAPS[m]:34s} entrench P/AI {t('entrench',0)}/{t('entrench',1)}  +8 patch P/AI {t('patch_heal',0)}/{t('patch_heal',1)}  +12 upkeep P/AI {t('upkeep_heal',0)}/{t('upkeep_heal',1)}")
-print("\n== Fights (full): attacker side, win %, dmg dealt/taken, entrenched defenders ==")
+print("\n== Fights (full): attacker side, live win %, live dmg dealt/taken, entrenched defenders (forecast with vs without entrenchment) ==")
 for m in range(3):
     sk=[s for r in rows if r['map']==m and r['variant']=='full' for s in r['skirmishes']]
     for fac,name in ((0,'AI attacks'),(1,'Player attacks')):
@@ -40,5 +40,5 @@ for m in range(3):
         line=f"  {MAPS[m]:34s} {name:15s} n={n:3d} atk win {sum(s['atk_won'] for s in ss)/n:.0%} dmg {sum(s['dmg_def'] for s in ss)/n:3.0f}/{sum(s['dmg_atk'] for s in ss)/n:3.0f}  vs entrenched {len(es)}"
         if es:
             k=len(es)
-            line+=f" -> dmg taken cut {sum(s['cf_dmg_def']-s['dmg_def'] for s in es)/k:.0f} of {sum(s['cf_dmg_def'] for s in es)/k:.0f}, counter +{sum(s['dmg_atk']-s['cf_dmg_atk'] for s in es)/k:.0f}, clashes flipped {sum(s['cf_atk_won'] and not s['atk_won'] for s in es)}, defenders saved {sum(s['cf_def_dead'] and not s['def_dead'] for s in es)}, attackers killed {sum(s['atk_dead'] and not s['cf_atk_dead'] for s in es)}"
+            line+=f" -> dmg taken cut {sum(s['cf_dmg_def']-s['fc_dmg_def'] for s in es)/k:.0f} of {sum(s['cf_dmg_def'] for s in es)/k:.0f}, counter +{sum(s['fc_dmg_atk']-s['cf_dmg_atk'] for s in es)/k:.0f}, clashes flipped {sum(s['cf_atk_won'] and not s['fc_atk_won'] for s in es)}, defenders saved {sum(s['cf_def_dead'] and not s['fc_def_dead'] for s in es)}, attackers killed {sum(s['fc_atk_dead'] and not s['cf_atk_dead'] for s in es)}"
         print(line)

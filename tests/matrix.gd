@@ -9,7 +9,7 @@ func _init() -> void:
 	for tname in terrains:
 		var t = terrains[tname]
 		for ent in [false, true]:
-			var n := 0; var aw := 0; var dd := 0; var da := 0; var dk := 0; var ak := 0; var ac := 0; var dc := 0
+			var n := 0; var aw := 0; var dd := 0; var da := 0; var dk := 0; var ak := 0; var rnds := 0
 			for a in ids:
 				for d in ids:
 					var am: MechData = gs.create_mech_instance(a, MechData.Faction.AI, "A", Vector2i.ZERO, "1")
@@ -17,7 +17,7 @@ func _init() -> void:
 					dm.is_entrenched = ent
 					var r := SkirmishEngine.resolve_skirmish(am, dm, GridTileData.new(Vector2i.ZERO, t[0], 0), GridTileData.new(Vector2i.ONE, t[1], 0), false)
 					n += 1; aw += int(r.attacker_won_clash); dd += r.total_dmg_to_defender; da += r.total_dmg_to_attacker
-					dk += int(r.defender_destroyed); ak += int(r.attacker_destroyed); ac += r.atk_cards_held; dc += r.def_cards_held
-			print("%-9s entrenched=%-5s atk_win %2d/%d  dmg def %5.1f  dmg atk %5.1f  cards %.2f-%.2f  def_killed %d atk_killed %d" % [tname, ent, aw, n, float(dd)/n, float(da)/n, float(ac)/n, float(dc)/n, dk, ak])
+					dk += int(r.defender_destroyed); ak += int(r.attacker_destroyed); rnds += r.rounds_fought
+			print("%-9s entrenched=%-5s atk_win %2d/%d  dmg def %5.1f  dmg atk %5.1f  avg_rnds %.2f  def_killed %d atk_killed %d" % [tname, ent, aw, n, float(dd)/n, float(da)/n, float(rnds)/n, dk, ak])
 	gs.free()
 	quit()

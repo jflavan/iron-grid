@@ -15,7 +15,7 @@ var _chassis_keys: Array[String] = ["vanguard", "goliath", "falke", "donner", "k
 var _anim_time: float = 0.0
 var _scale: int = 2
 var _hot := CrtHotspots.new()
-var _stat_max := {"hull": 1, "armor": 1, "fire": 1, "fuel": 1}
+var _stat_max := {"hull": 1, "en": 1, "armor": 1, "fire": 1, "spd": 1, "fuel": 1}
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -25,8 +25,10 @@ func _ready() -> void:
 	for key in _chassis_keys:
 		var m: MechData = GlobalState.chassis_catalog[key]
 		_stat_max["hull"] = maxi(_stat_max["hull"], m.max_armor)
+		_stat_max["en"] = maxi(_stat_max["en"], m.max_energy)
 		_stat_max["armor"] = maxi(_stat_max["armor"], m.armor_rating)
 		_stat_max["fire"] = maxi(_stat_max["fire"], m.firepower)
+		_stat_max["spd"] = maxi(_stat_max["spd"], m.speed)
 		_stat_max["fuel"] = maxi(_stat_max["fuel"], m.max_fuel)
 
 func _process(delta: float) -> void:
@@ -108,7 +110,7 @@ func _draw() -> void:
 	# Header
 	CrtUI.panel(self, Rect2(6, 6, v.x - 12, 30))
 	CrtUI.text(self, "OPERATION: IRON GRID", Vector2(16, 12), CrtUI.C_NAME)
-	CrtUI.text(self, "DIESELPUNK ISOMETRIC TACTICAL WARFARE // AUTOMATED TRIPLE-TRIAD SKIRMISH RESOLVER", Vector2(16, 23), CrtUI.C_LABEL_DIM)
+	CrtUI.text(self, "DIESELPUNK ISOMETRIC TACTICAL WARFARE // TURN-BASED RPG COMBAT ENGINE", Vector2(16, 23), CrtUI.C_LABEL_DIM)
 	var exit_r := Rect2(v.x - 66, 9, 54, 12)
 	CrtUI.text_right(self, "EXIT", v.x - 16, 12, _row_color("exit", false))
 	if _hot.hovered == "exit":
@@ -216,34 +218,37 @@ func _draw_hangar(p: Rect2) -> void:
 
 	var y := port.end.y + 6
 	CrtUI.text(self, CrtUI.fit("%s // %s" % [mech.unit_name, mech.chassis_class], w), Vector2(x, y), CrtUI.C_NAME)
-	y += 14
+	y += 12
 	var half := w / 2.0
 	_stat(Rect2(x, y, half - 6, 8), "HULL", mech.max_armor, _stat_max["hull"], CrtUI.C_HULL)
-	_stat(Rect2(x + half + 6, y, half - 6, 8), "ARMOR", mech.armor_rating, _stat_max["armor"], CrtUI.C_LABEL)
-	y += 11
-	_stat(Rect2(x, y, half - 6, 8), "FIRE", mech.firepower, _stat_max["fire"], CrtUI.C_FUEL)
+	_stat(Rect2(x + half + 6, y, half - 6, 8), "EN", mech.max_energy, _stat_max["en"], CrtUI.C_EN, "%d+%d" % [mech.max_energy, mech.passive_energy_regen])
+	y += 10
+	_stat(Rect2(x, y, half - 6, 8), "ATK", mech.firepower, _stat_max["fire"], CrtUI.C_FUEL)
+	_stat(Rect2(x + half + 6, y, half - 6, 8), "DEF", mech.armor_rating, _stat_max["armor"], CrtUI.C_LABEL)
+	y += 10
+	_stat(Rect2(x, y, half - 6, 8), "SPD", mech.speed, _stat_max["spd"], CrtUI.C_CURSOR, "%d E%d%%" % [mech.speed, mech.evasion])
 	_stat(Rect2(x + half + 6, y, half - 6, 8), "FUEL", mech.max_fuel, _stat_max["fuel"], CrtUI.C_FUEL, "%d+%d" % [mech.max_fuel, mech.passive_refuel])
-	y += 14
+	y += 12
 
-	# Deck is pinned to the bottom; the lore fills the space above it.
+	# TECH Systems pinned to the bottom; lore fills the space above it.
 	var card_h := 34
-	var deck_top := p.end.y - 8 - mech.deck.size() * (card_h + 3) - 12
+	var deck_top := p.end.y - 8 - mech.abilities.size() * (card_h + 3) - 12
 	CrtUI.paragraph(self, mech.lore_blurb, Vector2(x, y), w, CrtUI.C_NUM, deck_top - 4)
-	CrtUI.text(self, "EQUIPMENT DECK", Vector2(x, deck_top), CrtUI.C_LABEL)
-	CrtUI.text_right(self, "N E S W  DMG/SHD", right, deck_top, CrtUI.C_LABEL_DIM)
-	for i in mech.deck.size():
-		var c: EquipmentCard = mech.deck[i]
+	CrtUI.text(self, "TECH SYSTEMS", Vector2(x, deck_top), CrtUI.C_LABEL)
+	CrtUI.text_right(self, "COST  POWER/ACC", right, deck_top, CrtUI.C_LABEL_DIM)
+	for i in mech.abilities.size():
+		var ab: CombatAbility = mech.abilities[i]
 		var cr := Rect2(x, deck_top + 12 + i * (card_h + 3), w, card_h)
 		CrtUI.frame(self, cr)
-		CrtUI.text(self, CrtUI.fit(c.card_name, w - 80), cr.position + Vector2(5, 4), CrtUI.C_NAME)
-		CrtUI.text_right(self, c.category, cr.end.x - 5, cr.position.y + 4, CrtUI.C_LABEL_DIM)
-		CrtUI.text(self, CrtUI.fit(c.description, w - 10), cr.position + Vector2(5, 14), CrtUI.C_NUM)
-		var ranks := "%s %s %s %s" % [EquipmentCard.format_rank(c.top), EquipmentCard.format_rank(c.right), EquipmentCard.format_rank(c.bottom), EquipmentCard.format_rank(c.left)]
-		CrtUI.text(self, ranks, cr.position + Vector2(5, 24), CrtUI.C_LABEL)
-		CrtUI.text_right(self, "%d/%d" % [c.damage_rating, c.shield_rating], cr.end.x - 5, cr.position.y + 24, CrtUI.C_NUM)
+		CrtUI.text(self, CrtUI.fit(ab.ability_name, w - 80), cr.position + Vector2(5, 4), CrtUI.C_NAME)
+		CrtUI.text_right(self, ab.category, cr.end.x - 5, cr.position.y + 4, CrtUI.C_LABEL_DIM)
+		CrtUI.text(self, CrtUI.fit(ab.description, w - 10), cr.position + Vector2(5, 14), CrtUI.C_NUM)
+		CrtUI.text(self, "%d EN" % ab.energy_cost, cr.position + Vector2(5, 24), CrtUI.C_EN)
+		var spec_txt := "X%.2f  ACC %d%%" % [ab.power_multiplier, ab.accuracy] if ab.category == "WEAPON" else "SUPPORT / BUFF"
+		CrtUI.text_right(self, spec_txt, cr.end.x - 5, cr.position.y + 24, CrtUI.C_LABEL)
 
 func _stat(r: Rect2, label: String, value: int, max_value: int, col: Color, value_text: String = "") -> void:
 	CrtUI.text(self, label, r.position, CrtUI.C_LABEL)
 	var vtxt := value_text if value_text != "" else str(value)
-	CrtUI.gauge(self, Rect2(r.position.x + 36, r.position.y + 3, r.size.x - 36 - PixelFont.text_width(vtxt) - 6, 3), float(value) / float(max_value), col)
+	CrtUI.gauge(self, Rect2(r.position.x + 30, r.position.y + 3, r.size.x - 30 - PixelFont.text_width(vtxt) - 6, 3), float(value) / float(max_value), col)
 	CrtUI.text_right(self, vtxt, r.end.x, r.position.y, CrtUI.C_NUM)

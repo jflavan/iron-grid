@@ -100,18 +100,22 @@ static func exhaust(ci: CanvasItem, p: Vector2, t: float, seed: float, dir: int)
 static func shadow(ci: CanvasItem, cx: float, cy: float, rw: int) -> void:
 	ellipse(ci, Vector2(cx, cy), rw, 4, Color(0.08, 0.09, 0.04, 0.45))
 
-## FF6-style bouncing damage number; age in seconds.
-static func damage_number(ci: CanvasItem, value: int, p: Vector2, age: float) -> void:
+## FF6-style bouncing damage number or status popup ("MISS", "CRIT"); age in seconds.
+static func damage_number(ci: CanvasItem, value: int, p: Vector2, age: float, label: String = "", is_crit: bool = false) -> void:
 	var k := age / 1.2
 	var bounce := 0.0
 	if k < 0.35:
 		bounce = absf(sin(k / 0.35 * PI)) * 14.0
 	elif k < 0.5:
 		bounce = absf(sin((k - 0.35) / 0.15 * PI)) * 4.0
-	var text := str(value)
+	var text := label if label != "" else str(value)
+	var col := FLASH_YELLOW if is_crit else (Color("#a8c0b0") if label == "MISS" else Color.WHITE)
 	var pos := Vector2(roundf(p.x - PixelFont.text_width(text)), roundf(p.y - 30.0 - bounce))
 	ci.draw_set_transform(pos, 0.0, Vector2(2, 2))
 	for o in [Vector2(-0.5, 0), Vector2(0.5, 0), Vector2(0, -0.5), Vector2(0, 0.5)]:
 		PixelFont.draw_text(ci, text, o, OUTLINE)
-	PixelFont.draw_text(ci, text, Vector2.ZERO, Color.WHITE)
+	PixelFont.draw_text(ci, text, Vector2.ZERO, col)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if is_crit:
+		var cpos := Vector2(roundf(p.x - PixelFont.text_width("CRIT!") * 0.5), roundf(p.y - 40.0 - bounce))
+		PixelFont.draw_text(ci, "CRIT!", cpos, FLASH_ORANGE)

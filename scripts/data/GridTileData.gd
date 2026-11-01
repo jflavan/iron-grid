@@ -110,13 +110,15 @@ func get_attack_modifier_pct() -> int:
 			return 15 # Commanding observation & artillery vantage
 	return 0
 
-## Card rank bonus/penalty applied to directional edges from this terrain.
-func get_card_edge_bonus() -> int:
+## Evasion modifier (%) granted by this terrain in combat.
+func get_evasion_modifier_pct() -> int:
 	match terrain_type:
 		TerrainType.RIVER:
-			return -1
+			return -10
+		TerrainType.FOREST:
+			return 8
 		TerrainType.CITY, TerrainType.MOUNTAIN:
-			return 1
+			return 10
 		_:
 			return 0
 
@@ -133,4 +135,3 @@ func get_tactical_summary() -> String:
 		atk_str,
 		def_str
 	]
-

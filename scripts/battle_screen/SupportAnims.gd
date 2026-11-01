@@ -1,10 +1,9 @@
 class_name SupportAnims
 extends RefCounted
 
-## Armor / tactical card effects (spec §5.4). Each plays during the "support" phase, then the stage
-## fires a quick follow-up shot that carries the step's damage. Effects are self-contained in their
-## own step; defensive ones (ricochet, sidestep, reactive bricks) only *soften* the opponent's next
-## hit — it still lands with the real number, MISS never appears.
+## Armor, Tactical, Defend, and Retreat support animations.
+## Each plays during the "support" phase as a pure FF-style support/status turn (no follow-up shot).
+## Defensive shields (ricochet, sidestep, reactive bricks) soften and animate on the opponent's next hit.
 
 const DURATIONS := {
 	"krupp_plate": 1.0,
@@ -16,18 +15,20 @@ const DURATIONS := {
 	"plunging_comp": 1.4,
 	"enigma_ecm": 1.2,
 	"cmd_override": 1.5,
+	"defend": 0.65,
+	"retreat": 0.75,
 }
 const SLAB_DROP := 0.35
 
-static func has_anim(card_id: String) -> bool:
-	return DURATIONS.has(card_id)
+static func has_anim(ability_id: String) -> bool:
+	return DURATIONS.has(ability_id)
 
-static func duration(card_id: String) -> float:
-	return DURATIONS.get(card_id, 0.6)
+static func duration(ability_id: String) -> float:
+	return DURATIONS.get(ability_id, 0.65)
 
-## Persistent result of a card, applied once when its support phase completes (or on skip).
-static func apply_persistent(_stage: BattleStage, a: Dictionary, card_id: String) -> void:
-	match card_id:
+## Persistent visual result of a support TECH, applied once when its support phase completes (or on skip).
+static func apply_persistent(_stage: BattleStage, a: Dictionary, ability_id: String) -> void:
+	match ability_id:
 		"ferro_bulkhead":
 			a["slab"] = true
 		"anchor_strut":
@@ -36,23 +37,31 @@ static func apply_persistent(_stage: BattleStage, a: Dictionary, card_id: String
 				a["sheet"] = braced
 		"ablative_shield":
 			a["armed"] = true
+		"recon_lock":
+			a["rangefinder_on"] = true
+		"cmd_override":
+			a["mast_on"] = true
+		"enigma_ecm":
+			var foe_side: String = "def" if a["side"] == "atk" else "atk"
+			var foe: Dictionary = _stage.mechs[foe_side]
+			foe["jammed"] = true
 
 ## Reactive bricks detonate on the hit they soften; the spent sheet replaces the intact one.
 static func braced_sheet(a: Dictionary) -> String:
 	return String(MechSpriteBank.meta_for(a["chassis"]).get("variants", {}).get("braced", ""))
 
-static func consume_soften(_stage: BattleStage, target: Dictionary, card_id: String) -> void:
-	if card_id == "ablative_shield" and target.get("armed", false):
+static func consume_soften(_stage: BattleStage, target: Dictionary, ability_id: String) -> void:
+	if ability_id == "ablative_shield" and target.get("armed", false):
 		target["armed"] = false
 		var spent: String = MechSpriteBank.meta_for(target["chassis"]).get("variants", {}).get("spent", "")
 		if spent != "":
 			target["sheet"] = spent
 
-static func run(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: String, t: float) -> void:
-	var dur := duration(card_id)
+static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: String, t: float) -> void:
+	var dur := duration(ability_id)
 	var dir: int = a["dir"]
 	a["pose"] = "brace"
-	match card_id:
+	match ability_id:
 		"krupp_plate":
 			a["pose"] = "angle" if t > 0.15 else "brace"
 			if t > 0.3 and t < 0.85:
@@ -164,10 +173,24 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: Strin
 					var r := Rect2(roundf((BattleStage.W - w) / 2.0), 28, w, 14)
 					BattleFX.panel(ci, r)
 					PixelFont.draw_text(ci, msg, r.position + Vector2(6, 4), Color("#3ad06a")))
+		"defend":
+			a["pose"] = "brace"
+			a["glow"] = Color(0.4, 0.85, 1.0, 0.35 * sin(clampf(t / dur, 0.0, 1.0) * PI))
+			var g := stage.point(a, "glacis")
+			stage.fx(func(ci):
+				var sy := g.y - 14.0 + (t / dur) * 28.0
+				ci.draw_rect(Rect2(g.x - 10, roundf(sy), 20, 2), Color(0.65, 0.95, 1.0, 0.85)))
+		"retreat":
+			var k := clampf(t / dur, 0.0, 1.0)
+			a["pose"] = "brace"
+			a["offset"] += Vector2(roundf(-14.0 * k * dir), 0)
+			var feet := stage.point(a, "feet")
+			stage.fx(func(ci):
+				BattleFX.ellipse(ci, Vector2(feet.x, BattleStage.GROUND_Y), int(8 + k * 18), 3, Color(0.55, 0.47, 0.32, 0.7 * (1.0 - k))))
 
 ## Dotted ballistic arc from the actor's basic weapon to the target (Elevation Ballistics).
 static func draw_plot_arc(stage: BattleStage, a: Dictionary, d: Dictionary, k: float) -> void:
-	var weapon: String = MechSpriteBank.meta_for(a["chassis"]).get("basic_weapon", "")
+	var weapon: String = (a["data"] as MechData).basic_weapon_id
 	var m := stage.point(a, "muzzles/" + weapon)
 	var tgt := stage.point(d, "hull")
 	var arc: float = WeaponAnims.PROFILES.get(weapon, {}).get("arc", 20.0)
@@ -180,9 +203,9 @@ static func draw_plot_arc(stage: BattleStage, a: Dictionary, d: Dictionary, k: f
 				ci.draw_rect(Rect2(p.round(), Vector2(1, 1)), Color("#ffe080")))
 
 ## The soften visual on the impact of the opponent's next hit.
-static func soften(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: String, dt: float) -> void:
+static func soften(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: String, dt: float) -> void:
 	var dir: int = a["dir"]
-	match card_id:
+	match ability_id:
 		"krupp_plate":
 			if dt < 0.5:
 				var g := stage.point(d, "glacis")

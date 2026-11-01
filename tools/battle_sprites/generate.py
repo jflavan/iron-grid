@@ -53,7 +53,6 @@ def write_mech(out, sheet_name, defn, flags=(), braced=False, variants=None):
         "w": w, "h": h,
         "idle_ms": defn["idle_ms"],
         "idle_frames": len(defn.get("idle", poses.DEFAULT_IDLE)),
-        "basic_weapon": defn["basic_weapon"],
         "poses": [n for n, _, _ in table],
         "pose_off": {n: o for n, o, _ in table},
         "pose_gun": {n: g for n, _, g in table},

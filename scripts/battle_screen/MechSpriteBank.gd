@@ -61,7 +61,7 @@ static func pose_offset(chassis: String, pose: String) -> Vector2:
 static func pose_gun(chassis: String, pose: String) -> float:
 	return float(meta_for(chassis).get("pose_gun", {}).get(pose, 0))
 
-## name: "feet" | "hull" | "glacis" | "viewport" | "stacks/<i>" | "muzzles/<card_id>" | "attach/<name>"
+## name: "feet" | "hull" | "glacis" | "viewport" | "stacks/<i>" | "muzzles/<weapon_id>" | "attach/<name>"
 static func anchor(chassis: String, name: String, pose: String, mirrored: bool) -> Vector2:
 	var anchors: Dictionary = meta_for(chassis).get("anchors", {})
 	var parts := name.split("/")
