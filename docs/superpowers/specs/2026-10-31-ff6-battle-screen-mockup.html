@@ -1,0 +1,337 @@
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  canvas.px { width: 100%; image-rendering: pixelated; image-rendering: crisp-edges; display: block; background:#000; }
+</style>
+
+<h2>v6: Sturmjäger — 88mm KwK AP-Shell attack</h2>
+<p class="subtitle">Loops every ~4.6s: command → attack banner → breech chambers (loading is internal) → FIRE (muzzle flash, gun recoil, body kicks back and the legs absorb it, casing ejects) → shell crosses → impact burst, Brenner flashes and shakes → damage number bounces. Click the scene or press <b>Space</b> to pause; while paused, ← / → step 40ms.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Open Plain — Coalition attacker from the west</div>
+  <div class="mockup-body" style="padding:0"><canvas class="px" id="cvA" width="720" height="450" style="max-width:1080px;margin:0 auto"></canvas></div>
+</div>
+
+<script>
+(function(){
+const W = 360, H = 225;
+const OUT = '#16120e';
+const FACTION = {
+  coalition: { hull:['#b4c46a','#6f7f3c','#434d22'], trim:['#f6cc6a','#e0a030','#9a6a18'], glow:'#ffe070' },
+  syndikat:  { hull:['#d4604c','#8e2a26','#541613'], trim:['#a8aeb6','#6d737c','#3e4248'], glow:'#ff5040' },
+};
+const METAL = ['#9aa0a8','#5d636b','#33373d'];
+const DARK  = ['#56594e','#33362e','#1f211c'];
+
+// ---------- sprite builder ----------
+function buildSprite(w, h, parts, fac) {
+  const px = new Array(w*h).fill(null);
+  const pal = { hull: fac.hull, trim: fac.trim, metal: METAL, dark: DARK,
+                glow: [fac.glow,fac.glow,fac.glow], rear: [fac.hull[1],fac.hull[2],'#262a18'] };
+  for (const part of parts) {
+    const c = pal[part.k];
+    const mask = new Uint8Array(w*h);
+    let bx0=w,by0=h,bx1=0,by1=0;
+    let qx0=0,qy0=0,qx1=w-1,qy1=h-1;
+    if (part.r){ [qx0,qy0]=[part.r[0],part.r[1]]; qx1=part.r[0]+part.r[2]; qy1=part.r[1]+part.r[3]; }
+    else if (part.c){ qx0=part.c[0]-part.c[2]-1; qy0=part.c[1]-part.c[2]-1; qx1=part.c[0]+part.c[2]+1; qy1=part.c[1]+part.c[2]+1; }
+    else { qx0=Math.min(...part.p.map(q=>q[0]))-1; qx1=Math.max(...part.p.map(q=>q[0]))+1; qy0=Math.min(...part.p.map(q=>q[1]))-1; qy1=Math.max(...part.p.map(q=>q[1]))+1; }
+    qx0=Math.max(0,Math.floor(qx0)); qy0=Math.max(0,Math.floor(qy0)); qx1=Math.min(w-1,Math.ceil(qx1)); qy1=Math.min(h-1,Math.ceil(qy1));
+    const inside = (x,y)=>{
+      if (part.r){ const [rx,ry,rw,rh]=part.r; return x>=rx&&x<rx+rw&&y>=ry&&y<ry+rh; }
+      if (part.c){ const [cx,cy,r]=part.c; const dx=x+.5-cx, dy=y+.5-cy; return dx*dx+dy*dy<=r*r; }
+      const P=part.p, X=x+.5, Y=y+.5; let ins=false;
+      for(let i=0,j=P.length-1;i<P.length;j=i++){ const [xi,yi]=P[i],[xj,yj]=P[j];
+        if(((yi>Y)!==(yj>Y)) && X < (xj-xi)*(Y-yi)/(yj-yi)+xi) ins=!ins; }
+      return ins;
+    };
+    for (let y=qy0;y<=qy1;y++) for (let x=qx0;x<=qx1;x++) if (inside(x,y)) { mask[y*w+x]=1; bx0=Math.min(bx0,x);by0=Math.min(by0,y);bx1=Math.max(bx1,x);by1=Math.max(by1,y); }
+    if (bx1<bx0) continue;
+    const m=(x,y)=> x>=0&&y>=0&&x<w&&y<h&&mask[y*w+x];
+    const ph = by1-by0+1;
+    for (let y=by0;y<=by1;y++) for (let x=bx0;x<=bx1;x++) {
+      if (!m(x,y)) continue;
+      let col = c[1];
+      const fy = (y-by0)/ph;
+      if (fy>0.62 && ((x+y)&1)) col = c[2];
+      if (fy>0.82) col = c[2];
+      if (!m(x+1,y)) col = c[2];
+      if (!m(x,y+1) || !m(x,y+2)) col = c[2];
+      if (!m(x-1,y)) col = c[0];
+      if (!m(x,y-1)) col = c[0];
+      if (part.c){ const dx=x+.5-part.c[0], dy=y+.5-part.c[1]; col = (dx+dy< -part.c[2]*0.5)?c[0]:(dx+dy>part.c[2]*0.4?c[2]:c[1]);
+        if (Math.round(dx)===-Math.round(part.c[2]*0.4) && Math.round(dy)===-Math.round(part.c[2]*0.4)) col='#f0f0e8'; }
+      px[y*w+x] = col;
+    }
+    (part.pv||[]).forEach(o=>{ const x=bx0+o; for(let y=by0+2;y<=by1-2;y++){ if(m(x,y)&&m(x,y-1)&&m(x,y+1)){ px[y*w+x]=c[2]; if(m(x+1,y)) px[y*w+x+1]=c[0]; } } });
+    (part.ph||[]).forEach(o=>{ const y=by0+o; for(let x=bx0+2;x<=bx1-2;x++){ if(m(x,y)&&m(x-1,y)&&m(x+1,y)){ px[y*w+x]=c[2]; if(m(x,y+1)) px[(y+1)*w+x]=c[0]; } } });
+    if (part.rivet) for (const ry of [by0+3, by1-4]) for (let x=bx0+3;x<=bx1-3;x+=6) {
+      if (m(x,ry)&&m(x+1,ry+1)&&m(x-1,ry)&&m(x+2,ry)) { px[ry*w+x]=c[0]; px[(ry+1)*w+x+1]=c[2]; }
+    }
+  }
+  const out = px.slice();
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
+    if (px[y*w+x]) continue;
+    if ([[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy])=>{const X=x+dx,Y=y+dy; return X>=0&&Y>=0&&X<w&&Y<h&&px[Y*w+X];})) out[y*w+x]=OUT;
+  }
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h; const g=cv.getContext('2d');
+  out.forEach((col,i)=>{ if(col){ g.fillStyle=col; g.fillRect(i%w,(i/w)|0,1,1);} });
+  return cv;
+}
+
+// ---------- leg rig ----------
+const V = { add:(a,b)=>[a[0]+b[0],a[1]+b[1]], sub:(a,b)=>[a[0]-b[0],a[1]-b[1]], mul:(a,s)=>[a[0]*s,a[1]*s],
+            len:a=>Math.hypot(a[0],a[1]), norm:a=>{const l=Math.hypot(a[0],a[1])||1; return [a[0]/l,a[1]/l];}, perp:a=>[-a[1],a[0]] };
+function solveKnee(hip, ankle, Lt, Ls){
+  const d0 = V.sub(ankle,hip); let d = V.len(d0); d = Math.min(d, Lt+Ls-0.01);
+  const u = V.norm(d0), a = (Lt*Lt - Ls*Ls + d*d)/(2*d), hh = Math.sqrt(Math.max(0, Lt*Lt - a*a));
+  const P = V.add(hip, V.mul(u,a)), n = V.perp(u);
+  const k1 = V.add(P, V.mul(n,hh)), k2 = V.sub(P, V.mul(n,hh));
+  return k1[0] > k2[0] ? k1 : k2;  // knee bends forward (+x, the facing direction)
+}
+function bone(p1, p2, w1, w2, ext){
+  const u = V.norm(V.sub(p2,p1)), n = V.perp(u);
+  const a = V.sub(p1, V.mul(u,ext)), b = V.add(p2, V.mul(u,ext));
+  return [V.add(a,V.mul(n,w1)), V.add(b,V.mul(n,w2)), V.sub(b,V.mul(n,w2)), V.sub(a,V.mul(n,w1))];
+}
+// leg def: hip / knee / ankle in rest pose; lengths are derived from the rest pose
+function legParts(L, off){
+  const hip = V.add(L.hip, off);
+  const Lt = V.len(V.sub(L.knee,L.hip)), Ls = V.len(V.sub(L.ankle,L.knee));
+  const knee = solveKnee(hip, L.ankle, Lt, Ls);
+  const parts = [];
+  parts.push({p:L.foot, k:'dark'});
+  if (L.toe) parts.push({r:L.toe, k:'metal'});
+  parts.push({p:bone(knee, L.ankle, L.sw, L.sw+1, 1), k:L.k});
+  parts.push({c:[L.ankle[0], L.ankle[1]-1, 3], k:'dark'});
+  parts.push({p:bone(hip, knee, L.tw, L.tw-1, 2), k:L.k});
+  if (L.piston){
+    const tu = V.norm(V.sub(knee,hip)), su = V.norm(V.sub(L.ankle,knee));
+    const tn = V.perp(tu), sn = V.perp(su);
+    const fwdT = tn[0] > 0 ? tn : V.mul(tn,-1), fwdS = sn[0] > 0 ? sn : V.mul(sn,-1);
+    const p1 = V.add(V.add(hip, V.mul(V.sub(knee,hip),0.35)), V.mul(fwdT, L.tw+1.5));
+    const p2 = V.add(V.add(knee, V.mul(V.sub(L.ankle,knee),0.55)), V.mul(fwdS, L.sw+1.5));
+    parts.push({p:bone(p1,p2,1,1,0), k:'metal'});
+    parts.push({c:[p1[0],p1[1],1.6], k:'dark'});
+  }
+  parts.push({c:[knee[0], knee[1], L.kr], k:'metal'});
+  return parts;
+}
+function shiftPart(p, o){
+  if (p.r) return {...p, r:[p.r[0]+o[0], p.r[1]+o[1], p.r[2], p.r[3]]};
+  if (p.c) return {...p, c:[p.c[0]+o[0], p.c[1]+o[1], p.c[2]]};
+  return {...p, p:p.p.map(q=>[q[0]+o[0], q[1]+o[1]])};
+}
+function framePartsFor(def, off, gunOff){
+  const out = []; gunOff = gunOff||0;
+  for (const p of def.parts){
+    if (p.leg !== undefined) out.push(...legParts(def.legs[p.leg], off));
+    else if (p.grp==='gun') out.push(shiftPart(p, [off[0]+gunOff, off[1]]));
+    else if (p.grp==='turret') out.push(shiftPart(p, [off[0]+Math.round(gunOff/3), off[1]]));
+    else out.push(shiftPart(p, off));
+  }
+  return out;
+}
+const _cache = {};
+function poseSprite(name, def, fac, off, gunOff, mirror){
+  const key = name+'|'+off.join(',')+'|'+gunOff;
+  if (!_cache[key]){ const s = buildSprite(def.w, def.h, framePartsFor(def, off, gunOff), fac); _cache[key] = mirror?flip(s):s; }
+  return _cache[key];
+}
+function whiteOf(img){ if (img.__w) return img.__w;
+  const c=document.createElement('canvas'); c.width=img.width; c.height=img.height; const g=c.getContext('2d');
+  g.drawImage(img,0,0); g.globalCompositeOperation='source-atop'; g.fillStyle='#ffffff'; g.fillRect(0,0,c.width,c.height); img.__w=c; return c; }
+
+// ---- KPZ-09 Sturmjäger: 112x100, faces right ----
+const STURM = { w:112, h:100, stacks:[[16,5],[22,10]],
+  legs:[
+    { hip:[42,57], knee:[41,77], ankle:[32,94], tw:6, sw:5, kr:5, k:'rear',
+      foot:[[18,94],[42,94],[45,99],[15,99]] },
+    { hip:[60,57], knee:[68,78], ankle:[64,94], tw:6.5, sw:6, kr:6, k:'hull', piston:true,
+      foot:[[52,94],[80,94],[86,99],[50,99]], toe:[84,96,4,3] },
+  ],
+  parts:[
+  {r:[40,0,1,11],k:'metal',grp:'turret'},
+  {r:[14,8,5,22],k:'metal',ph:[6]}, {r:[12,5,9,3],k:'dark'},
+  {r:[21,12,4,16],k:'metal'}, {r:[20,10,6,2],k:'dark'},
+  {leg:0},
+  {r:[34,52,38,9],k:'metal',rivet:true},
+  {r:[10,32,9,14],k:'dark',ph:[6]},
+  {p:[[22,26],[74,26],[88,40],[86,54],[20,54],[17,34]],k:'hull',rivet:true,pv:[20,40]},
+  {r:[19,50,66,6],k:'dark',rivet:true},
+  {r:[22,41,58,2],k:'trim'},
+  {p:[[28,30],[34,30],[31,36]],k:'trim'},
+  {p:[[38,10],[66,10],[73,16],[73,25],[36,25],[33,16]],k:'hull',rivet:true,pv:[14],grp:'turret'},
+  {r:[45,7,11,3],k:'metal',grp:'turret'}, {r:[60,3,3,7],k:'metal',grp:'turret'}, {r:[59,2,5,2],k:'dark',grp:'turret'},
+  {r:[64,17,6,2],k:'glow',grp:'turret'},
+  {r:[72,13,7,11],k:'metal',ph:[5],grp:'gun'},
+  {r:[79,16,26,4],k:'metal',grp:'gun'},
+  {r:[103,13,8,10],k:'metal',pv:[3],grp:'gun'},
+  {r:[84,42,8,6],k:'metal'}, {r:[92,43,11,2],k:'metal'}, {r:[92,46,9,1],k:'dark'},
+  {leg:1},
+]};
+
+// ---- Sturm-V Brenner: 128x116, faces right (mirrored for the Syndicate side) ----
+const BRENNER = { w:128, h:116, stacks:[[29,1],[37,4]],
+  legs:[
+    { hip:[38,72], knee:[43,88], ankle:[36,107], tw:8, sw:7.5, kr:7, k:'rear',
+      foot:[[18,108],[50,108],[54,115],[14,115]] },
+    { hip:[70,72], knee:[77,89], ankle:[72,107], tw:8.5, sw:8, kr:8, k:'hull', piston:true,
+      foot:[[54,108],[90,108],[96,115],[50,115]], toe:[92,111,5,4] },
+  ],
+  parts:[
+  {r:[26,2,6,24],k:'metal',ph:[8,16]}, {r:[24,0,10,3],k:'dark'},
+  {r:[35,6,5,20],k:'metal'}, {r:[34,4,7,2],k:'dark'},
+  {r:[3,26,11,36],k:'metal',ph:[8,26]}, {r:[13,28,9,32],k:'metal',ph:[8,24]},
+  {r:[2,33,21,2],k:'trim'},
+  {leg:0},
+  {r:[14,60,40,2],k:'dark'},
+  {r:[30,64,54,10],k:'metal',rivet:true},
+  {p:[[18,22],[92,22],[100,34],[98,66],[22,66],[16,40]],k:'hull',rivet:true,pv:[24,52],ph:[20]},
+  {r:[20,49,76,3],k:'trim'},
+  {p:[[30,28],[38,28],[34,36]],k:'trim'},
+  {p:[[44,6],[68,6],[73,12],[73,22],[42,22],[39,12]],k:'hull',rivet:true},
+  {r:[60,12,10,3],k:'glow'}, {r:[48,13,7,1],k:'dark'},
+  {r:[70,40,12,14],k:'rear'},
+  {r:[80,51,40,5],k:'metal',pv:[10,22]},
+  {r:[117,49,7,9],k:'dark'},
+  {r:[124,52,2,3],k:'glow'},
+  {p:[[78,16],[106,18],[111,34],[80,36]],k:'hull',rivet:true},
+  {r:[96,30,14,12],k:'hull'},
+  {r:[99,40,19,26],k:'metal',rivet:true,ph:[12]},
+  {r:[95,44,4,18],k:'metal'},
+  {p:[[118,57],[127,61],[118,65]],k:'metal'},
+  {leg:1},
+]};
+
+function flip(cv){ const c=document.createElement('canvas'); c.width=cv.width; c.height=cv.height;
+  const g=c.getContext('2d'); g.translate(cv.width,0); g.scale(-1,1); g.drawImage(cv,0,0); return c; }
+
+// knee-bend idle cycle: body offset [lean forward, sink] per frame
+const CYCLE = { sturm: [[0,0],[0,1],[1,2],[1,3],[1,2],[0,1]],
+                brenner: [[0,0],[0,1],[1,2],[1,4],[1,3],[0,1]] };
+function bakeFrames(def, fac, cyc, mirror){
+  return cyc.map(off=>{ const s = buildSprite(def.w, def.h, framePartsFor(def, off), fac); return { img: mirror?flip(s):s, off }; });
+}
+const framesA = bakeFrames(STURM, FACTION.coalition, CYCLE.sturm, false);
+const framesB = bakeFrames(BRENNER, FACTION.syndikat, CYCLE.brenner, true);
+
+// ---------- backdrop ----------
+function rng(seed){ return function(){ seed|=0; seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed);
+  t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function lerpHex(a,b,t){ const ch=s=>[(s>>16)&255,(s>>8)&255,s&255]; const A=ch(parseInt(a.slice(1),16)),B=ch(parseInt(b.slice(1),16));
+  return 'rgb('+A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(',')+')'; }
+function bands(g,y0,y1,c0,c1,steps){ const hh=y1-y0;
+  for(let y=y0;y<y1;y++){ const f=(y-y0)/hh*steps,b=Math.floor(f),fr=f-b;
+    for(let x=0;x<W;x++){ const nx=fr>0.75&&((x+y)&1); g.fillStyle=lerpHex(c0,c1,Math.min(1,(b+(nx?1:0))/steps)); g.fillRect(x,y,1,1);} } }
+const bg = document.createElement('canvas'); bg.width=W; bg.height=H;
+(function drawPlain(g){
+  const r=rng(7);
+  bands(g,0,72,'#3c4858','#d0a46c',9);
+  g.fillStyle='#f4dcaa'; for(let y=-9;y<=9;y++){const w=Math.round(Math.sqrt(81-y*y)); g.fillRect(180-w,36+y,w*2,1);}
+  [[120,60],[250,64]].forEach(([sx,sy])=>{ for(let k=0;k<9;k++){ const cx=sx+k*3+Math.round(r()*3), cy=sy-k*6, rad=3+k*0.8;
+    g.fillStyle=k%2?'#5e5a54':'#6c675f'; for(let y=-rad;y<=rad;y++){const w=Math.round(Math.sqrt(rad*rad-y*y)); g.fillRect(cx-w,cy+y,w*2,1);} } });
+  for(let x=0;x<W;x++){ const h=Math.round(66+5*Math.sin(x*0.021)+3*Math.sin(x*0.07+1)); g.fillStyle='#626a5a'; g.fillRect(x,h,1,80-h); }
+  for(let x=0;x<W;x++){ const h=Math.round(74+3*Math.sin(x*0.035+2)+2*Math.sin(x*0.11)); g.fillStyle='#4b5640'; g.fillRect(x,h,1,84-h); }
+  bands(g,82,152,'#7c8648','#465426',6);
+  g.fillStyle='#2e3022'; for(let x=4;x<W;x+=16) g.fillRect(x,86,1,5); g.fillStyle='#55583e'; g.fillRect(0,87,W,1);
+  for(let i=0;i<420;i++){ const x=(r()*W)|0, y=88+((r()**0.7)*62|0); g.fillStyle=r()<0.5?'#3c4820':'#8e9854'; g.fillRect(x,y,1,1); if(y>120&&r()<0.4) g.fillRect(x+1,y-1,1,1); }
+  [[180,146,16],[178,104,9]].forEach(([cx,cy,rw])=>{ const rh=Math.round(rw/3.2);
+    for(let y=-rh;y<=rh;y++){ const w=Math.round(rw*Math.sqrt(1-(y*y)/(rh*rh))); g.fillStyle=y<0?'#2f2a1c':'#3d3624'; g.fillRect(cx-w,cy+y,w*2,1);} g.fillStyle='#9a9a60'; g.fillRect(cx-rw+2,cy+rh,rw*2-4,1); });
+})(bg.getContext('2d'));
+
+function shadow(g,cx,cy,rw){ g.fillStyle='rgba(20,22,10,0.45)'; const rh=4;
+  for(let y=-rh;y<=rh;y++){ const w=Math.round(rw*Math.sqrt(1-(y*y)/(rh*rh))); g.fillRect(cx-w,cy+y,w*2,1);} }
+function puffs(g, x, y, t, seed, dir){ for(let k=0;k<4;k++){ const life=((t/900)+k/4+seed)%1; const px=x+Math.round(life*-6*dir+Math.sin(life*6+k)*2), py=y-Math.round(life*18), rad=1+Math.round(life*3);
+  g.fillStyle = life<0.5?'#6a665e':'#857f74'; g.globalAlpha=1-life*0.8; for(let j=-rad;j<=rad;j++){const w=Math.round(Math.sqrt(rad*rad-j*j)); g.fillRect(px-w,py+j,w*2,1);} } g.globalAlpha=1; }
+
+function win(g,x,y,w,h){ g.fillStyle='#0c100c'; g.fillRect(x,y,w,h); g.fillStyle='#0f150f'; for(let j=1;j<h;j+=2) g.fillRect(x,y+j,w,1);
+  g.fillStyle='#3ad06a'; g.fillRect(x,y,w,1); g.fillRect(x,y+h-1,w,1); g.fillRect(x,y,1,h); g.fillRect(x+w-1,y,1,h);
+  g.fillStyle='#1d5a2f'; g.fillRect(x+2,y+2,w-4,1); }
+
+const art=document.createElement('canvas'); art.width=W; art.height=H; const ag=art.getContext('2d');
+const LOOP = 4600;
+const ease = t=>1-Math.pow(1-Math.max(0,Math.min(1,t)),3);
+const inr = (t,a,b)=>t>=a&&t<b;
+function blob(g,cx,cy,r,col){ g.fillStyle=col; for(let y=-r;y<=r;y++){ const w=Math.round(Math.sqrt(Math.max(0,r*r-y*y))); g.fillRect(Math.round(cx-w),Math.round(cy+y),w*2,1);} }
+function muzzleFlash(g,x,y,f){ // f 0..2
+  const L=[14,10,5][f], Hh=[5,4,2][f];
+  g.fillStyle='#ffb030'; g.fillRect(x, y-Hh, L, Hh*2); g.fillRect(x-2,y-Hh-3,4,Hh*2+6);
+  g.fillStyle='#fff4a0'; g.fillRect(x, y-Hh+2, L-3, Math.max(1,Hh*2-4)); g.fillRect(x+L, y-1, 4-f, 2);
+  g.fillStyle='#ffffff'; g.fillRect(x, y-1, Math.max(2,L-6), 2);
+  if (f===0){ g.fillStyle='#ffd060'; for(const [dx,dy] of [[4,-9],[9,-7],[4,8],[10,6],[16,-3],[17,3]]) g.fillRect(x+dx,y+dy,2,2); }
+}
+function explosion(g,cx,cy,k){ // k 0..1
+  const r = Math.round(3+k*16);
+  if (k<0.15){ blob(g,cx,cy,r+4,'#ffffff'); return; }
+  blob(g,cx-2,cy+1,r,'#3a3530'); blob(g,cx+1,cy-2,Math.round(r*0.85),'#5a5048');
+  if (k<0.7){ blob(g,cx,cy,Math.round(r*0.7*(1-k)+3),'#e05a20'); blob(g,cx,cy,Math.round(r*0.45*(1-k)+2),'#ffb030'); blob(g,cx,cy,Math.round(r*0.2*(1-k)+1),'#fff4a0'); }
+  g.fillStyle='#ffd060'; for(let i=0;i<10;i++){ const a=i*0.63, d=4+k*28; g.fillRect(Math.round(cx+Math.cos(a)*d), Math.round(cy+Math.sin(a)*d*0.8 + k*k*14), 2, 2); }
+}
+let paused=false, pauseT=0, tOffset=0;
+function drawScene(cv, now){
+  const t = paused ? pauseT : (now - tOffset) % LOOP;
+  const g=ag; g.drawImage(bg,0,0);
+  const ax=22, ay=42, bx=216, by=26;
+  const attacking = inr(t,500,3300);
+  // ---- attacker pose ----
+  let off = CYCLE.sturm[Math.floor(now/150)%6], gun = 0;
+  if (attacking) off=[0,1];
+  if (inr(t,1250,1330)) gun = -1;                                    // breech chambers
+  if (t>=1400 && t<2000){ const k=ease((t-1400)/600); gun = Math.round(-6*(1-k)); off=[Math.round(-3*(1-k)), Math.round(1+2*(1-k))]; } // recoil
+  shadow(g, ax+50, 141, 38);
+  g.drawImage(poseSprite('A',STURM,FACTION.coalition,off,gun,false), ax, ay);
+  STURM.stacks.forEach(([sx,sy],i)=>puffs(g, ax+sx+off[0], ay+sy+off[1], now, i*0.37, 1));
+  const MZ = [ax+off[0]+gun+111, ay+off[1]+18];
+  if (inr(t,1200,1400) && Math.floor(t/50)%2) { g.fillStyle='#ffffff'; g.fillRect(ax+off[0]+64+Math.round(gun/3), ay+off[1]+17, 6, 2); } // ready blink
+  if (inr(t,1400,1520)) muzzleFlash(g, MZ[0], MZ[1], Math.min(2,Math.floor((t-1400)/40)));
+  if (inr(t,1450,2600)) { const k=(t-1450)/1150; for(let i=0;i<3;i++){ const kk=Math.max(0,k-i*0.12); blob(g, MZ[0]+4+kk*14+i*3, MZ[1]-kk*16-i*2, Math.round(2+kk*5), kk<0.4?'#8a857c':'#6c675f'); } }
+  if (inr(t,1420,2200)) { const k=(t-1420)/780; const cx=ax+36-k*22, cy=ay+18+(k*k*90-k*30); const fl=Math.floor(t/60)%2;
+    g.fillStyle='#16120e'; g.fillRect(Math.round(cx)-1,Math.round(cy)-1,6,6); g.fillStyle=fl?'#d8a040':'#f0c060'; g.fillRect(Math.round(cx),Math.round(cy),fl?4:2,fl?2:4); } // spent casing
+  // ---- shell flight ----
+  const TGT = [bx+66, by+44];
+  if (inr(t,1420,1720)){ const k=(t-1420)/300, x=Math.round(MZ[0]+(TGT[0]-MZ[0])*k), y=Math.round(MZ[1]+(TGT[1]-MZ[1])*k - Math.sin(k*Math.PI)*6);
+    g.fillStyle='#ffb030'; g.fillRect(x-14,y,12,1); g.fillStyle='#fff4a0'; g.fillRect(x-6,y,6,1);
+    g.fillStyle='#16120e'; g.fillRect(x-1,y-2,7,5); g.fillStyle='#c0c4c8'; g.fillRect(x,y-1,4,3); g.fillStyle='#ffffff'; g.fillRect(x+4,y,1,1); }
+  // ---- defender ----
+  let shake = 0; if (inr(t,1720,2250)) { const k=(t-1720)/530; shake = Math.round(Math.sin(t/22)*3*(1-k)); }
+  let bOff = CYCLE.brenner[(Math.floor(now/210)+2)%6]; if (inr(t,1720,2100)) bOff=[0,2];
+  let bImg = poseSprite('B',BRENNER,FACTION.syndikat,bOff,0,true);
+  if (inr(t,1720,1960) && Math.floor((t-1720)/45)%2===0) bImg = whiteOf(bImg);
+  shadow(g, bx+70, 141, 44); g.drawImage(bImg, bx+shake, by);
+  BRENNER.stacks.forEach(([sx,sy],i)=>puffs(g, bx+shake+BRENNER.w-(sx+bOff[0]), by+sy+bOff[1], now, 0.2+i*0.41, -1));
+  if (inr(t,1720,2350)) explosion(g, TGT[0]+shake, TGT[1], (t-1720)/630);
+  // ---- menus ----
+  const MY=153;
+  win(g,2,MY,108,70); win(g,112,MY,246,70);
+  const showCmd = t<500 || t>=3300;
+  if (showCmd) win(g,116,MY+4,76,62);
+  const bannerOn = inr(t,500,2600);
+  if (bannerOn) win(g,96,4,168,18);
+  const bw=64;
+  g.fillStyle='#16301c'; g.fillRect(286,MY+28,bw,4); g.fillStyle='#e0a030'; g.fillRect(286,MY+28,Math.round(bw*0.62),4);
+  g.fillStyle='#16301c'; g.fillRect(286,MY+48,bw,3); g.fillStyle='#e04838'; g.fillRect(286,MY+48,Math.round(bw*0.82),3);
+  const d=cv.getContext('2d'); d.imageSmoothingEnabled=false; d.drawImage(art,0,0,W*2,H*2);
+  d.font='14px "Press Start 2P", monospace'; d.textBaseline='top';
+  const T=(s,x,y,c)=>{ d.fillStyle=c; d.fillText(s,x*2,y*2); };
+  T('BRENNER',10,MY+10,'#e8b040'); T('KS-RED',10,MY+24,'#3ad06a'); T('PLN 100m',10,MY+52,'#3ad06a');
+  if (showCmd){ ['FIGHT','WEAPON','ARMOR','TACTIC'].forEach((c,i)=>T(c,132,MY+12+i*13,'#e8b040'));
+    if (Math.floor(now/350)%2===0){ d.fillStyle='#ffe080'; const cx=244, cy=(MY+12)*2+1; d.beginPath(); d.moveTo(cx,cy); d.lineTo(cx+12,cy+6); d.lineTo(cx,cy+12); d.closePath(); d.fill(); } }
+  if (bannerOn){ d.font='12px "Press Start 2P", monospace'; d.fillStyle='#e8b040'; const s='88mm KwK AP-SHELL'; d.fillText(s, 360 - d.measureText(s).width/2, 18); d.font='14px "Press Start 2P", monospace'; }
+  T('IRON-1',200,MY+10,'#e8b040'); T('FUEL',200,MY+27,'#3ad06a'); T('8/13',300,MY+34,'#e8e8d0');
+  T('HULL',200,MY+45,'#3ad06a'); T('90/110',300,MY+56,'#e8e8d0');
+  // damage number, FF6-style bounce
+  if (inr(t,1780,3000)){ const k=(t-1780)/1220; const bounce = k<0.35 ? Math.abs(Math.sin(k/0.35*Math.PI))*14 : (k<0.5 ? Math.abs(Math.sin((k-0.35)/0.15*Math.PI))*4 : 0);
+    d.font='20px "Press Start 2P", monospace'; const s='34', x=(TGT[0]-8)*2, y=(TGT[1]-34-bounce)*2;
+    d.fillStyle='#16120e'; for(const [ox,oy] of [[-2,0],[2,0],[0,-2],[0,2]]) d.fillText(s,x+ox,y+oy);
+    d.fillStyle='#ffffff'; d.fillText(s,x,y); d.font='14px "Press Start 2P", monospace'; }
+  if (paused){ d.fillStyle='rgba(0,0,0,0.6)'; d.fillRect(8,8,250,26); d.fillStyle='#3ad06a'; d.font='10px "Press Start 2P", monospace'; d.fillText('PAUSED t='+Math.round(t)+'ms', 14, 16); }
+}
+function togglePause(){ const now=performance.now(); if(!paused){ pauseT=(now-tOffset)%LOOP; paused=true; } else { tOffset = now - pauseT; paused=false; } }
+document.getElementById('cvA').addEventListener('click', togglePause);
+document.addEventListener('keydown', e=>{ if(e.code==='Space'){ e.preventDefault(); togglePause(); } if(paused&&e.code==='ArrowRight'){ pauseT=(pauseT+40)%LOOP; } if(paused&&e.code==='ArrowLeft'){ pauseT=(pauseT-40+LOOP)%LOOP; } });
+const cvA=document.getElementById('cvA');
+function loop(t){ drawScene(cvA,t); requestAnimationFrame(loop); }
+(document.fonts?document.fonts.load('14px "Press Start 2P"'):Promise.resolve()).finally(()=>requestAnimationFrame(loop));
+
+})();
+</script>

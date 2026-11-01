@@ -62,7 +62,7 @@ func _run_one(map_idx: int, policy: String, variant: String) -> void:
 		_check_invariants(bf, map_def)
 		if GlobalState.current_phase == GlobalState.TurnPhase.GAME_OVER:
 			break
-		var modal: SkirmishModal = bf.ui_overlay.skirmish_modal
+		var modal: BattleScreen = bf.ui_overlay.skirmish_modal
 		if modal.visible:
 			if modal._all_steps_done: modal._on_confirm_pressed()
 			else: modal._on_skip_pressed()

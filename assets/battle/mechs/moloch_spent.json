@@ -1,0 +1,160 @@
+{
+ "anchors": {
+  "attach": {},
+  "bricks": [
+   56,
+   30
+  ],
+  "feet": [
+   55,
+   115
+  ],
+  "glacis": [
+   92,
+   36
+  ],
+  "hull": [
+   58,
+   42
+  ],
+  "muzzles": {
+   "pile_bunker": {
+    "grp": "",
+    "p": [
+     127,
+     61
+    ]
+   },
+   "thermite_lance": {
+    "grp": "",
+    "p": [
+     124,
+     53
+    ]
+   }
+  },
+  "stacks": [
+   [
+    29,
+    1
+   ],
+   [
+    37,
+    4
+   ]
+  ],
+  "viewport": [
+   64,
+   13
+  ]
+ },
+ "basic_weapon": "thermite_lance",
+ "braced": false,
+ "h": 116,
+ "idle_frames": 6,
+ "idle_ms": 210,
+ "pose_gun": {
+  "angle": 0,
+  "brace": 0,
+  "chamber": -1,
+  "hit": 0,
+  "idle0": 0,
+  "idle1": 0,
+  "idle2": 0,
+  "idle3": 0,
+  "idle4": 0,
+  "idle5": 0,
+  "lunge": 0,
+  "recoil0": -6,
+  "recoil1": -4,
+  "recoil2": -2,
+  "recoil3": -1,
+  "stagger": 0
+ },
+ "pose_off": {
+  "angle": [
+   -2,
+   2
+  ],
+  "brace": [
+   0,
+   1
+  ],
+  "chamber": [
+   0,
+   1
+  ],
+  "hit": [
+   0,
+   2
+  ],
+  "idle0": [
+   0,
+   0
+  ],
+  "idle1": [
+   0,
+   1
+  ],
+  "idle2": [
+   1,
+   2
+  ],
+  "idle3": [
+   1,
+   4
+  ],
+  "idle4": [
+   1,
+   3
+  ],
+  "idle5": [
+   0,
+   1
+  ],
+  "lunge": [
+   6,
+   1
+  ],
+  "recoil0": [
+   -3,
+   3
+  ],
+  "recoil1": [
+   -2,
+   2
+  ],
+  "recoil2": [
+   -1,
+   2
+  ],
+  "recoil3": [
+   0,
+   1
+  ],
+  "stagger": [
+   1,
+   4
+  ]
+ },
+ "poses": [
+  "idle0",
+  "idle1",
+  "idle2",
+  "idle3",
+  "idle4",
+  "idle5",
+  "brace",
+  "chamber",
+  "recoil0",
+  "recoil1",
+  "recoil2",
+  "recoil3",
+  "hit",
+  "stagger",
+  "lunge",
+  "angle"
+ ],
+ "variants": {},
+ "w": 128
+}
