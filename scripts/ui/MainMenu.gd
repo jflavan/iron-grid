@@ -52,8 +52,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var id := _key_action(event.keycode)
 	if id != "":
-		_activate(id)
+		# Mark it handled first: launching changes scene, which takes this menu out of the tree.
 		get_viewport().set_input_as_handled()
+		_activate(id)
 
 ## The hotspot id a key press stands for on the current screen ("" when the key does nothing here).
 func _key_action(keycode: int) -> String:
