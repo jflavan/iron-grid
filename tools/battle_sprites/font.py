@@ -88,6 +88,6 @@ def write_font(out):
             rows[0][i * 6 + 1] = white
             rows[0][i * 6 + 3] = white
     png.write_png(os.path.join(out, "font", "font5x7.png"), 6 * len(CHARS), 8, rows)
-    with open(os.path.join(out, "font", "font5x7.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(out, "font", "font5x7.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump({"advance": 6, "height": 8, "chars": CHARS}, f, ensure_ascii=False)
         f.write("\n")

@@ -109,6 +109,28 @@ class GeneratorTests(unittest.TestCase):
         w, h = png_size(os.path.join(self.tmp, "font", "font5x7.png"))
         self.assertEqual((w, h), (6 * len(meta["chars"]), 8))
 
+    def test_output_is_platform_independent(self):
+        """Emulate Windows text-mode defaults (CRLF newlines, cp1252 encoding): output must not change."""
+        import builtins
+        import font
+
+        real_open = builtins.open
+
+        def windows_open(file, mode="r", *args, **kwargs):
+            if "b" not in mode:
+                kwargs.setdefault("newline", "\r\n")
+                kwargs.setdefault("encoding", "cp1252")
+            return real_open(file, mode, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as d:
+            generate.open = font.open = windows_open
+            try:
+                generate.generate_all(d)
+            finally:
+                del generate.open
+                del font.open
+            self.assertEqual(all_files(d), all_files(self.tmp))
+
     def test_deterministic(self):
         with tempfile.TemporaryDirectory() as d:
             generate.generate_all(d)

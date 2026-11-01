@@ -61,7 +61,7 @@ def write_mech(out, sheet_name, defn, flags=(), braced=False, variants=None):
         "variants": variants or {},
         "braced": braced,
     }
-    with open(os.path.join(out, "mechs", "%s.json" % sheet_name), "w") as f:
+    with open(os.path.join(out, "mechs", "%s.json" % sheet_name), "w", encoding="utf-8", newline="\n") as f:
         json.dump(meta, f, indent=1, sort_keys=True, ensure_ascii=False)
         f.write("\n")
 
