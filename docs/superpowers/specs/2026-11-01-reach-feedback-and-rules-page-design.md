@@ -1,7 +1,9 @@
 # Out-of-Reach Feedback & Rules of Engagement Page: Design
 
-Date: 2026-11-01. Status: approved for implementation (the user set the goal to proceed); the review
-questions were settled as marked "my call".
+Date: 2026-11-01. Status: implemented on `feat/reach-feedback-rules-page` (see the plan in
+`docs/superpowers/plans/2026-11-01-reach-feedback-and-rules-page.md`). The design-review questions
+were settled as marked "my call". The HUD box shortened its first line to `NEEDS 7F, HAVE 4F` and
+wraps the breakdown between terms so it fits the 140px panel.
 
 ## Why
 
