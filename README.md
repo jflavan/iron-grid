@@ -165,3 +165,15 @@ godot --path .
 godot --headless --path . res://tests/Playtest.tscn          # exit code = number of failures
 PLAYTEST_POLICIES=greedy PLAYTEST_VERBOSE=1 godot --headless --path . res://tests/Playtest.tscn
 ```
+
+## Balance Experiments
+
+`tests/Balance.tscn` plays full missions with switchable entrenchment and City-healing rules (`scripts/battle/BalanceProbe.gd`; the defaults match the shipped rules) and prints one JSON line per mission. `tests/TacticalBot.gd` is a competent Coalition commander that mirrors the Syndicate AI's scoring; `tactical:N` adds seeded variety by picking among near-best moves.
+
+```bash
+BALANCE_VARIANT=full BALANCE_POLICIES=$(python3 -c "print(','.join(f'tactical:{i}' for i in range(1,41)))") \
+  BALANCE_MAPS=0,1,2 godot --headless --path . res://tests/Balance.tscn > out_full.log
+python3 tests/analyze_balance.py out_*.log         # win rates, outcome flips vs full, healing, fight counterfactuals
+godot --headless --path . -s tests/matrix.gd       # every chassis vs every chassis, no fight selection
+godot --headless --path . -s tests/backfire.gd     # setups where entrenching hurts the defender
+```

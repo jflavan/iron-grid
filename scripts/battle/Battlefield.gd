@@ -167,8 +167,9 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 		var tile := grid_map.get_tile(m.grid_pos)
 		if tile != null and tile.terrain_type == GridTileData.TerrainType.CITY:
 			refuel_amt += 4
-			var healed: int = mini(12, m.max_armor - m.current_armor)
+			var healed: int = mini(BalanceProbe.upkeep[int(m.faction)], m.max_armor - m.current_armor)
 			m.current_armor += healed
+			BalanceProbe.upkeep_healed[int(m.faction)] += healed
 			if healed > 0:
 				GlobalState.add_log("%s repaired +%d Armor at City Depot." % [m.callsign, healed])
 		m.current_fuel = mini(m.max_fuel, m.current_fuel + refuel_amt)
@@ -181,8 +182,11 @@ func _entrench_unit(m: MechData) -> int:
 	var gained_fuel: int = mini(5, m.max_fuel - m.current_fuel)
 	m.current_fuel += gained_fuel
 	var td := grid_map.get_tile(m.grid_pos)
+	BalanceProbe.entrench_actions[int(m.faction)] += 1
 	if td != null and td.terrain_type == GridTileData.TerrainType.CITY:
-		m.current_armor = mini(m.max_armor, m.current_armor + 8)
+		var before: int = m.current_armor
+		m.current_armor = mini(m.max_armor, m.current_armor + BalanceProbe.patch[int(m.faction)])
+		BalanceProbe.patch_healed[int(m.faction)] += m.current_armor - before
 	return gained_fuel
 
 func _select_unit(u: MechUnit) -> void:
@@ -378,6 +382,7 @@ func _trigger_skirmish_resolution(attacker: MechUnit, defender: MechUnit, start_
 	var from_tile := grid_map.get_tile(from_coords)
 	var target_tile := grid_map.get_tile(target_coords)
 
+	BalanceProbe.record_skirmish(attacker.mech_data, defender.mech_data, from_tile, target_tile)
 	var result := SkirmishEngine.resolve_skirmish(
 		attacker.mech_data, defender.mech_data, from_tile, target_tile, true
 	)

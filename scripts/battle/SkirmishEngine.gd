@@ -111,7 +111,7 @@ static func resolve_skirmish(
 	res.atk_terrain_mod_pct = from_tile.get_attack_modifier_pct() + target_exposure_bonus
 	
 	# Defender gets defense + attack modifier from contested target tile + entrenchment bonus
-	var entrench_bonus: int = 15 if defender.is_entrenched else 0
+	var entrench_bonus: int = BalanceProbe.def_pct[int(defender.faction)] if defender.is_entrenched else 0
 	res.def_terrain_mod_pct = target_tile.get_defense_modifier_pct() + entrench_bonus
 
 	# Elevation advantage: High ground gives +12% per level; attacking uphill gives -10% per level
@@ -145,7 +145,7 @@ static func resolve_skirmish(
 
 	res.def_card_edge_mod = target_tile.get_card_edge_bonus() + clampi(-res.elev_diff, -2, 2)
 	if defender.is_entrenched:
-		res.def_card_edge_mod += 1
+		res.def_card_edge_mod += BalanceProbe.card[int(defender.faction)]
 	if res.def_effective_firepower >= res.atk_effective_armor + 10:
 		res.def_card_edge_mod += 1
 
