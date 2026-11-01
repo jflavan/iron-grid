@@ -22,8 +22,8 @@ func _generate_all_samples() -> void:
 	_samples["ui_cancel"] = _make_dual_beep(420.0, 260.0, 0.12, 0.3)
 	_samples["mech_step"] = _make_mech_stomp(0.14)
 	_samples["radar_lock"] = _make_dual_beep(880.0, 1320.0, 0.16, 0.35)
-	_samples["card_place"] = _make_tone_burst(340.0, 140.0, 0.09, 0.4, "saw")
-	_samples["card_flip"] = _make_dual_beep(600.0, 960.0, 0.13, 0.38)
+	_samples["tech_activate"] = _make_tone_burst(340.0, 140.0, 0.09, 0.4, "saw")
+	_samples["buff_up"] = _make_dual_beep(600.0, 960.0, 0.13, 0.38)
 	_samples["cannon_fire"] = _make_explosion(0.28, 190.0)
 	_samples["mech_destroy"] = _make_explosion(0.55, 95.0)
 	_samples["phase_shift"] = _make_dual_beep(330.0, 495.0, 0.22, 0.3)
@@ -133,4 +133,3 @@ func _make_explosion(duration: float, start_freq: float) -> AudioStreamWAV:
 	wav.mix_rate = SAMPLE_RATE
 	wav.data = data
 	return wav
-

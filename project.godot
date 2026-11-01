@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Operation: Iron Grid"
-config/description="Dieselpunk Isometric Tactical Mech Strategy & Card-Battler Showdown"
+config/description="Dieselpunk Isometric Tactical Mech Strategy & Classic Turn-Based RPG Combat"
 run/main_scene="res://scenes/MainMenu.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"

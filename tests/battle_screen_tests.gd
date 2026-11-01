@@ -1,6 +1,6 @@
 extends Node
 
-## Battle screen unit tests (sprite bank, font, layout, timeline, screen contract, animations).
+## Battle screen unit tests (sprite bank, font, layout, timeline, interactive FF menu, animations).
 ## Run headless:  godot --headless --path . res://tests/BattleScreenTests.tscn
 ## Exit code is the number of failures (0 = all checks passed).
 
@@ -13,8 +13,8 @@ func _ready() -> void:
 	for t in [
 		"test_sprite_bank_loads", "test_anchor_mirrors", "test_recoil_moves_muzzle",
 		"test_side_from_approach", "test_elevation_offsets", "test_wrap_long_headline",
-		"test_damage_sums", "test_hold_at_one", "test_ai_attacker_panels", "test_followup_flags", "test_capture_text",
-		"test_skip_confirm_reuse", "test_full_playback_finishes",
+		"test_damage_sums", "test_hold_at_one", "test_ai_attacker_panels", "test_pure_support_turns", "test_status_text",
+		"test_skip_confirm_reuse", "test_full_playback_finishes", "test_interactive_session_menu",
 		"test_every_weapon_has_anim", "test_every_support_has_anim", "test_persistent_effects_after_skip",
 		"test_pairings_play_to_result", "test_attachment_textures_cached",
 		"test_mouse_click_skips_then_confirms", "test_viewport_renders_only_while_active",
@@ -47,7 +47,6 @@ func test_anchor_mirrors() -> void:
 	var w: int = int(MechSpriteBank.meta_for("vanguard")["w"])
 	var a := MechSpriteBank.anchor("vanguard", "feet", "idle0", false)
 	var b := MechSpriteBank.anchor("vanguard", "feet", "idle0", true)
-	# a pixel in column x lands in column w - 1 - x under the mirrored draw transform
 	_check(is_equal_approx(b.x, w - 1 - a.x), "mirrored anchor x = w - 1 - x (got %s vs %s)" % [b, a])
 	_check(is_equal_approx(b.y, a.y), "mirrored anchor keeps y")
 
@@ -71,7 +70,7 @@ func test_elevation_offsets() -> void:
 	_check(BattleLayout.elevation_offsets(9) == Vector2i(-12, 0), "offset clamps to 12px")
 
 func test_wrap_long_headline() -> void:
-	var s := "TACTICAL VICTORY (4-2) — IRON-1 (Sturmjäger) DISLODGED KRIEGS-SYNDIKAT WALKER!"
+	var s := "TACTICAL BREAKTHROUGH — IRON-1 (Sturmjäger) DISLODGED KRIEGS-SYNDIKAT WALKER!"
 	var lines := PixelFont.wrap(s, 344)
 	_check(lines.size() > 1, "long headline wraps")
 	for l in lines:
@@ -119,33 +118,36 @@ func test_ai_attacker_panels() -> void:
 	for b in tl.beats:
 		if b["actor"] == "atk":
 			_check(b["command_row"] == -1, "syndikat actions show no command box")
-		elif b["card_type"] in ["BALLISTIC", "ARTILLERY", "THERMAL"]:
-			_check(b["command_row"] == 0, "coalition weapon actions point at FIGHT")
+		else:
+			_check(b["command_row"] in [0, 1, 2, 3], "coalition actions point at a valid command row")
 
-func test_followup_flags() -> void:
+func test_pure_support_turns() -> void:
 	var r := _fight("vanguard", "moloch")
 	var tl := BattleTimeline.build(r)
-	_check(tl.beats[2]["card_id"] == "krupp_plate", "step 2 is Krupp plate")
-	_check(tl.beats[2]["needs_followup"] == true, "armor card needs a follow-up shot")
-	_check(tl.beats[0]["needs_followup"] == false, "weapon card needs no follow-up")
-	_check(tl.beats[2]["command_row"] == 2, "armor card points at ARMOR")
-	_check(tl.beats[3]["soften_from"] == "krupp_plate", "next incoming hit is softened by Krupp")
-	_check(tl.beats[5]["soften_from"] == "", "soften is consumed once")
+	var found_support := false
+	for i in tl.beats.size():
+		var b: Dictionary = tl.beats[i]
+		if b["ability_id"] == "krupp_plate":
+			found_support = true
+			_check(b["is_support_only"] == true, "armor TECH is pure support (no follow-up shot)")
+			_check(b["needs_followup"] == false, "needs_followup is false for pure FF support turns")
+			_check(b["damage"] == 0, "armor TECH deals 0 damage on its own turn")
+			_check(b["command_row"] == BattleTimeline.ROW_TECH, "armor TECH points at TECH command row")
+			if i + 1 < tl.beats.size() and tl.beats[i + 1]["actor"] != b["actor"] and not tl.beats[i + 1]["is_support_only"]:
+				_check(tl.beats[i + 1]["soften_from"] == "krupp_plate", "next incoming hit is softened by Krupp plate")
+	_check(found_support, "Vanguard uses Krupp Plate support TECH")
 
-func test_capture_text() -> void:
+func test_status_text() -> void:
 	var seen := false
-	for pair in [["vanguard", "moloch"], ["kommandant", "falke"], ["donner", "goliath"], ["moloch", "kommandant"]]:
+	for pair in [["vanguard", "moloch"], ["kommandant", "falke"], ["donner", "goliath"]]:
 		var r := _fight(pair[0], pair[1])
 		var tl := BattleTimeline.build(r)
-		for i in r.steps.size():
-			if r.steps[i].flipped_slots.size() > 0:
+		for b in tl.beats:
+			if b["status_text"] != "":
 				seen = true
-				_check(tl.beats[i]["capture_text"] != "", "captures produce text (step %d)" % i)
-			else:
-				_check(tl.beats[i]["capture_text"] == "", "no capture, no text (step %d)" % i)
-	_check(seen, "at least one sampled fight has a capture")
+	_check(seen, "status text appears on support/shield/crit beats")
 
-# ---------------------------------------------------------------- screen contract
+# ---------------------------------------------------------------- screen contract & interactive menu
 func test_skip_confirm_reuse() -> void:
 	var screen := BattleScreen.new()
 	add_child(screen)
@@ -185,12 +187,42 @@ func test_full_playback_finishes() -> void:
 	_check(screen.stage.hull_display["def"] == 0, "destroyed defender shows 0 hull at the end")
 	screen.queue_free()
 
+func test_interactive_session_menu() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "ATK-1", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "DEF-2", Vector2i(4, 2), "d")
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var sess := SkirmishEngine.create_session(atk, dfn, flat, flat, true)
+	screen.start_session(sess)
+	# Advance past intro (0.6s) -> should pause in command_select for player
+	screen.stage.advance(0.75)
+	_check(screen.stage.phase == "command_select", "interactive session pauses in command_select for player")
+	# Move cursor down to TECH (row 1) and open sub-menu
+	screen.stage.move_cursor(1)
+	_check(screen.stage.menu_cursor == 1, "cursor moved to TECH row")
+	screen.stage.confirm_selection()
+	_check(screen.stage.in_tech_submenu == true, "confirming TECH opens the TECH sub-menu")
+	# Cancel sub-menu back to main menu
+	screen.stage.cancel_submenu()
+	_check(screen.stage.in_tech_submenu == false, "cancel_submenu returns to main command menu")
+	# Re-enter TECH sub-menu, select ability 1 (krupp_plate)
+	screen.stage.confirm_selection()
+	screen.stage.move_cursor(1)
+	screen.stage.confirm_selection()
+	_check(screen.stage.phase == "support", "selecting Krupp Plate enters support phase")
+	# Skip remaining battle to end
+	screen._on_skip_pressed()
+	_check(screen._all_steps_done and sess.is_finished, "skip auto-resolves interactive session to completion")
+	screen.queue_free()
+
 # ---------------------------------------------------------------- animations
 func test_every_weapon_has_anim() -> void:
 	var n := 0
-	for id in GlobalState.card_catalog:
-		var card: EquipmentCard = GlobalState.card_catalog[id]
-		if not BattleTimeline.is_weapon(card.category):
+	for id in GlobalState.ability_catalog:
+		var ab: CombatAbility = GlobalState.ability_catalog[id]
+		if not ab.is_weapon():
 			continue
 		n += 1
 		_check(WeaponAnims.has_anim(id), "%s has a dedicated weapon animation" % id)
@@ -199,18 +231,19 @@ func test_every_weapon_has_anim() -> void:
 			var imp := WeaponAnims.impact_time(id, quick)
 			_check(d > 0.0 and imp > 0.0 and imp < d, "%s (quick=%s) impact inside duration" % [id, quick])
 		_check(WeaponAnims.duration(id, true) < WeaponAnims.duration(id, false), "%s follow-up is shorter" % id)
-	_check(n == 9, "nine weapon cards in the catalog, got %d" % n)
+	_check(n == 9, "nine weapon TECHs in the catalog, got %d" % n)
 
 func test_every_support_has_anim() -> void:
 	var n := 0
-	for id in GlobalState.card_catalog:
-		var card: EquipmentCard = GlobalState.card_catalog[id]
-		if BattleTimeline.is_weapon(card.category):
+	for id in GlobalState.ability_catalog:
+		var ab: CombatAbility = GlobalState.ability_catalog[id]
+		if ab.is_weapon():
 			continue
 		n += 1
 		_check(SupportAnims.has_anim(id), "%s has a support animation" % id)
 		_check(SupportAnims.duration(id) > 0.0, "%s support duration > 0" % id)
-	_check(n == 9, "nine armor/tactical cards in the catalog, got %d" % n)
+	_check(n == 9, "nine armor/tactical TECHs in the catalog, got %d" % n)
+	_check(SupportAnims.has_anim("defend") and SupportAnims.has_anim("retreat"), "defend and retreat have animations")
 
 func _screen_for(r: SkirmishEngine.SkirmishResult) -> BattleScreen:
 	var screen := BattleScreen.new()
@@ -219,23 +252,39 @@ func _screen_for(r: SkirmishEngine.SkirmishResult) -> BattleScreen:
 	return screen
 
 func test_persistent_effects_after_skip() -> void:
-	# Spinne plays Anchor Struts on step 4 -> braced sheet; Siegebreaker drops its slab on step 2;
-	# Brenner arms its bricks on step 4 and the defender's step-5 hit detonates them.
-	var s1 := _screen_for(_fight("donner", "vanguard"))
+	# Donner uses Anchor Struts or Plunging Comp; let's explicitly test persistent visual states
+	var atk_d := GlobalState.create_mech_instance("donner", MechData.Faction.PLAYER, "A", Vector2i(3, 2))
+	var dfn_v := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "D", Vector2i(4, 2))
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var sess1 := SkirmishEngine.BattleSession.new(atk_d, dfn_v, flat, flat, true)
+	sess1.execute_next_turn(SkirmishEngine.CommandType.TECH, "anchor_strut")
+	var s1 := BattleScreen.new()
+	add_child(s1)
+	s1.start_session(sess1)
 	await get_tree().process_frame
 	s1._on_skip_pressed()
-	_check(s1.stage.mechs["atk"]["sheet"] == "donner_braced", "Spinne ends braced after skip")
+	_check(s1.stage.mechs["atk"]["sheet"] == "donner_braced", "Spinne ends braced after Anchor Struts + skip")
 	s1.queue_free()
+
 	var s2 := _screen_for(_fight("goliath", "falke"))
 	await get_tree().process_frame
 	s2._on_skip_pressed()
 	_check(s2.stage.mechs["atk"]["slab"] == true, "Siegebreaker slab stays up after skip")
 	s2.queue_free()
-	var s3 := _screen_for(_fight("moloch", "kommandant"))
+
+	var atk_m := GlobalState.create_mech_instance("moloch", MechData.Faction.PLAYER, "A", Vector2i(3, 2))
+	var dfn_k := GlobalState.create_mech_instance("kommandant", MechData.Faction.AI, "D", Vector2i(4, 2))
+	var sess3 := SkirmishEngine.BattleSession.new(atk_m, dfn_k, flat, flat, true)
+	sess3.execute_next_turn(SkirmishEngine.CommandType.TECH, "ablative_shield")
+	sess3.execute_next_turn(SkirmishEngine.CommandType.ATTACK)
+	var s3 := BattleScreen.new()
+	add_child(s3)
+	s3.start_session(sess3)
 	await get_tree().process_frame
 	s3._on_skip_pressed()
-	_check(s3.stage.mechs["atk"]["sheet"] == "moloch_spent", "Brenner bricks are spent after the next hit")
+	_check(s3.stage.mechs["atk"]["sheet"] == "moloch_spent", "Brenner bricks are spent after absorbing a hit")
 	s3.queue_free()
+
 	var s4 := _screen_for(_fight("goliath", "falke", 0, 5))
 	await get_tree().process_frame
 	s4._on_skip_pressed()
@@ -249,7 +298,7 @@ func test_pairings_play_to_result() -> void:
 	for i in pairs.size():
 		var screen := _screen_for(_fight(pairs[i][0], pairs[i][1], i % 2, 5 if i % 3 == 0 else -1))
 		var frames := 0
-		while not screen._all_steps_done and frames < 3000:
+		while not screen._all_steps_done and frames < 4500:
 			await get_tree().process_frame
 			frames += 1
 		_check(screen._all_steps_done, "%s vs %s plays through to the result (%d frames)" % [pairs[i][0], pairs[i][1], frames])
@@ -258,14 +307,11 @@ func test_pairings_play_to_result() -> void:
 	Engine.time_scale = 1.0
 
 func test_attachment_textures_cached() -> void:
-	# Draw commands keep only the RID; an uncached texture loaded in _draw is freed before rendering.
 	var m := {"faction": 0}
 	for att in ["slab", "mast", "rangefinder"]:
 		_check(SupportAnims._attach_tex(att, m) != null, "%s attachment texture loads" % att)
-	# held by the static cache, not just by the caller
 	_check(SupportAnims._attach_cache.size() >= 3, "attachment textures are retained across frames")
 
-# ---------------------------------------------------------------- review fixes
 func test_mouse_click_skips_then_confirms() -> void:
 	var screen := _screen_for(_fight("vanguard", "moloch"))
 	await get_tree().process_frame
@@ -293,7 +339,7 @@ func test_viewport_renders_only_while_active() -> void:
 func test_white_sheets_are_pregenerated() -> void:
 	for c in CHASSIS + ["moloch_spent", "donner_braced"]:
 		var w := MechSpriteBank.get_white_sheet(c, 0)
-		_check(w != null and w.resource_path.ends_with("_white.png"), "%s white flash sheet is a pre-generated PNG (no per-pixel build at impact)" % c)
+		_check(w != null and w.resource_path.ends_with("_white.png"), "%s white flash sheet is a pre-generated PNG" % c)
 		if w != null:
 			_check(w.get_width() == MechSpriteBank.get_sheet(c, 0).get_width(), "%s white sheet matches sheet size" % c)
 
@@ -301,13 +347,13 @@ func test_support_run_is_pure() -> void:
 	var screen := _screen_for(_fight("donner", "goliath"))
 	await get_tree().process_frame
 	var st := screen.stage
-	for card in ["anchor_strut", "ferro_bulkhead", "ablative_shield"]:
+	for ab_id in ["anchor_strut", "ferro_bulkhead", "ablative_shield"]:
 		var a: Dictionary = st.mechs["atk"]
 		var d: Dictionary = st.mechs["def"]
 		var before := [a["sheet"], a["slab"], a["armed"]]
 		for t in [0.2, 0.5, 0.9]:
-			SupportAnims.run(st, a, d, card, t)
-		_check([a["sheet"], a["slab"], a["armed"]] == before, "%s animation does not mutate lasting state" % card)
+			SupportAnims.run(st, a, d, ab_id, t)
+		_check([a["sheet"], a["slab"], a["armed"]] == before, "%s animation does not mutate lasting state" % ab_id)
 	screen.queue_free()
 
 # ---------------------------------------------------------------- shared CRT menu style (main menu / HUD)
@@ -329,8 +375,8 @@ func test_crt_glyph_coverage() -> void:
 	for key in GlobalState.chassis_catalog:
 		var ch: MechData = GlobalState.chassis_catalog[key]
 		strings.append_array([ch.callsign, ch.unit_name, ch.chassis_class, ch.lore_blurb])
-		for c: EquipmentCard in ch.deck:
-			strings.append_array([c.card_name, c.category, c.description])
+		for ab: CombatAbility in ch.abilities:
+			strings.append_array([ab.ability_name, ab.category, ab.description])
 	strings.append_array(UIOverlay.MANUAL_LINES)
 	var missing := {}
 	for s in strings:

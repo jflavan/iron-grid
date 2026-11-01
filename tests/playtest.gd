@@ -2,8 +2,8 @@ extends Node
 
 ## Automated Playtest Harness
 ## Plays complete missions on every map through the same entry points a human uses
-## (tile clicks, WAIT/REFUEL, skirmish confirmation) while checking game-state invariants
-## every frame, plus focused rule checks for fuel, pathfinding, skirmishes and victory logic.
+## (tile clicks, WAIT/REFUEL, battle confirmation) while checking game-state invariants
+## every frame, plus focused rule checks for fuel, pathfinding, FF-style turn-based combat and victory logic.
 ##
 ## Run headless:  godot --headless --path . res://tests/Playtest.tscn
 ## Exit code is the number of failures (0 = all checks passed).
@@ -44,7 +44,7 @@ func _report_and_quit() -> void:
 		print("  FAIL: " + f)
 	Engine.time_scale = 1.0
 	if DisplayServer.get_name() != "headless":
-		await get_tree().create_timer(2.0).timeout # let attached debuggers (e.g. the Godot MCP) read the summary
+		await get_tree().create_timer(2.0).timeout
 	get_tree().quit(mini(failures.size(), 125))
 
 # =============================================================================
@@ -85,7 +85,6 @@ func _check_pathfinding_matches_bruteforce() -> void:
 		for chassis in ["vanguard", "goliath", "falke", "donner"]:
 			var m := GlobalState.create_mech_instance(chassis, MechData.Faction.PLAYER, "T", Vector2i(1, 2))
 			var reach: Dictionary = grid.compute_reachable_tiles(m, {}).duplicate(true)
-			# Bellman-Ford style relaxation gives the true minimum cost to every tile
 			var best: Dictionary = { m.grid_pos: 0 }
 			var changed := true
 			while changed:
@@ -119,77 +118,55 @@ func _check_skirmish_engine() -> void:
 			var d := GlobalState.create_mech_instance(d_id, MechData.Faction.AI, "D", Vector2i.ZERO)
 			var fc := SkirmishEngine.compute_forecast(a, d, flat, flat)
 			_check(a.current_armor == a.max_armor and d.current_armor == d.max_armor, "forecast must not mutate units")
+			_check(a.current_energy == a.max_energy and d.current_energy == d.max_energy, "forecast must not mutate energy")
 			var res := SkirmishEngine.resolve_skirmish(a, d, flat, flat, true)
-			_check(res.total_dmg_to_defender == fc["est_dmg_to_def"], "%s vs %s: forecast dmg matches result" % [a_id, d_id])
-			_check(res.total_dmg_to_attacker == fc["est_dmg_to_atk"], "%s vs %s: forecast return dmg matches result" % [a_id, d_id])
-			_check(res.atk_cards_held + res.def_cards_held == 6, "six cards on board")
-			# Animated per-step damage must add up to the reported totals (no bar jumping back up at the end)
+			_check(res.total_dmg_to_defender == fc["est_dmg_to_def"], "%s vs %s: forecast dmg matches deterministic result" % [a_id, d_id])
+			_check(res.total_dmg_to_attacker == fc["est_dmg_to_atk"], "%s vs %s: forecast return dmg matches deterministic result" % [a_id, d_id])
+			# Per-step damage must add up to the reported totals
 			var atk_steps: int = 0
 			var def_steps: int = 0
 			for s in res.steps:
 				atk_steps += s.atk_damage_dealt
 				def_steps += s.def_damage_dealt
+				if s.is_support_only:
+					_check(s.damage_dealt == 0, "%s support step deals 0 direct damage" % s.ability_id)
 			_check(atk_steps == res.total_dmg_to_defender, "%s vs %s: step damage to defender sums to total" % [a_id, d_id])
 			_check(def_steps == res.total_dmg_to_attacker, "%s vs %s: step damage to attacker sums to total" % [a_id, d_id])
-			# Every placement after the opening card must contest at least one opposing card
-			var occupied: Array[int] = []
-			for i in res.steps.size():
-				var s: SkirmishEngine.BoutStep = res.steps[i]
-				if i > 0:
-					var touches_enemy := false
-					for nb in _neighbors(s.slot_index):
-						if occupied.has(nb) and _slot_side(res.steps, nb) != s.actor_faction:
-							touches_enemy = true
-					_check(touches_enemy, "placement %d (slot %d) contests an opposing card" % [i, s.slot_index])
-				occupied.append(s.slot_index)
 
-	# Elevation: +12% FP / +10% Armor / +1 card rank per level downhill; uphill costs FP and ranks only
+	# Elevation: +12% FP / +10% Armor per level downhill; uphill costs -10% FP per level
 	var va := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i.ZERO)
 	var vd := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "D", Vector2i.ZERO)
 	var high := SkirmishEngine.resolve_skirmish(va, vd, _tile(T.PLAIN, 3), _tile(T.PLAIN, 1), false)
 	_check(high.atk_effective_firepower == int(round(34 * 1.24)), "high ground: +24%% FP over 2 levels (got %d)" % high.atk_effective_firepower)
 	_check(high.atk_effective_armor == int(round(30 * 1.25)), "high ground: +20%% armor + 5%% plain (got %d)" % high.atk_effective_armor)
-	_check(high.atk_card_edge_mod >= 2, "high ground: at least +2 card ranks (plus any stat overmatch)")
 	var low := SkirmishEngine.resolve_skirmish(va, vd, _tile(T.PLAIN, 1), _tile(T.PLAIN, 2), false)
 	_check(low.atk_effective_firepower == int(round(34 * 0.90)), "uphill: -10%% FP (got %d)" % low.atk_effective_firepower)
 	_check(low.atk_effective_armor == int(round(30 * 1.05)), "uphill: armor unaffected beyond terrain (got %d)" % low.atk_effective_armor)
-	_check(low.atk_card_edge_mod == -1, "uphill: -1 card rank")
 
-	# Attacker should be able to capture defender cards when it badly outranks them
-	var strong := GlobalState.create_mech_instance("moloch", MechData.Faction.PLAYER, "A", Vector2i.ZERO)
-	var weak := GlobalState.create_mech_instance("falke", MechData.Faction.AI, "D", Vector2i.ZERO)
-	for c in strong.deck:
-		c.top = 10; c.right = 10; c.bottom = 10; c.left = 10
-	for c in weak.deck:
-		c.top = 1; c.right = 1; c.bottom = 1; c.left = 1
-	var r2 := SkirmishEngine.resolve_skirmish(strong, weak, flat, flat, false)
-	_check(_flips_by(r2, strong.faction) >= 2, "dominant attacker overmatches defender cards (flipped %d)" % _flips_by(r2, strong.faction))
-	var r3 := SkirmishEngine.resolve_skirmish(weak, strong, flat, flat, false)
-	_check(_flips_by(r3, strong.faction) >= 2, "dominant defender overmatches attacker cards (flipped %d)" % _flips_by(r3, strong.faction))
+	# Speed & Round 1 Initiative: Falke (SPD 34) always outspeeds Goliath (SPD 12), even when Goliath attacks on Round 1 (12+8=20 < 34)
+	var gol := GlobalState.create_mech_instance("goliath", MechData.Faction.PLAYER, "G", Vector2i.ZERO)
+	var flk := GlobalState.create_mech_instance("falke", MechData.Faction.AI, "F", Vector2i.ZERO)
+	var sess_gf := SkirmishEngine.BattleSession.new(gol, flk, flat, flat, true)
+	_check(sess_gf.get_next_actor_side() == "def", "Falke defender (SPD 34) acts before Goliath attacker (SPD 12+8=20)")
 
-func _flips_by(res: SkirmishEngine.SkirmishResult, faction: int) -> int:
-	var n: int = 0
-	for s in res.steps:
-		if s.actor_faction == faction:
-			n += s.flipped_slots.size()
-	return n
+	# Equal chassis: Round-1 Assault Initiative bonus lets Attacker act first
+	var v1 := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "V1", Vector2i.ZERO)
+	var v2 := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "V2", Vector2i.ZERO)
+	var sess_vv := SkirmishEngine.BattleSession.new(v1, v2, flat, flat, true)
+	_check(sess_vv.get_next_actor_side() == "atk", "Attacker acts first on Round 1 when speeds are equal")
 
-func _neighbors(idx: int) -> Array[int]:
-	var out: Array[int] = []
-	@warning_ignore("integer_division")
-	var r: int = idx / 3
-	var c: int = idx % 3
-	if r > 0: out.append(idx - 3)
-	if r < 2: out.append(idx + 3)
-	if c > 0: out.append(idx - 1)
-	if c < 2: out.append(idx + 1)
-	return out
-
-func _slot_side(steps: Array[SkirmishEngine.BoutStep], slot: int) -> int:
-	for s in steps:
-		if s.slot_index == slot:
-			return s.actor_faction
-	return -1
+	# Interactive commands check: DEFEND halves incoming damage & restores +2 EN; Support TECH spends EN with 0 shot damage; RETREAT ends battle
+	var p_mech := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "P", Vector2i.ZERO)
+	var e_mech := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "E", Vector2i.ZERO)
+	p_mech.current_energy = 10
+	var sess := SkirmishEngine.BattleSession.new(p_mech, e_mech, flat, flat, true)
+	var st_sup := sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "krupp_plate")
+	_check(st_sup.is_support_only and st_sup.damage_dealt == 0, "Sloped Krupp Plate is a pure FF support turn (0 damage)")
+	_check(sess.atk_state.en == 6 and sess.atk_state.def_buff_pct == 35, "Sloped Krupp Plate costs 4 EN and grants +35%% DEF")
+	var st_def := sess.execute_next_turn(SkirmishEngine.CommandType.DEFEND)
+	_check(st_def.ability_category == "DEFEND" and sess.def_state.defending, "DEFEND command puts defender in guard stance")
+	var st_ret := sess.execute_next_turn(SkirmishEngine.CommandType.RETREAT)
+	_check(st_ret.escaped and sess.is_finished and sess.result.attacker_retreated, "RETREAT command disengages and finishes battle")
 
 func _check_victory_rules() -> void:
 	# PITCHED BATTLE: holding the majority of objectives at the turn limit wins
@@ -313,8 +290,6 @@ func _play_mission(map_idx: int, policy: String) -> void:
 	])
 	await _free_battlefield(bf)
 
-## Turtle commander: entrench every walker in place on odd turns, and just hit END TURN on even
-## turns, exercising the refuel/repair upkeep and the turn-limit victory rules.
 func _turtle_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 	if GlobalState.turn_number % 2 == 0:
 		stats["waits"] += 1
@@ -325,8 +300,6 @@ func _turtle_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 		stats["waits"] += 1
 		bf._on_wait_refuel_requested()
 
-## Random commander (seeded): clicks a random reachable tile (move or attack) or entrenches,
-## fuzzing movement, collisions, pushbacks and retreats across many board states.
 func _random_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 	var sel: MechUnit = bf.selected_unit
 	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
@@ -344,8 +317,6 @@ func _random_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 	stats["moves"] += 1
 	bf._on_tile_clicked(options[_rng.randi_range(0, options.size() - 1)], null)
 
-## Greedy commander: take favourable fights, otherwise advance on the nearest
-## objective not yet held (or the nearest enemy), entrenching if nothing useful is in reach.
 func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Dictionary) -> void:
 	var sel: MechUnit = bf.selected_unit
 	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
@@ -353,7 +324,7 @@ func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 			if not u.mech_data.has_moved:
 				bf._on_tile_clicked(u.mech_data.grid_pos, null)
 				return
-		return # everyone has moved; auto-advance timer will start the AI phase
+		return
 
 	var m := sel.mech_data
 	var reach: Dictionary = bf.grid_map.reachable_info
@@ -412,6 +383,7 @@ func _check_invariants(bf: Battlefield, map_def: MapDefinition) -> void:
 			continue
 		var m := u.mech_data
 		_check(m.current_fuel >= 0 and m.current_fuel <= m.max_fuel, "%s fuel %d within [0,%d]" % [m.callsign, m.current_fuel, m.max_fuel])
+		_check(m.current_energy >= 0 and m.current_energy <= m.max_energy, "%s energy %d within [0,%d]" % [m.callsign, m.current_energy, m.max_energy])
 		_check(m.current_armor >= 0 and m.current_armor <= m.max_armor, "%s armor %d within [0,%d]" % [m.callsign, m.current_armor, m.max_armor])
 		_check(bf.grid_map.is_valid_coords(m.grid_pos), "%s on a valid tile %s" % [m.callsign, m.grid_pos])
 		if settled:

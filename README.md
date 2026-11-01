@@ -1,14 +1,14 @@
 # Operation: Iron Grid
 
-**Operation: Iron Grid** is a dieselpunk isometric turn-based tactical strategy game built in **Godot 4**. Inspired by the heavy mechanical atmosphere of *Ring of Red*, *Steel Battalion*, and *MechWarrior*, the grid-based tactical maneuvering of *Advance Wars* and *Fire Emblem*, and the directional card-flipping showdowns of *Final Fantasy VIII*'s *Triple Triad*.
+**Operation: Iron Grid** is a dieselpunk isometric turn-based tactical strategy game built in **Godot 4**. Inspired by the heavy mechanical atmosphere of *Ring of Red*, *Steel Battalion*, and *MechWarrior*, the grid-based tactical maneuvering of *Advance Wars* and *Fire Emblem*, and classic *Final Fantasy* turn-based RPG combat encounters.
 
 ![Isometric Battlefield & Tactical HUD](screenshot_gameplay.png)
 
 *Tactical battlefield view: extruded 2.5D isometric terrain, movement range highlights, Dijkstra fuel path planning, and real-time telemetry HUD.*
 
-![FF6-style Battle Screen](screenshot_battle.png)
+![FF-style Battle Screen](screenshot_battle.png)
 
-*Battle screen: pixel-art walkers with articulated legs, a terrain backdrop chosen by the defender's tile, attack banners and the CRT command HUD.*
+*Battle screen: pixel-art walkers with articulated legs, a terrain backdrop chosen by the defender's tile, attack banners, and the CRT command HUD.*
 
 ![Main Menu & AFW Codex](screenshot_main_menu.png)
 
@@ -24,23 +24,19 @@ Each turn cycles through three phases:
 
 1. **Player Command Phase**:
    - Select any friendly Armored Fighting Walker (AFW) to compute reachable movement nodes within its current **Diesel Fuel** budget (using Dijkstra pathfinding across terrain and elevation climbs).
-   - Hover over reachable enemy nodes to inspect a real-time **Skirmish Engagement Forecast** detailing approach vectors, terrain/elevation modifiers, projected card control, and estimated hull damage.
-   - Move to secure strategic **Objective Cities**, press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF` and `+5 Fuel`), or move directly onto an enemy-occupied node to trigger a collision engagement.
-2. **Skirmish Resolution Phase (Automated Showdown)**:
-   - When two opposing walkers occupy the same node, the game launches the **Automated Skirmish Resolver**.
-   - Combines a **Stats-vs-Stats** exchange (`Firepower` vs `Armor Rating`, scaled by approach terrain and high-ground elevation) with a **3-Bout Equipment Deck Clash** on a **3x3 Triple Triad Matrix**.
-   - Each walker deploys its 3 equipped weapon/armor/tactical cards onto the 3x3 board. Directional power ranks (`N, E, S, W` from `1–9` and `A`) are compared against adjacent opposing cards:
-     - **Overmatch Capture**: Higher directional ranks flip adjacent enemy cards to the attacker's faction.
-     - **Tactical Plus Overload**: Matching edge sums across two or more adjacent sides trigger a combo flip.
-   - Controlled cards add their `Damage` and `Shield` ratings to the final hull exchange. If both units survive, the loser of the clash is dislodged and pushed back to an adjacent retreat tile.
-   - **Battle screen.** Each skirmish plays out on a side-view, FF6-style pixel-art battle screen. The game cuts from the grid to the two walkers facing off in front of a backdrop chosen by the defender's terrain, then cuts back.
-     - The approach direction decides which side each walker stands on, and the higher walker is drawn raised.
-     - The six card plays run in order. Each shows a banner with the card name, then its own animation:
-       - **Weapons:** the card's attack animation.
-       - **Armor and tactical cards:** the card's effect, then a quick follow-up shot.
-     - Bouncing damage numbers match the resolver exactly.
-     - Captured cards are reported as text, e.g. `OVERMATCH: 1 SYSTEM CAPTURED`. The 3×3 board itself isn't drawn.
-     - Commands are chosen automatically for now; interactive commands are a planned follow-up.
+   - Hover over reachable enemy nodes to inspect a real-time **Skirmish Engagement Forecast** detailing approach vectors, terrain/elevation modifiers, initiative order, and estimated hull damage.
+   - Move to secure strategic **Objective Cities**, press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF`, `+5 Fuel`, `+4 EN`), or move directly onto an enemy-occupied node to trigger a combat encounter.
+2. **Skirmish Resolution Phase (Final Fantasy Turn-Based Battle)**:
+   - When two opposing walkers occupy the same node, the game cuts from the isometric grid to a side-view **Final Fantasy-style Turn-Based Battle** against a terrain backdrop matching the contested sector.
+   - **Initiative & Rounds**: Combat runs in classic turn-based rounds determined by each walker's **Effective Speed (`SPD`)**, with a Round-1 Assault Initiative bonus (`+8 SPD`) for the initiating Attacker (offset by `+8 SPD` if the Defender is Entrenched).
+   - **4-Command Battle Menu**:
+     - **`ATTACK`**: Fires the chassis's primary standard weapon (`0 EN` cost).
+     - **`TECH`**: Opens the chassis's 3 specialized **Combat Abilities** (`WEAPON`, `ARMOR`, and `TACTIC` modules) powered by **Reactor Energy (`EN`)**:
+       - **Weapon TECHs**: Heavy ordnance, high-velocity AP shells, rocket salvos, and melee pile-bunkers with custom accuracy, critical hit bonuses, and armor penetration.
+       - **Armor & Tactical TECHs**: Pure support/status turns that deploy physical shields (`Sloped Krupp Plate`, `Ferro-Bunker Bulkhead`, `Quad Anchor Struts`, `Reactive Shield Wall`), boost offensive/evasive telemetry (`Gyro-Flank Thrusters`, `Optical Rangefinder`, `Elevation Ballistics`, `Command Uplink`), or jam enemy targeting (`Enigma ECM Scrambler`).
+     - **`DEFEND`**: Braces hull plating (`-50%` incoming damage until the unit's next turn) and vents reactor coils (`+2 EN`).
+     - **`RETREAT`**: Attempts an emergency combat disengagement based on relative Speed (`SPD`). If successful, the battle ends immediately and the retreating unit withdraws to an open adjacent sector.
+   - Each encounter continues until one walker is destroyed (`0 HULL`), one side successfully retreats, or the 10-round safety limit is reached (dislodging the loser of the exchange).
 3. **Syndicate AI Phase**:
    - Enemy walkers evaluate reachable tiles, approach vectors, high-ground advantages, fuel reserves, and objective priorities tailored to the map's strategic profile (`Pitched Battle`, `Fortified Defense`, or `Blitzkrieg Offense`).
 
@@ -53,42 +49,42 @@ Each turn cycles through three phases:
 
 ## Terrain & Elevation Matrix
 
-| Terrain Type | Code | Base Fuel | Attack Mod | Defense Mod | Card Edge Bonus | Tactical Notes |
+| Terrain Type | Code | Base Fuel | Attack Mod | Defense Mod | Evasion Bonus | Tactical Notes |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Transit Road** | `ROD` | `1` | `+5%` | `0%` | `+0` | Fastest transit artery for heavy dreadnoughts |
-| **Open Plain** | `PLN` | `2` | `0%` | `+5%` | `+0` | Standard open maneuvering ground |
-| **Fortified City** | `CTY` | `2` | `+10%` | `+25%` | `+1` | Repairs **+12 Armor** & restores **+4 Fuel** at turn start |
-| **Trench Timber** | `TRN` | `3` | `+5%` | `+15%` | `+0` | Prepared defensive cover and ambush concealment |
-| **River Ford** | `RIV` | `4` | `-15%` | `-15%` | `-1` | Bogged down & exposed (`Falke` amphibious gear reduces cost) |
-| **Mountain Crag** | `MTN` | `5` | `+15%` | `+30%` | `+1` | Commanding rock bastion (`Donner` quad legs reduce climb cost) |
+| **Transit Road** | `ROD` | `1` | `+5%` | `0%` | `+0%` | Fastest transit artery for heavy dreadnoughts |
+| **Open Plain** | `PLN` | `2` | `0%` | `+5%` | `+0%` | Standard open maneuvering ground |
+| **Fortified City** | `CTY` | `2` | `+10%` | `+25%` | `+10%` | Repairs **+12 Hull**, restores **+4 Fuel** & **+3 EN** at turn start |
+| **Trench Timber** | `TRN` | `3` | `+5%` | `+15%` | `+12%` | Prepared defensive cover and ambush concealment |
+| **River Ford** | `RIV` | `4` | `-15%` | `-15%` | `-10%` | Bogged down & exposed (`Falke` amphibious gear reduces cost) |
+| **Mountain Crag** | `MTN` | `5` | `+15%` | `+30%` | `+15%` | Commanding rock bastion (`Donner` quad legs reduce climb cost) |
 
 ### Elevation (`0m` – `400m`)
 - **Climbing Fuel Surcharge**: Moving uphill costs `+1 Fuel` per `100m` elevation level gained.
-- **High Ground Plunging Fire**: Attacking from higher elevation down onto a defender grants **+12% Firepower**, **+10% Armor deflection**, and **+1 to all Card Directional Ranks** per elevation level differential.
-- **Uphill Assault Penalty**: Attacking uphill suffers **-10% Firepower** and **-1 to Card Directional Ranks** per level.
+- **High Ground Plunging Fire**: Attacking from higher elevation down onto a defender grants **+12% Firepower**, **+10% Armor deflection**, and **+6% Hit Accuracy** per elevation level differential.
+- **Uphill Assault Penalty**: Attacking uphill suffers **-10% Firepower** and **-6% Hit Accuracy** per level.
 
 ---
 
 ## Armored Fighting Walkers (6 Chassis Types)
 
 1. **KPZ-09 "Sturmjäger" (`VANGUARD` — Medium Assault Walker)**
-   - **Stats**: `110 Hull` | `30 Armor Rating` | `34 Firepower` | `13 Fuel` (`+5/turn`)
-   - **Deck**: *88mm KwK AP-Shell*, *Sloped Krupp Plate*, *Twin MG-42 Salvo*
+   - **Stats**: `110 Hull` | `10 EN (+2)` | `34 ATK` | `30 DEF` | `26 SPD` | `8% EVA` | `10% CRIT` | `13 Fuel (+5/turn)`
+   - **TECH Systems**: *88mm KwK AP-Shell*, *Sloped Krupp Plate*, *Twin MG-42 Salvo*
 2. **VK-100 "Siegebreaker" (`GOLIATH` — Super-Heavy Dreadnought)**
-   - **Stats**: `155 Hull` | `44 Armor Rating` | `46 Firepower` | `10 Fuel` (`+4/turn`, `+1` off-road fuel surcharge)
-   - **Deck**: *210mm Siege Howitzer*, *Ferro-Bunker Bulkhead*, *Quad Flak-38 Battery*
+   - **Stats**: `155 Hull` | `12 EN (+2)` | `46 ATK` | `44 DEF` | `14 SPD` | `2% EVA` | `8% CRIT` | `10 Fuel (+4/turn)`
+   - **TECH Systems**: *210mm Siege Howitzer*, *Ferro-Bunker Bulkhead*, *Quad Flak-38 Battery*
 3. **Sd.Kfz-22 "Spähfalke" (`FALKE` — Light Recon Strider)**
-   - **Stats**: `85 Hull` | `21 Armor Rating` | `28 Firepower` | `17 Fuel` (`+6/turn`, Amphibious Seals & `-1` off-road fuel reduction)
-   - **Deck**: *50mm Rapid Autocannon*, *Gyro-Flank Thrusters*, *Optical Rangefinder*
+   - **Stats**: `85 Hull` | `10 EN (+3)` | `28 ATK` | `21 DEF` | `38 SPD` | `18% EVA` | `16% CRIT` | `17 Fuel (+6/turn)`
+   - **TECH Systems**: *50mm Rapid Autocannon*, *Gyro-Flank Thrusters*, *Optical Rangefinder*
 4. **SPG-88 "Spinne" (`DONNER` — Quadruped Mountain Walker)**
-   - **Stats**: `98 Hull` | `26 Armor Rating` | `43 Firepower` | `12 Fuel` (`+5/turn`, Mountain Climbing Gear)
-   - **Deck**: *Nebelwerfer Rocket Pod*, *Elevation Ballistics*, *Quad Anchor Struts*
+   - **Stats**: `98 Hull` | `12 EN (+3)` | `43 ATK` | `26 DEF` | `22 SPD` | `8% EVA` | `12% CRIT` | `12 Fuel (+5/turn)`
+   - **TECH Systems**: *Nebelwerfer Rocket Pod*, *Elevation Ballistics*, *Quad Anchor Struts*
 5. **Befehls-IV "Kaiserstuhl" (`KOMMANDANT` — Tactical Command Walker)**
-   - **Stats**: `120 Hull` | `34 Armor Rating` | `36 Firepower` | `14 Fuel` (`+5/turn`)
-   - **Deck**: *Enigma ECM Scrambler*, *Command Uplink*, *105mm StuH Howitzer*
+   - **Stats**: `120 Hull` | `14 EN (+3)` | `36 ATK` | `34 DEF` | `24 SPD` | `10% EVA` | `10% CRIT` | `14 Fuel (+5/turn)`
+   - **TECH Systems**: *Enigma ECM Scrambler*, *Command Uplink*, *105mm StuH Howitzer*
 6. **Sturm-V "Brenner" (`MOLOCH` — Heavy Urban Brawler)**
-   - **Stats**: `135 Hull` | `38 Armor Rating` | `41 Firepower` | `12 Fuel` (`+5/turn`)
-   - **Deck**: *Thermite Flame Lance*, *Hydraulic Pile-Bunker*, *Reactive Shield Wall*
+   - **Stats**: `135 Hull` | `11 EN (+2)` | `41 ATK` | `38 DEF` | `19 SPD` | `5% EVA` | `12% CRIT` | `12 Fuel (+5/turn)`
+   - **TECH Systems**: *Thermite Flame Lance*, *Hydraulic Pile-Bunker*, *Reactive Shield Wall*
 
 ---
 
@@ -109,15 +105,17 @@ Each turn cycles through three phases:
 | :--- | :--- |
 | **Left Mouse Click** | Select walker / Move to highlighted tile / Engage enemy node |
 | **Right / Middle Mouse Drag** | Pan tactical camera |
-| **WASD / Arrow Keys** | Pan tactical camera |
+| **WASD / Arrow Keys** | Pan tactical camera (or navigate battle command menu) |
 | **Mouse Wheel Up / Down** | Zoom camera in / out |
-| **`R`** | Wait, Entrench (`+15% DEF`), & Refuel (`+5 Fuel`) selected walker |
+| **`R`** | Wait, Entrench (`+15% DEF`), & Refuel (`+5 Fuel`, `+4 EN`) selected walker |
 | **`E`** | End Player Command Phase |
 | **`C`** | Reset & center camera on battlefield |
 | **`H`** | Toggle Tactical Field Manual & Terrain Chart |
-| **`Space` / `Enter` / Left Click** | Battle screen: skip to the result / confirm the result |
+| **`Up` / `Down` / Mouse Hover** | Battle screen: highlight `ATTACK` / `TECH` / `DEFEND` / `RETREAT` |
+| **`Space` / `Enter` / Left Click** | Battle screen: confirm command or confirm battle result |
+| **`Esc` / `Backspace` / Right Click** | Battle screen: exit `TECH` sub-menu (or deselect unit on map) |
+| **`A`** | Battle screen: toggle AI Auto-Pilot for Coalition turns |
 | **`S`** | Battle screen: toggle 1× / 2× playback speed |
-| **`Esc`** | Deselect unit / Close modal |
 
 ---
 
@@ -130,7 +128,7 @@ iron-grid/
 ├── screenshot_main_menu.png        # Command HQ briefing & codex screenshot
 ├── screenshot_gameplay.png         # Tactical isometric battlefield screenshot
 ├── autoload/
-│   ├── GlobalState.gd              # Global turn/phase state, card/mech/map catalogs, combat log
+│   ├── GlobalState.gd              # Global turn/phase state, ability/mech/map catalogs, combat log
 │   └── SoundManager.gd             # Procedural retro/dieselpunk WAV audio synthesizer
 ├── assets/battle/                  # Generated pixel art (do not hand-edit; see Battle Art Pipeline)
 │   ├── mechs/                      # <chassis>[_variant]_<faction>.png pose sheets + <chassis>.json anchors
@@ -141,26 +139,26 @@ iron-grid/
 ├── scenes/
 │   ├── MainMenu.tscn               # Command HQ briefing console, 3-map selector & Mech Hangar Codex
 │   ├── Battlefield.tscn            # Root battle scene (GridMap, UnitContainer, Camera2D, UIOverlay)
-│   └── dev/BattlePreview.tscn      # Dev-only battle screen preview (every chassis, card, terrain)
+│   └── dev/BattlePreview.tscn      # Dev-only battle screen preview (every chassis, ability, terrain)
 └── scripts/
     ├── data/
-    │   ├── EquipmentCard.gd        # Triple Triad directional ranks & damage/shield card struct
+    │   ├── CombatAbility.gd        # Turn-based RPG ability struct (EN cost, power, accuracy, effects)
     │   ├── GridTileData.gd         # Terrain type, elevation, fuel cost & combat modifier struct
     │   ├── MapDefinition.gd        # Arena layout, strategy mode, objectives & unit spawns
-    │   └── MechData.gd             # Core walker struct (armor, firepower, fuel, mobility, deck)
+    │   └── MechData.gd             # Core walker struct (hull, energy, firepower, armor, speed, abilities)
     ├── battle/
     │   ├── Battlefield.gd          # Turn flow controller (Player -> Skirmish Resolution -> AI)
     │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer & Dijkstra fuel pathfinder
     │   ├── UnitContainer.gd        # Y-sorted mech manager, collision checks & knockback logic
     │   ├── MechUnit.gd             # Procedural multi-part isometric mech renderer & animator
-    │   ├── SkirmishEngine.gd       # Stats-vs-Stats + 3x3 Triple Triad card clash resolver
+    │   ├── SkirmishEngine.gd       # Final Fantasy turn-based battle session & tactical AI resolver
     │   └── AIController.gd         # Utility-based tactical AI decision engine
     ├── battle_screen/
-    │   ├── BattleScreen.gd         # FF6-style resolution screen (SubViewport 360x225, scaled 4x)
-    │   ├── BattleStage.gd          # Phase machine + drawing: intro, 6 card beats, ending, result
-    │   ├── BattleTimeline.gd       # SkirmishResult -> presentation beats (no rule changes)
+    │   ├── BattleScreen.gd         # FF-style resolution screen (SubViewport 360x225, scaled 4x)
+    │   ├── BattleStage.gd          # Phase machine + interactive command menu + HUD + animations
+    │   ├── BattleTimeline.gd       # TurnStep -> presentation beats (weapon, support, defend, retreat)
     │   ├── WeaponAnims.gd          # Per-weapon attack animations
-    │   ├── SupportAnims.gd         # Armor/tactical effects, softened hits, attachments
+    │   ├── SupportAnims.gd         # Armor/tactical effects, defend/retreat poses, attachments
     │   ├── BattleFX.gd             # Pixel effect primitives (flashes, tracers, explosions, panels)
     │   ├── BattleLayout.gd         # Side/elevation placement & terrain -> backdrop
     │   ├── MechSpriteBank.gd       # Sprite sheet + anchor metadata loader
@@ -191,7 +189,7 @@ godot --path .
 
 ## Automated Playtest
 
-`tests/Playtest.tscn` checks the core rules (fuel costs, optimal pathfinding, skirmish forecasts, card placement, elevation modifiers, and victory conditions). It then plays complete missions on every map with greedy, turtle, and seeded-random commanders. Every frame it asserts game-state invariants: no stacked walkers, fuel and armor in range, sprites matching their grid tiles, and nothing advancing after game over.
+`tests/Playtest.tscn` checks the core rules (fuel costs, optimal pathfinding, skirmish forecasts, turn-based combat sessions, elevation modifiers, and victory conditions). It then plays complete missions on every map with greedy, turtle, and seeded-random commanders. Every frame it asserts game-state invariants: no stacked walkers, fuel and armor in range, sprites matching their grid tiles, and nothing advancing after game over.
 
 ```bash
 godot --headless --path . res://tests/Playtest.tscn          # exit code = number of failures
@@ -215,7 +213,7 @@ python3 tools/battle_sprites/generate.py           # regenerate assets/battle
 python3 tools/battle_sprites/generate.py --check   # exit 1 if committed art differs from the generator
 python3 -m unittest discover -s tools/battle_sprites
 tests/run_battle_tests.sh                          # battle screen unit tests (headless)
-godot --path . res://scenes/dev/BattlePreview.tscn # browse chassis, cards, terrains and endings
+godot --path . res://scenes/dev/BattlePreview.tscn # browse chassis, abilities, terrains and endings
 ```
 
 On Windows, run the same commands in PowerShell (5.1 or 7+):

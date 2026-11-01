@@ -2,7 +2,7 @@ class_name AIController
 extends RefCounted
 
 ## Tactical AI Decision Engine for Kriegs-Syndikat Forces
-## Evaluates reachable tiles, approach vectors, terrain/elevation modifiers, and skirmish forecasts
+## Evaluates reachable tiles, approach vectors, terrain/elevation modifiers, and combat forecasts
 ## to choose between attacking player walkers, capturing objectives, holding high ground, or refueling.
 
 static func choose_best_action(
@@ -54,11 +54,11 @@ static func choose_best_action(
 			)
 			var est_dmg_def: int = forecast["est_dmg_to_def"]
 			var est_dmg_atk: int = forecast["est_dmg_to_atk"]
-			var card_diff: int = int(forecast["atk_cards_held"]) - int(forecast["def_cards_held"])
+			var atk_won: bool = bool(forecast.get("attacker_won", est_dmg_def >= est_dmg_atk))
 
 			var atk_score: float = 45.0
 			atk_score += float(est_dmg_def - est_dmg_atk) * 1.35
-			atk_score += float(card_diff) * 16.0
+			atk_score += 24.0 if atk_won else -20.0
 			atk_score += float(forecast["atk_mod_pct"] - forecast["def_mod_pct"]) * 0.45
 
 			# Huge bonus for finishing off an enemy walker

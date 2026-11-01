@@ -1,7 +1,7 @@
 extends Node
 
 ## GlobalState Autoload
-## Manages global campaign/mission selection, turn phase state, mech & card databases,
+## Manages global campaign/mission selection, turn phase state, mech & TECH ability catalogs,
 ## map arena definitions, and combat telemetry logs.
 
 enum TurnPhase {
@@ -20,13 +20,13 @@ var selected_map_index: int = 0
 var last_battle_winner: int = -1 # -1 = None, 0 = Player, 1 = AI
 var last_battle_reason: String = ""
 
-var card_catalog: Dictionary = {}
+var ability_catalog: Dictionary = {}
 var chassis_catalog: Dictionary = {}
 var maps: Array[MapDefinition] = []
 var combat_log: Array[String] = []
 
 func _ready() -> void:
-	_init_card_catalog()
+	_init_ability_catalog()
 	_init_chassis_catalog()
 	_init_maps()
 
@@ -55,86 +55,106 @@ func get_phase_name() -> String:
 		TurnPhase.PLAYER_PHASE:
 			return "PLAYER COMMAND PHASE"
 		TurnPhase.RESOLUTION_PHASE:
-			return "SKIRMISH RESOLUTION PHASE"
+			return "COMBAT ENCOUNTER PHASE"
 		TurnPhase.AI_PHASE:
 			return "SYNDICATE AI PHASE"
 		TurnPhase.GAME_OVER:
 			return "OPERATION CONCLUDED"
 	return "UNKNOWN"
 
-func _init_card_catalog() -> void:
-	# Directional ranks: Top, Right, Bottom, Left (1..10 where 10 displays as 'A')
-	card_catalog["kwk_88"] = EquipmentCard.new(
-		"kwk_88", "88mm KwK AP-Shell", "BALLISTIC",
-		7, 6, 4, 6, 22, 8, "High-velocity armor-piercing cannon shell."
+func _init_ability_catalog() -> void:
+	# 9 Weapon TECH Abilities (Category: WEAPON)
+	ability_catalog["kwk_88"] = CombatAbility.new(
+		"kwk_88", "88mm KwK AP-Shell", "WEAPON",
+		4, 1.35, 12, 96, 15, 0.20, "",
+		"High-velocity armor-piercing cannon shell (20% Armor Pierce)."
 	)
-	card_catalog["krupp_plate"] = EquipmentCard.new(
+	ability_catalog["coax_mg"] = CombatAbility.new(
+		"coax_mg", "Twin MG-42 Salvo", "WEAPON",
+		3, 1.18, 10, 100, 12, 0.0, "",
+		"Unerring rapid-fire tracer barrage that pins evasive targets."
+	)
+	ability_catalog["morser_210"] = CombatAbility.new(
+		"morser_210", "210mm Siege Howitzer", "WEAPON",
+		6, 1.50, 18, 90, 15, 0.25, "",
+		"Devastating heavy bunker-busting shell (25% Armor Pierce)."
+	)
+	ability_catalog["flak_38"] = CombatAbility.new(
+		"flak_38", "Quad Flak-38 Battery", "WEAPON",
+		4, 1.22, 12, 98, 14, 0.10, "",
+		"Multi-barrel high-velocity autocannon burst."
+	)
+	ability_catalog["autocannon_50"] = CombatAbility.new(
+		"autocannon_50", "50mm Rapid Autocannon", "WEAPON",
+		3, 1.30, 11, 98, 20, 0.15, "",
+		"High-cyclic flanker cannon aimed at critical weakpoints."
+	)
+	ability_catalog["rocket_pod"] = CombatAbility.new(
+		"rocket_pod", "Nebelwerfer Rocket Pod", "WEAPON",
+		5, 1.45, 16, 92, 14, 0.15, "",
+		"Saturation high-angle rocket artillery barrage."
+	)
+	ability_catalog["assault_105"] = CombatAbility.new(
+		"assault_105", "105mm StuH Howitzer", "WEAPON",
+		4, 1.38, 14, 96, 15, 0.15, "",
+		"Direct-fire assault gun engineered for urban combat."
+	)
+	ability_catalog["thermite_lance"] = CombatAbility.new(
+		"thermite_lance", "Thermite Flame Lance", "WEAPON",
+		4, 1.40, 14, 96, 12, 0.25, "",
+		"Superheated plasma-diesel stream that melts hull plating."
+	)
+	ability_catalog["pile_bunker"] = CombatAbility.new(
+		"pile_bunker", "Hydraulic Pile-Bunker", "WEAPON",
+		5, 1.55, 18, 90, 22, 0.35, "",
+		"Explosive-driven tungsten spike ram (35% Armor Pierce)."
+	)
+
+	# 9 Support / Armor / Tactical TECH Abilities (Pure FF Support/Status turns — no weapon shot)
+	ability_catalog["krupp_plate"] = CombatAbility.new(
 		"krupp_plate", "Sloped Krupp Plate", "ARMOR",
-		5, 7, 7, 5, 12, 18, "Angled face-hardened steel hull deflectors."
+		4, 0.0, 0, 100, 0, 0.0, "PROTECT_RICOCHET",
+		"Angles hull glacis: +35% DEF & ricochet-blunts the next enemy attack."
 	)
-	card_catalog["coax_mg"] = EquipmentCard.new(
-		"coax_mg", "Twin MG-42 Salvo", "BALLISTIC",
-		6, 5, 6, 5, 16, 8, "Suppressive rapid-fire tracer barrage."
-	)
-	card_catalog["morser_210"] = EquipmentCard.new(
-		"morser_210", "210mm Siege Howitzer", "ARTILLERY",
-		9, 8, 3, 7, 30, 6, "Devastating heavy bunker-busting shell."
-	)
-	card_catalog["ferro_bulkhead"] = EquipmentCard.new(
+	ability_catalog["ferro_bulkhead"] = CombatAbility.new(
 		"ferro_bulkhead", "Ferro-Bunker Bulkhead", "ARMOR",
-		6, 8, 9, 6, 14, 24, "Massive dreadnought frontal armor slab."
+		5, 0.0, 0, 100, 0, 0.0, "BULKHEAD_WALL",
+		"Drops a massive frontal shield slab: +45% DEF for the entire battle."
 	)
-	card_catalog["flak_38"] = EquipmentCard.new(
-		"flak_38", "Quad Flak-38 Battery", "BALLISTIC",
-		7, 6, 5, 7, 20, 10, "Multi-barrel autocannon point defense."
-	)
-	card_catalog["autocannon_50"] = EquipmentCard.new(
-		"autocannon_50", "50mm Rapid Autocannon", "BALLISTIC",
-		6, 8, 4, 5, 18, 6, "Lightweight high-cyclic flanker cannon."
-	)
-	card_catalog["gyro_thruster"] = EquipmentCard.new(
-		"gyro_thruster", "Gyro-Flank Thrusters", "TACTICAL",
-		4, 7, 6, 8, 15, 14, "Steam-boosted lateral evasion maneuver."
-	)
-	card_catalog["recon_lock"] = EquipmentCard.new(
-		"recon_lock", "Optical Rangefinder", "TACTICAL",
-		8, 5, 5, 6, 17, 10, "Precision stereoscopic targeting telemetry."
-	)
-	card_catalog["rocket_pod"] = EquipmentCard.new(
-		"rocket_pod", "Nebelwerfer Rocket Pod", "ARTILLERY",
-		9, 6, 4, 8, 28, 6, "Saturation high-angle rocket artillery barrage."
-	)
-	card_catalog["plunging_comp"] = EquipmentCard.new(
-		"plunging_comp", "Elevation Ballistics", "TACTICAL",
-		8, 7, 5, 5, 21, 10, "Analog fire-control computer for high ground."
-	)
-	card_catalog["anchor_strut"] = EquipmentCard.new(
+	ability_catalog["anchor_strut"] = CombatAbility.new(
 		"anchor_strut", "Quad Anchor Struts", "ARMOR",
-		5, 6, 8, 6, 13, 16, "Hydraulic outriggers that brace against recoil."
+		4, 0.0, 0, 100, 0, 0.0, "ANCHOR_BRACE",
+		"Locks hydraulic outriggers: +30% DEF, +20% Accuracy & +15% Crit."
 	)
-	card_catalog["enigma_ecm"] = EquipmentCard.new(
-		"enigma_ecm", "Enigma ECM Scrambler", "TACTICAL",
-		7, 8, 6, 7, 19, 15, "Broad-spectrum radio & targeting jammer."
-	)
-	card_catalog["cmd_override"] = EquipmentCard.new(
-		"cmd_override", "Command Uplink", "TACTICAL",
-		6, 7, 7, 7, 18, 14, "Tactical battle-net coordination pulse."
-	)
-	card_catalog["assault_105"] = EquipmentCard.new(
-		"assault_105", "105mm StuH Howitzer", "BALLISTIC",
-		8, 6, 5, 6, 24, 9, "Direct-fire assault gun for urban combat."
-	)
-	card_catalog["thermite_lance"] = EquipmentCard.new(
-		"thermite_lance", "Thermite Flame Lance", "THERMAL",
-		8, 9, 4, 6, 27, 7, "Superheated plasma-diesel incinerator jet."
-	)
-	card_catalog["pile_bunker"] = EquipmentCard.new(
-		"pile_bunker", "Hydraulic Pile-Bunker", "BALLISTIC",
-		9, 5, 6, 8, 29, 8, "Explosive-driven tungsten spike ram."
-	)
-	card_catalog["ablative_shield"] = EquipmentCard.new(
+	ability_catalog["ablative_shield"] = CombatAbility.new(
 		"ablative_shield", "Reactive Shield Wall", "ARMOR",
-		6, 7, 8, 7, 14, 20, "Explosive reactive armor bricks."
+		4, 0.0, 0, 100, 0, 0.0, "REACTIVE_SHIELD",
+		"Arms explosive armor bricks: +20% DEF & halves the next hit taken."
+	)
+	ability_catalog["gyro_thruster"] = CombatAbility.new(
+		"gyro_thruster", "Gyro-Flank Thrusters", "TACTIC",
+		4, 0.0, 0, 100, 0, 0.0, "THRUSTER_EVADE",
+		"Steam-boosted lateral jets: +30% Evasion, +35% Speed & dodges/blunts next hit."
+	)
+	ability_catalog["recon_lock"] = CombatAbility.new(
+		"recon_lock", "Optical Rangefinder", "TACTIC",
+		4, 0.0, 0, 100, 0, 0.0, "RECON_LOCK",
+		"Stereoscopic target lock: +35% Accuracy, +35% Crit Chance & +20% ATK."
+	)
+	ability_catalog["plunging_comp"] = CombatAbility.new(
+		"plunging_comp", "Elevation Ballistics", "TACTIC",
+		4, 0.0, 0, 100, 0, 0.0, "BALLISTIC_PLOT",
+		"Analog fire-control solution: +30% ATK, +25% Crit & +20% Armor Pierce."
+	)
+	ability_catalog["enigma_ecm"] = CombatAbility.new(
+		"enigma_ecm", "Enigma ECM Scrambler", "TACTIC",
+		4, 0.0, 0, 100, 0, 0.0, "ECM_JAM",
+		"Broad-spectrum jammer: inflicts -30% Accuracy, -25% Speed & -20% DEF on foe."
+	)
+	ability_catalog["cmd_override"] = CombatAbility.new(
+		"cmd_override", "Command Uplink", "TACTIC",
+		5, 0.0, 0, 100, 0, 0.0, "CMD_UPLINK",
+		"HQ battle-net pulse: boosts +25% ATK, +25% DEF, +15% Speed & +15% Accuracy."
 	)
 
 func _init_chassis_catalog() -> void:
@@ -143,12 +163,13 @@ func _init_chassis_catalog() -> void:
 		"vanguard", "KPZ-09 Sturmjäger", "VANGUARD", "vanguard", "Medium Assault Walker",
 		MechData.Faction.PLAYER, Vector2i.ZERO,
 		110, 30, 34, 13, 0, 5,
-		"Backbone bipedal walker of the 8th Iron Division. Balanced Krupp armor, 88mm cannon, and dependable diesel-turbine fuel economy across all terrain."
+		"Backbone bipedal walker of the 8th Iron Division. Balanced Krupp armor, 88mm cannon, and dependable diesel-turbine fuel economy across all terrain.",
+		22, 8, 10, 14, 3, "kwk_88"
 	)
-	vanguard.deck = [
-		card_catalog["kwk_88"].duplicate_card(),
-		card_catalog["krupp_plate"].duplicate_card(),
-		card_catalog["coax_mg"].duplicate_card()
+	vanguard.abilities = [
+		ability_catalog["kwk_88"].duplicate_ability(),
+		ability_catalog["krupp_plate"].duplicate_ability(),
+		ability_catalog["coax_mg"].duplicate_ability()
 	]
 	chassis_catalog["vanguard"] = vanguard
 
@@ -157,12 +178,13 @@ func _init_chassis_catalog() -> void:
 		"goliath", "VK-100 Siegebreaker", "GOLIATH", "goliath", "Super-Heavy Dreadnought",
 		MechData.Faction.PLAYER, Vector2i.ZERO,
 		155, 44, 46, 10, 1, 4,
-		"Towering fortress mech armed with a 210mm siege mortar. Nearly impervious in frontal duels, but guzzles fuel off-road. Keep it on roads or cities."
+		"Towering fortress mech armed with a 210mm siege mortar. Nearly impervious in frontal duels, but slow and guzzles fuel off-road.",
+		12, 3, 8, 14, 3, "morser_210"
 	)
-	goliath.deck = [
-		card_catalog["morser_210"].duplicate_card(),
-		card_catalog["ferro_bulkhead"].duplicate_card(),
-		card_catalog["flak_38"].duplicate_card()
+	goliath.abilities = [
+		ability_catalog["morser_210"].duplicate_ability(),
+		ability_catalog["ferro_bulkhead"].duplicate_ability(),
+		ability_catalog["flak_38"].duplicate_ability()
 	]
 	chassis_catalog["goliath"] = goliath
 
@@ -171,13 +193,14 @@ func _init_chassis_catalog() -> void:
 		"falke", "Sd.Kfz-22 Spähfalke", "FALKE", "falke", "Light Recon Strider",
 		MechData.Faction.PLAYER, Vector2i.ZERO,
 		85, 21, 28, 17, -1, 6,
-		"High-mobility scout strider fitted with amphibious seals and high-capacity fuel tanks. Excels at crossing rivers, flanking artillery, and capturing cities."
+		"High-speed scout strider fitted with amphibious seals, gyro-thrusters, and optical targeting. Excels at high-evasion critical strikes and tactical retreats.",
+		34, 18, 16, 16, 4, "autocannon_50"
 	)
 	falke.amphibious_gear = true
-	falke.deck = [
-		card_catalog["autocannon_50"].duplicate_card(),
-		card_catalog["gyro_thruster"].duplicate_card(),
-		card_catalog["recon_lock"].duplicate_card()
+	falke.abilities = [
+		ability_catalog["autocannon_50"].duplicate_ability(),
+		ability_catalog["gyro_thruster"].duplicate_ability(),
+		ability_catalog["recon_lock"].duplicate_ability()
 	]
 	chassis_catalog["falke"] = falke
 
@@ -186,13 +209,14 @@ func _init_chassis_catalog() -> void:
 		"donner", "SPG-88 Spinne", "DONNER", "donner", "Quadruped Mountain Walker",
 		MechData.Faction.PLAYER, Vector2i.ZERO,
 		98, 26, 43, 12, 0, 5,
-		"Four-legged spider chassis engineered for climbing steep mountain crags. Unleashes devastating plunging rocket salvos from elevated ridges."
+		"Four-legged spider chassis engineered for climbing steep mountain crags. Braces with anchor struts to unleash devastating plunging rocket salvos.",
+		18, 7, 12, 15, 3, "rocket_pod"
 	)
 	donner.mountain_gear = true
-	donner.deck = [
-		card_catalog["rocket_pod"].duplicate_card(),
-		card_catalog["plunging_comp"].duplicate_card(),
-		card_catalog["anchor_strut"].duplicate_card()
+	donner.abilities = [
+		ability_catalog["rocket_pod"].duplicate_ability(),
+		ability_catalog["plunging_comp"].duplicate_ability(),
+		ability_catalog["anchor_strut"].duplicate_ability()
 	]
 	chassis_catalog["donner"] = donner
 
@@ -201,12 +225,13 @@ func _init_chassis_catalog() -> void:
 		"kommandant", "Befehls-IV Kaiserstuhl", "KOMMANDANT", "kommandant", "Tactical Command Walker",
 		MechData.Faction.PLAYER, Vector2i.ZERO,
 		120, 34, 36, 14, 0, 5,
-		"Command-and-control walker equipped with Enigma ECM jammers and well-rounded directional card ranks that excel at flipping enemy decks."
+		"Command-and-control walker equipped with Enigma ECM jammers, HQ battle-net uplinks, and a 105mm assault howitzer to cripple enemy targeting.",
+		24, 10, 12, 18, 4, "assault_105"
 	)
-	kommandant.deck = [
-		card_catalog["enigma_ecm"].duplicate_card(),
-		card_catalog["cmd_override"].duplicate_card(),
-		card_catalog["assault_105"].duplicate_card()
+	kommandant.abilities = [
+		ability_catalog["enigma_ecm"].duplicate_ability(),
+		ability_catalog["cmd_override"].duplicate_ability(),
+		ability_catalog["assault_105"].duplicate_ability()
 	]
 	chassis_catalog["kommandant"] = kommandant
 
@@ -215,12 +240,13 @@ func _init_chassis_catalog() -> void:
 		"moloch", "Sturm-V Brenner", "MOLOCH", "moloch", "Heavy Urban Brawler",
 		MechData.Faction.PLAYER, Vector2i.ZERO,
 		135, 38, 41, 12, 0, 5,
-		"Brutal close-combat walker armed with a thermite projector and hydraulic pile-bunker. Built to storm fortified cities and crush entrenched foes."
+		"Brutal close-combat walker armed with a thermite projector, tungsten pile-bunker, and explosive reactive armor bricks.",
+		19, 6, 12, 14, 3, "thermite_lance"
 	)
-	moloch.deck = [
-		card_catalog["thermite_lance"].duplicate_card(),
-		card_catalog["pile_bunker"].duplicate_card(),
-		card_catalog["ablative_shield"].duplicate_card()
+	moloch.abilities = [
+		ability_catalog["thermite_lance"].duplicate_ability(),
+		ability_catalog["pile_bunker"].duplicate_ability(),
+		ability_catalog["ablative_shield"].duplicate_ability()
 	]
 	chassis_catalog["moloch"] = moloch
 
@@ -255,8 +281,8 @@ func _init_maps() -> void:
 		"Seize the central bridgehead cities or use the northern and southern mountain ridges to rain plunging fire onto enemies bogged down in the river fords."
 	)
 	map1.tactical_tip = (
-		"TACTICAL ADVISORY: Rivers cost 4 Fuel and impose -15% ATK / -15% DEF. " +
-		"Use Roads (1 Fuel) to rush Heavy Walkers into Central Cities (+25% DEF, +Fuel/Repair), and position Quad Artillery on Elevation 3 Ridges!"
+		"TACTICAL ADVISORY: Rivers cost 4 Fuel and impose -15% ATK / -15% DEF / -10% EVA. " +
+		"Use Roads (1 Fuel) to rush Heavy Walkers into Central Cities (+25% DEF, +Fuel/EN/Repair), and position Quad Artillery on Elevation 3 Ridges!"
 	)
 	map1.terrain_codes = PackedStringArray([
 		"M M F P R R P F M M",
@@ -314,7 +340,7 @@ func _init_maps() -> void:
 		"Your defenders command the Eastern mountain plateau (Elevation 3-4). Hold the Citadel Cities until Turn 8 or annihilate the assault wave!"
 	)
 	map2.tactical_tip = (
-		"TACTICAL ADVISORY: Each level of Elevation advantage grants +12% Firepower & +10% Armor deflection! " +
+		"TACTICAL ADVISORY: Each level of Elevation advantage grants +12% Firepower, +10% Armor deflection & +6% Hit/Crit! " +
 		"Let enemy walkers burn fuel climbing the mountain switchbacks or wading the moat river, then counter-strike from Elevation 3-4!"
 	)
 	map2.terrain_codes = PackedStringArray([
@@ -418,4 +444,3 @@ func _init_maps() -> void:
 		{ "chassis": "goliath",    "callsign": "KOMMANDANTUR-4 (HQ Boss)", "pos": Vector2i(8, 3), "faction": 1 }
 	]
 	maps.append(map3)
-

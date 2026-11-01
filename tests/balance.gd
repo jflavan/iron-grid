@@ -17,17 +17,17 @@ func _ready() -> void:
 	if variant == "": variant = "full"
 	match variant:
 		"none_both":
-			BalanceProbe.def_pct = [0, 0]; BalanceProbe.card = [0, 0]; BalanceProbe.patch = [0, 0]
+			BalanceProbe.def_pct = [0, 0]; BalanceProbe.patch = [0, 0]
 		"none_ai":
-			BalanceProbe.def_pct = [15, 0]; BalanceProbe.card = [1, 0]; BalanceProbe.patch = [8, 0]
+			BalanceProbe.def_pct = [15, 0]; BalanceProbe.patch = [8, 0]
 		"none_player":
-			BalanceProbe.def_pct = [0, 15]; BalanceProbe.card = [0, 1]; BalanceProbe.patch = [0, 8]
+			BalanceProbe.def_pct = [0, 15]; BalanceProbe.patch = [0, 8]
 		"no_patch":
 			BalanceProbe.patch = [0, 0]
 		"double_both":
-			BalanceProbe.def_pct = [30, 30]; BalanceProbe.card = [2, 2]; BalanceProbe.patch = [16, 16]
+			BalanceProbe.def_pct = [30, 30]; BalanceProbe.patch = [16, 16]
 		"double_player":
-			BalanceProbe.def_pct = [30, 15]; BalanceProbe.card = [2, 1]; BalanceProbe.patch = [16, 8]
+			BalanceProbe.def_pct = [30, 15]; BalanceProbe.patch = [16, 8]
 		"no_upkeep":
 			BalanceProbe.upkeep = [0, 0]
 		"no_city_heal":
@@ -35,7 +35,7 @@ func _ready() -> void:
 		"no_city_heal_ai":
 			BalanceProbe.upkeep = [12, 0]; BalanceProbe.patch = [8, 0]
 		"no_combat":
-			BalanceProbe.def_pct = [0, 0]; BalanceProbe.card = [0, 0]
+			BalanceProbe.def_pct = [0, 0]
 	await get_tree().process_frame
 	var policies := OS.get_environment("BALANCE_POLICIES").split(",")
 	var maps := OS.get_environment("BALANCE_MAPS").split(",")

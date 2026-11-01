@@ -3,7 +3,7 @@ extends Node2D
 
 ## Root Battlefield Controller
 ## Orchestrates the Node Architecture: GlobalState, GridMap (IsoGridMap), UnitContainer,
-## Camera2D, and UIOverlay. Manages Turn Flow: Player Phase -> Skirmish Resolution Phase -> AI Phase.
+## Camera2D, and UIOverlay. Manages Turn Flow: Player Phase -> Combat Encounter Phase -> AI Phase.
 
 @onready var grid_map: IsoGridMap = $GridMap
 @onready var unit_container: UnitContainer = $UnitContainer
@@ -15,7 +15,7 @@ var selected_unit: MechUnit = null
 var _is_animating_move: bool = false
 var _phase_before_resolution: GlobalState.TurnPhase = GlobalState.TurnPhase.PLAYER_PHASE
 
-# Pending collision context for Skirmish Resolution
+# Pending collision context for Combat Resolution
 var _pending_attacker: MechUnit = null
 var _pending_defender: MechUnit = null
 var _pending_start_coords: Vector2i = Vector2i.ZERO
@@ -153,8 +153,8 @@ func _begin_player_phase(is_first_turn: bool = false) -> void:
 		_select_unit(p_units[0])
 
 ## Start-of-phase upkeep shared by both factions: clears last turn's orders, snaps sprites to their
-## grid tiles, then (optionally) applies passive diesel refuel plus City Depot resupply (+4 Fuel)
-## and repairs (+12 Armor).
+## grid tiles, then (optionally) applies passive diesel refuel, reactor energy regen, plus City Depot
+## resupply (+4 Fuel, +3 EN) and repairs (+12 Armor).
 func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 	for u in units:
 		var m := u.mech_data
@@ -164,23 +164,27 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 		if not include_refuel:
 			continue
 		var refuel_amt: int = m.passive_refuel
+		var energy_amt: int = m.passive_energy_regen
 		var tile := grid_map.get_tile(m.grid_pos)
 		if tile != null and tile.terrain_type == GridTileData.TerrainType.CITY:
 			refuel_amt += 4
+			energy_amt += 3
 			var healed: int = mini(BalanceProbe.upkeep[int(m.faction)], m.max_armor - m.current_armor)
 			m.current_armor += healed
 			BalanceProbe.upkeep_healed[int(m.faction)] += healed
 			if healed > 0:
 				GlobalState.add_log("%s repaired +%d Armor at City Depot." % [m.callsign, healed])
 		m.current_fuel = mini(m.max_fuel, m.current_fuel + refuel_amt)
+		m.current_energy = mini(m.max_energy, m.current_energy + energy_amt)
 
 ## WAIT / REFUEL order shared by both factions: ends the unit's turn entrenched (+15% DEF),
-## restores up to 5 Fuel and patches +8 Armor when holding a City. Returns the fuel gained.
+## restores up to 5 Fuel and +4 Energy, and patches +8 Armor when holding a City. Returns fuel gained.
 func _entrench_unit(m: MechData) -> int:
 	m.has_moved = true
 	m.is_entrenched = true
 	var gained_fuel: int = mini(5, m.max_fuel - m.current_fuel)
 	m.current_fuel += gained_fuel
+	m.current_energy = mini(m.max_energy, m.current_energy + 4)
 	var td := grid_map.get_tile(m.grid_pos)
 	BalanceProbe.entrench_actions[int(m.faction)] += 1
 	if td != null and td.terrain_type == GridTileData.TerrainType.CITY:
@@ -306,7 +310,7 @@ func _on_unit_movement_finished(unit: MechUnit, start_coords: Vector2i, from_coo
 	var opposing_unit := unit_container.check_opposing_collision(unit)
 	if opposing_unit != null:
 		GlobalState.add_log(
-			"%s moved (-%dF) onto %s at (%d,%d) -> SKIRMISH ENGAGED!" % [
+			"%s moved (-%dF) onto %s at (%d,%d) -> COMBAT ENGAGED!" % [
 				unit.mech_data.callsign, fuel_spent, opposing_unit.mech_data.callsign, target_coords.x, target_coords.y
 			]
 		)
@@ -342,7 +346,7 @@ func _on_wait_refuel_requested() -> void:
 	var m := selected_unit.mech_data
 	var gained_fuel: int = _entrench_unit(m)
 
-	GlobalState.add_log("%s entrenched at (%d,%d) [+15%% DEF, +%d Fuel]." % [m.callsign, m.grid_pos.x, m.grid_pos.y, gained_fuel])
+	GlobalState.add_log("%s entrenched at (%d,%d) [+15%% DEF, +%d Fuel, +4 EN]." % [m.callsign, m.grid_pos.x, m.grid_pos.y, gained_fuel])
 	grid_map.clear_highlights()
 	selected_unit.queue_redraw()
 	_check_auto_advance_player_phase()
@@ -367,7 +371,7 @@ func _on_end_turn_requested() -> void:
 	_begin_ai_phase()
 
 # =============================================================================
-# TURN FLOW: SKIRMISH RESOLUTION PHASE (AUTO-BATTLE SHOWDOWN)
+# TURN FLOW: COMBAT RESOLUTION PHASE (INTERACTIVE FF-STYLE ENCOUNTER)
 # =============================================================================
 func _trigger_skirmish_resolution(attacker: MechUnit, defender: MechUnit, start_coords: Vector2i, from_coords: Vector2i, target_coords: Vector2i) -> void:
 	_phase_before_resolution = GlobalState.current_phase
@@ -383,13 +387,14 @@ func _trigger_skirmish_resolution(attacker: MechUnit, defender: MechUnit, start_
 	var target_tile := grid_map.get_tile(target_coords)
 
 	BalanceProbe.record_skirmish(attacker.mech_data, defender.mech_data, from_tile, target_tile)
-	var result := SkirmishEngine.resolve_skirmish(
-		attacker.mech_data, defender.mech_data, from_tile, target_tile, true
+	var can_def_retreat := (unit_container.find_retreat_tile(target_coords, from_coords, grid_map) != Vector2i(-1, -1))
+	var session := SkirmishEngine.create_session(
+		attacker.mech_data, defender.mech_data, from_tile, target_tile, can_def_retreat
 	)
-	ui_overlay.show_skirmish_resolution(result)
+	ui_overlay.show_skirmish_session(session)
 
 func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
-	GlobalState.add_log("SKIRMISH RESULT: " + result.summary_headline)
+	GlobalState.add_log("COMBAT RESULT: " + result.summary_headline)
 
 	var atk_alive: bool = (_pending_attacker != null and is_instance_valid(_pending_attacker) and _pending_attacker.mech_data.is_alive())
 	var def_alive: bool = (_pending_defender != null and is_instance_valid(_pending_defender) and _pending_defender.mech_data.is_alive())
@@ -402,7 +407,7 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 		GlobalState.add_log("%s WRECKED during assault!" % [_pending_attacker.mech_data.callsign])
 		unit_container.remove_destroyed_unit(_pending_attacker)
 
-	# If both units survived, resolve node occupancy so two opposing units never stay stacked
+	# If both units survived (e.g. via RETREAT or round limit), resolve node occupancy so two opposing units never stay stacked
 	if atk_alive and def_alive:
 		if result.attacker_won_clash:
 			var retreat_coords := unit_container.find_retreat_tile(_pending_target_coords, _pending_from_coords, grid_map)
@@ -418,7 +423,7 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 				)
 				_pending_attacker.mech_data.grid_pos = _pending_target_coords
 				_pending_attacker.position = grid_map.grid_to_screen(_pending_target_coords, true)
-				GlobalState.add_log("%s pushed back to (%d,%d)!" % [_pending_defender.mech_data.callsign, retreat_coords.x, retreat_coords.y])
+				GlobalState.add_log("%s retreated to (%d,%d)!" % [_pending_defender.mech_data.callsign, retreat_coords.x, retreat_coords.y])
 			else:
 				# Defender has no retreat tile -> overrun crush damage, attacker steps back to approach tile
 				_pending_defender.mech_data.current_armor = maxi(0, _pending_defender.mech_data.current_armor - 15)
@@ -432,7 +437,7 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 					_pending_attacker.mech_data.grid_pos = fallback
 					_pending_attacker.position = grid_map.grid_to_screen(fallback, true)
 		else:
-			# Defender repelled the assault -> Attacker falls back to its approach node
+			# Attacker retreated or assault was repelled -> Attacker falls back to its approach node
 			var fallback := _get_safe_fallback_coords(_pending_attacker, _pending_from_coords, _pending_start_coords)
 			# Capture locally: _pending_attacker is cleared before the tween finishes
 			var repelled: MechUnit = _pending_attacker

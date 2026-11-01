@@ -2,8 +2,9 @@ class_name MechData
 extends RefCounted
 
 ## Core Data Structure for an Armored Fighting Walker (AFW / Mech).
-## Tracks name, grid position, faction, hull integrity, armor rating, firepower,
-## fuel capacity & fuel usage profile, and the 3-card Equipment Deck.
+## Tracks name, grid position, faction, hull integrity (HP), reactor energy (EN/MP),
+## armor rating (DEF), firepower (ATK), speed (SPD), evasion (EVA), crit chance (CRIT),
+## fuel capacity & fuel usage profile, and the 3-ability TECH Loadout.
 
 enum Faction {
 	PLAYER = 0, # 8th Iron Coalition (Olive / Amber)
@@ -20,13 +21,21 @@ var faction: Faction = Faction.PLAYER
 var grid_pos: Vector2i = Vector2i.ZERO
 var prev_grid_pos: Vector2i = Vector2i.ZERO
 
-# Core Combat & Engineering Ratings
-var max_armor: int = 100       # Total hull structural points
+# Core RPG Combat & Engineering Ratings
+var max_armor: int = 100       # Total hull structural points (HP)
 var current_armor: int = 100   # Current remaining structural integrity
-var armor_rating: int = 28     # Armor plating mitigation & defense power rating
-var firepower: int = 32        # Primary weapons offensive rating
+var armor_rating: int = 28     # Armor plating mitigation & defense power rating (DEF)
+var firepower: int = 32        # Primary weapons offensive rating (ATK)
+var speed: int = 22            # Initiative, turn order & escape speed rating (SPD)
+var evasion: int = 8           # Base evasion percentage (EVA %)
+var crit_chance: int = 10      # Base critical hit percentage (CRIT %)
 
-# Fuel & Mobility System
+# Reactor Energy Pool (MP-style resource for TECH/SYSTEMS abilities)
+var max_energy: int = 14
+var current_energy: int = 14
+var passive_energy_regen: int = 3
+
+# Fuel & Map Mobility System
 var max_fuel: int = 14         # Maximum diesel-turbine fuel capacity
 var current_fuel: int = 14     # Remaining fuel for movement
 var fuel_efficiency_mod: int = 0 # -1 = Light All-Terrain, 0 = Standard, +1 = Heavy Surcharge on rough ground
@@ -34,8 +43,9 @@ var passive_refuel: int = 4    # Diesel generator recharge at start of each turn
 var amphibious_gear: bool = false # Reduces River fuel penalty
 var mountain_gear: bool = false   # Reduces Mountain climb fuel penalty
 
-# Equipment Deck for Automated Skirmish Resolver (Triple Triad + Auto-Battler)
-var deck: Array[EquipmentCard] = []
+# Basic Weapon Animation ID + 3 Special TECH Abilities
+var basic_weapon_id: String = "kwk_88"
+var abilities: Array[CombatAbility] = []
 
 # Turn State Flags
 var has_moved: bool = false
@@ -56,7 +66,13 @@ func _init(
 	p_max_fuel: int = 12,
 	p_fuel_mod: int = 0,
 	p_refuel: int = 4,
-	p_lore: String = ""
+	p_lore: String = "",
+	p_speed: int = 22,
+	p_evasion: int = 8,
+	p_crit: int = 10,
+	p_max_energy: int = 14,
+	p_energy_regen: int = 3,
+	p_basic_weapon: String = "kwk_88"
 ) -> void:
 	unit_id = p_id
 	unit_name = p_name
@@ -75,6 +91,13 @@ func _init(
 	fuel_efficiency_mod = p_fuel_mod
 	passive_refuel = p_refuel
 	lore_blurb = p_lore
+	speed = p_speed
+	evasion = p_evasion
+	crit_chance = p_crit
+	max_energy = p_max_energy
+	current_energy = p_max_energy
+	passive_energy_regen = p_energy_regen
+	basic_weapon_id = p_basic_weapon
 
 ## Calculates exact fuel needed for this mech to step from `from_tile` to `to_tile`.
 func get_step_fuel_cost(from_tile: GridTileData, to_tile: GridTileData) -> int:
@@ -107,18 +130,23 @@ func get_armor_ratio() -> float:
 func get_fuel_ratio() -> float:
 	return clampf(float(current_fuel) / float(maxi(1, max_fuel)), 0.0, 1.0)
 
+func get_energy_ratio() -> float:
+	return clampf(float(current_energy) / float(maxi(1, max_energy)), 0.0, 1.0)
+
 func duplicate_mech() -> MechData:
 	var copy := MechData.new(
 		unit_id, unit_name, callsign, chassis_id, chassis_class, faction,
 		grid_pos, max_armor, armor_rating, firepower, max_fuel,
-		fuel_efficiency_mod, passive_refuel, lore_blurb
+		fuel_efficiency_mod, passive_refuel, lore_blurb,
+		speed, evasion, crit_chance, max_energy, passive_energy_regen, basic_weapon_id
 	)
 	copy.current_armor = current_armor
 	copy.current_fuel = current_fuel
+	copy.current_energy = current_energy
 	copy.amphibious_gear = amphibious_gear
 	copy.mountain_gear = mountain_gear
 	copy.has_moved = has_moved
 	copy.is_entrenched = is_entrenched
-	for c in deck:
-		copy.deck.append(c.duplicate_card())
+	for a in abilities:
+		copy.abilities.append(a.duplicate_ability())
 	return copy

@@ -36,7 +36,8 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 			var from_tile: GridTileData = grid_map.get_tile(path[path.size() - 2] if path.size() >= 2 else m.grid_pos)
 			var fc: Dictionary = SkirmishEngine.compute_forecast(m, tgt.mech_data, from_tile, dest_tile)
 			var dd: int = fc["est_dmg_to_def"]; var da: int = fc["est_dmg_to_atk"]
-			score = 45.0 + float(dd - da) * 1.35 + float(int(fc["atk_cards_held"]) - int(fc["def_cards_held"])) * 16.0
+			var atk_won: bool = bool(fc.get("attacker_won", dd >= da))
+			score = 45.0 + float(dd - da) * 1.35 + (24.0 if atk_won else -20.0)
 			score += float(fc["atk_mod_pct"] - fc["def_mod_pct"]) * 0.45
 			if dd >= tgt.mech_data.current_armor: score += 130.0
 			if dest_tile.is_objective and dest_tile.controlled_by != ME: score += 30.0

@@ -7,7 +7,6 @@ static var enabled: bool = false
 
 # Entrenchment / City healing values, indexed by MechData.Faction (0 = PLAYER, 1 = AI)
 static var def_pct: Array[int] = [15, 15]
-static var card: Array[int] = [1, 1]
 static var patch: Array[int] = [8, 8]
 static var upkeep: Array[int] = [12, 12]
 

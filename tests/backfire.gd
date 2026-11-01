@@ -29,7 +29,7 @@ func _init() -> void:
 							sum_cut += r0.total_dmg_to_defender - r1.total_dmg_to_defender
 							if net1 > net0:
 								worse += 1
-								if ex.size() < 3: ex.append("%s->%s %s(%d)->%s(%d): net %d -> %d, cards %d-%d -> %d-%d" % [a, d, tn[ft], fe, tn[tt], te, net0, net1, r0.atk_cards_held, r0.def_cards_held, r1.atk_cards_held, r1.def_cards_held])
+								if ex.size() < 3: ex.append("%s->%s %s(%d)->%s(%d): net %d -> %d" % [a, d, tn[ft], fe, tn[tt], te, net0, net1])
 							elif net1 < net0: better += 1
 							else: same += 1
 							if r1.attacker_won_clash and not r0.attacker_won_clash: flipped_lost += 1
