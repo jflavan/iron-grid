@@ -168,8 +168,10 @@ read from there, rather than repeated as literals in the page text.
 
 ## In-battle Field Manual (H)
 
-Unchanged except one added line in `UIOverlay.MANUAL_LINES`, section 1: attacking means moving
-onto the enemy's tile and paying its fuel cost, including chassis surcharge and climb.
+Keeps its own shorter text with one added line in section 1: attacking means moving onto the
+enemy's tile and paying its fuel cost. (After code review: the list became
+`UIOverlay.manual_lines()`, which reads its numbers from the same constants as the Rules page, and
+it points to the Rules page.)
 
 ## Docs
 
