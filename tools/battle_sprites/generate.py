@@ -64,8 +64,17 @@ def write_mech(out, sheet_name, defn, flags=(), braced=False, variants=None):
         f.write("\n")
 
 
+def write_attachments(out):
+    os.makedirs(os.path.join(out, "fx"), exist_ok=True)
+    for name, (w, h, parts) in chassis_mod.ATTACHMENTS.items():
+        buf = raster.render(w, h, parts)
+        for fac in FACTIONS:
+            png.write_png(os.path.join(out, "fx", "%s_%s.png" % (name, fac)), w, h, raster.colorize(buf, w, h, raster.palette_for(fac)))
+
+
 def generate_all(out):
     os.makedirs(os.path.join(out, "mechs"), exist_ok=True)
+    write_attachments(out)
     variant_map = {}
     for vname, (base, _flags, _braced) in chassis_mod.VARIANTS.items():
         variant_map.setdefault(base, {})[vname.split("_", 1)[1]] = vname

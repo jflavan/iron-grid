@@ -29,6 +29,8 @@ def solve_knee(hip, ankle, lt, ls, forward=1):
     n = _perp(u)
     k1 = (p[0] + n[0] * hh, p[1] + n[1] * hh)
     k2 = (p[0] - n[0] * hh, p[1] - n[1] * hh)
+    if forward == "up":  # spider legs: knee always above the hip-ankle line
+        return k1 if k1[1] < k2[1] else k2
     if forward > 0:
         return k1 if k1[0] > k2[0] else k2
     return k1 if k1[0] < k2[0] else k2
@@ -59,7 +61,7 @@ def leg_parts(leg, off):
     out.append({"p": bone(knee, ankle, leg["sw"], leg["sw"] + 1, 1), "k": leg["k"]})
     out.append({"c": [ankle[0], ankle[1] - 1, 3], "k": "dark"})
     out.append({"p": bone(hip, knee, leg["tw"], leg["tw"] - 1, 2), "k": leg["k"]})
-    if leg.get("piston"):
+    if leg.get("piston") and leg.get("forward", 1) != "up":
         tu = _norm((knee[0] - hip[0], knee[1] - hip[1]))
         su = _norm((ankle[0] - knee[0], ankle[1] - knee[1]))
         tn, sn = _perp(tu), _perp(su)

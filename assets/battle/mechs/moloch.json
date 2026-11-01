@@ -1,6 +1,10 @@
 {
  "anchors": {
   "attach": {},
+  "bricks": [
+   56,
+   30
+  ],
   "feet": [
    55,
    115
@@ -151,6 +155,8 @@
   "lunge",
   "angle"
  ],
- "variants": {},
+ "variants": {
+  "spent": "moloch_spent"
+ },
  "w": 128
 }

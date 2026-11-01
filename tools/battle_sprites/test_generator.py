@@ -69,6 +69,35 @@ class GeneratorTests(unittest.TestCase):
         for pose in ("idle0", "idle5", "brace", "chamber", "recoil0", "recoil3", "hit", "stagger", "lunge", "angle"):
             self.assertIn(pose, meta["poses"])
 
+    def test_all_chassis_present(self):
+        weapons = {
+            "vanguard": ["kwk_88", "coax_mg"], "goliath": ["morser_210", "flak_38"],
+            "falke": ["autocannon_50"], "donner": ["rocket_pod"],
+            "kommandant": ["assault_105"], "moloch": ["thermite_lance", "pile_bunker"],
+        }
+        sheets = list(weapons) + ["moloch_spent", "donner_braced"]
+        for name in sheets:
+            for fac in ("coalition", "syndikat"):
+                self.assertTrue(os.path.exists(os.path.join(self.tmp, "mechs", "%s_%s.png" % (name, fac))), name)
+            with open(os.path.join(self.tmp, "mechs", name + ".json")) as f:
+                meta = json.load(f)
+            base = name.split("_")[0]
+            for card in weapons[base]:
+                self.assertIn(card, meta["anchors"]["muzzles"], name)
+            self.assertIn(meta["basic_weapon"], weapons[base])
+        with open(os.path.join(self.tmp, "mechs", "moloch.json")) as f:
+            self.assertEqual(json.load(f)["variants"], {"spent": "moloch_spent"})
+        with open(os.path.join(self.tmp, "mechs", "donner_braced.json")) as f:
+            braced = json.load(f)
+        self.assertEqual({tuple(braced["pose_off"]["idle%d" % i])[1] for i in range(braced["idle_frames"])}, {3})
+        for att in ("slab", "mast", "rangefinder"):
+            for fac in ("coalition", "syndikat"):
+                self.assertTrue(os.path.exists(os.path.join(self.tmp, "fx", "%s_%s.png" % (att, fac))), att)
+        with open(os.path.join(self.tmp, "mechs", "kommandant.json")) as f:
+            self.assertIn("mast", json.load(f)["anchors"]["attach"])
+        with open(os.path.join(self.tmp, "mechs", "falke.json")) as f:
+            self.assertIn("rangefinder", json.load(f)["anchors"]["attach"])
+
     def test_deterministic(self):
         with tempfile.TemporaryDirectory() as d:
             generate.generate_all(d)
