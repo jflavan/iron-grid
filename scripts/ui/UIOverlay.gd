@@ -136,16 +136,17 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
 		if id != "":
-			_activate(id)
+			# Mark it handled first: MENU / debrief rows change scene and take this overlay out of the tree.
 			get_viewport().set_input_as_handled()
+			_activate(id)
 	elif show_game_over_modal and event is InputEventKey and event.pressed and not event.echo:
+		get_viewport().set_input_as_handled()   # before _activate: "return to menu" leaves the tree
 		match event.keycode:
 			KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT:
 				_debrief_row = 1 - _debrief_row
 				SoundManager.play("ui_click")
 			KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 				_activate("debrief:%d" % _debrief_row)
-		get_viewport().set_input_as_handled()
 
 func _activate(id: String) -> void:
 	match id:

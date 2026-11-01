@@ -33,7 +33,7 @@ func _ready() -> void:
 		"test_rules_chapters_fit", "test_rules_numbers_come_from_data", "test_rules_navigation",
 		"test_hud_plan_clears_after_order", "test_rules_offense_final_turn", "test_rules_example_follows_chassis_data",
 		"test_next_turn_fuel_matches_upkeep", "test_manual_numbers_come_from_data", "test_rules_render_is_cached",
-		"test_strike_plan_reused_until_state_changes",
+		"test_strike_plan_reused_until_state_changes", "test_overlay_click_that_leaves_scene",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -1188,5 +1188,28 @@ func test_strike_plan_reused_until_state_changes() -> void:
 	var spinne := _unit_by_callsign(bf, "SPINNE-4")
 	spinne.mech_data.grid_pos = Vector2i(9, 7)
 	_check(bf.strike_plan_for(Vector2i(8, 7)) == null, "the cache never answers for a tile the enemy left")
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_overlay_click_that_leaves_scene() -> void:
+	# Clicking MENU changes scene, which takes the overlay out of the tree inside _activate; the
+	# handler must not then touch get_viewport() (it is null). The runner fails on that SCRIPT ERROR.
+	var bf := await _spawn_iron_bridge()
+	var ov := bf.ui_overlay
+	ov.action_return_menu_requested.disconnect(bf._on_return_menu_requested)
+	ov.action_return_menu_requested.connect(func(): remove_child(bf))
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	var rect := Rect2()
+	for sp in ov._hot._spots:
+		if sp["id"] == "menu":
+			rect = sp["rect"]
+	_check(rect.size != Vector2.ZERO, "precondition: MENU hotspot exists")
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	ev.position = rect.get_center() * ov._scale
+	ov._input(ev)
+	_check(not bf.is_inside_tree(), "the click took the battlefield out of the tree")
 	bf.queue_free()
 	await get_tree().process_frame
