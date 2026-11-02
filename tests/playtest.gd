@@ -57,6 +57,7 @@ func _run_rule_checks() -> void:
 	await _check_victory_rules()
 	_check_iron_bridge_layout()
 	await _check_iron_bridge_holdouts_lose()
+	await _check_tactical_bot_refaces()
 
 func _tile(t: GridTileData.TerrainType, elev: int) -> GridTileData:
 	return GridTileData.new(Vector2i.ZERO, t, elev)
@@ -327,7 +328,30 @@ func _check_iron_bridge_holdouts_lose() -> void:
 		_check(GlobalState.last_battle_winner == 1,
 			"iron bridge: the passive '%s' line loses (%s)" % [policy, GlobalState.last_battle_reason])
 
-const HOLDOUT_POSTS := {"TITAN-2": Vector2i(3, 6), "IRON-1": Vector2i(3, 1), "SWIFT-3": Vector2i(1, 7), "CRAG-4": Vector2i(1, 0)}
+## The balance bot must reface like the Syndicate AI does after its moves, through the player's own
+## rotate action, or bot win rates understate a player under the facing rules.
+func _check_tactical_bot_refaces() -> void:
+	var bf := await _spawn_battlefield(0)
+	var iron: MechUnit = null
+	for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
+		if u.mech_data.callsign.begins_with("IRON-1"):
+			iron = u
+	iron.mech_data.has_moved = true
+	iron.mech_data.facing = Vector2i(0, 1)
+	bf._select_unit(iron)
+	var want := AIController.choose_best_facing(iron.mech_data.grid_pos, bf.unit_container.get_faction_units(MechData.Faction.AI))
+	_check(want != Vector2i(0, 1), "precondition: IRON-1 starts facing away from the nearest Syndikat walker")
+	var bot: Object = load("res://tests/TacticalBot.gd").new()
+	_check(bot.has_method("reface_step"), "TacticalBot has a reface_step for the player rotate action")
+	var steps := 0
+	while steps < 6 and bot.has_method("reface_step") and bot.call("reface_step", bf):
+		steps += 1
+	_check(iron.mech_data.facing == want, "TacticalBot refaces an ordered walker toward the nearest Syndikat walker (%s, want %s)" % [iron.mech_data.facing, want])
+	_check(steps > 0 and steps <= 3, "refacing takes 1-3 rotate actions (took %d)" % steps)
+	_check(not bot.call("reface_step", bf) if bot.has_method("reface_step") else false, "reface_step reports nothing left to do once facing the threat")
+	await _free_battlefield(bf)
+
+const HOLDOUT_POSTS :={"TITAN-2": Vector2i(3, 6), "IRON-1": Vector2i(3, 1), "SWIFT-3": Vector2i(1, 7), "CRAG-4": Vector2i(1, 0)}
 
 ## Moves each walker to its post once, then only ever WAITs. Never attacks.
 func _holdout_policy_step(bf: Battlefield, policy: String, stats: Dictionary) -> void:

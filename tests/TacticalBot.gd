@@ -40,11 +40,16 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 			if tgt == null: continue
 			var from_pos: Vector2i = path[path.size() - 2] if path.size() >= 2 else m.grid_pos
 			var from_tile: GridTileData = grid_map.get_tile(from_pos)
-			var fc: Dictionary = SkirmishEngine.compute_forecast(m, tgt.mech_data, from_tile, dest_tile)
+			var form_ctx: Dictionary = uc.get_formation_context(dest_pos, from_pos, int(ME))
+			var fc: Dictionary = SkirmishEngine.compute_forecast(m, tgt.mech_data, from_tile, dest_tile, form_ctx)
 			var dd: int = fc["est_dmg_to_def"]; var da: int = fc["est_dmg_to_atk"]
 			var atk_won: bool = bool(fc.get("attacker_won", dd >= da))
 			score = 45.0 + float(dd - da) * 1.35 + (24.0 if atk_won else -20.0)
 			score += float(fc["atk_mod_pct"] - fc["def_mod_pct"]) * 0.45
+			# Same flank / rear preference as AIController
+			var angle := str(fc.get("approach_angle", "FRONT"))
+			if angle == "REAR": score += 45.0
+			elif angle == "FLANK": score += 20.0
 			if dd >= tgt.mech_data.current_armor: score += 130.0 if da < m.current_armor else 35.0
 			if dest_tile.is_objective and dest_tile.controlled_by != ME: score += 30.0
 			if deny.has(dest_pos): score += 150.0
@@ -69,6 +74,21 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 		var near: Array[Dictionary] = cands.filter(func(c): return c["score"] >= best["score"] - jitter)
 		return near[rng.randi_range(0, near.size() - 1)]
 	return best
+
+## Turns the selected player walker one step toward the nearest Syndikat walker (AIController's
+## facing rule) through the player's rotate action (the T key). The balance policy calls it before
+## each order, so a walker that WAITs faces the threat, and again after a move, which resets facing.
+## Returns true when it rotated; false when it already faces the threat or can't rotate.
+static func reface_step(bf: Battlefield) -> bool:
+	var sel: MechUnit = bf.selected_unit
+	if sel == null or not is_instance_valid(sel) or sel.mech_data.faction != ME:
+		return false
+	var want := AIController.choose_best_facing(sel.mech_data.grid_pos, bf.unit_container.get_faction_units(FOE))
+	var before: Vector2i = sel.mech_data.facing
+	if before == want:
+		return false
+	bf._rotate_selected_unit()
+	return sel.mech_data.facing != before
 
 ## Syndicate-held objectives that would hand the Syndicate the win at turn end (Citadel fully lost).
 static func _deny_tiles(grid_map: IsoGridMap, map_def: MapDefinition) -> Array[Vector2i]:
