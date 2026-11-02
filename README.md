@@ -47,7 +47,7 @@ Each turn cycles through three phases:
 
 ### Victory Conditions
 - **Annihilation** of either side ends the mission immediately.
-- **Objective victories** (holding every bridgehead, holding a Syndicate HQ bunker, or the Syndicate overrunning every Citadel node) are confirmed at the **end of a full turn**, so a capture has to survive the enemy's response phase.
+- **Objective victories** (holding every Iron Bridge objective, holding a Syndicate HQ bunker, or the Syndicate overrunning every Citadel node) are confirmed at the **end of a full turn**, so a capture has to survive the enemy's response phase.
 - When the **turn limit** expires, the mission is scored by its strategic profile (bridgehead majority, Citadel held, or HQ not taken).
 
 ---
@@ -98,7 +98,7 @@ Stats are read from `autoload/GlobalState.gd`; `EN (+n)` is the reactor pool and
 ## Battle Arenas (3 Maps)
 
 1. **Operation: Iron Bridge (`PITCHED BATTLE`)**
-   - Symmetrical meeting engagement across the Rhine-Fulda river valley (`0m`) spanned by two transit road bridges (`100m`), four bridgehead cities (`200m`), and flanking mountain ridges (`300m`).
+   - Symmetrical meeting engagement across the Rhine-Fulda river valley (`0m`) spanned by two transit road bridges (`100m`), with four bank bridgehead cities and a neutral **Central Island Depot** between the bridges (all `100m`, level with the roads), and flanking mountain ridges (`300m`). Each side starts with its two bank bridgeheads; with five objectives a 2–2 standoff is impossible, so the depot decides the battle and digging in can't run out the clock.
 2. **Bastion Redoubt (`FORTIFIED DEFENSE`)**
    - Asymmetric defense of Citadel Höhenburg (`300m–400m`) against a numerically superior 5-walker Syndicate assault column advancing up the western valley roads.
 3. **Breakthrough at Kessel-9 (`BLITZKRIEG OFFENSE`)**

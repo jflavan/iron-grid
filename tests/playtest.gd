@@ -55,6 +55,9 @@ func _run_rule_checks() -> void:
 	_check_pathfinding_matches_bruteforce()
 	_check_skirmish_engine()
 	await _check_victory_rules()
+	_check_iron_bridge_layout()
+	await _check_iron_bridge_holdouts_lose()
+	await _check_tactical_bot_refaces()
 
 func _tile(t: GridTileData.TerrainType, elev: int) -> GridTileData:
 	return GridTileData.new(Vector2i.ZERO, t, elev)
@@ -178,7 +181,7 @@ func _check_victory_rules() -> void:
 		bf.grid_map.get_tile(objs[i]["pos"]).controlled_by = 0 if i < 3 else 1
 	GlobalState.turn_number = bf.current_map_def.turn_limit
 	_check(bf._check_victory_conditions(true), "pitched: turn-limit check ends the game")
-	_check(GlobalState.last_battle_winner == 0, "pitched: 3/4 objectives at turn limit is a player win")
+	_check(GlobalState.last_battle_winner == 0, "pitched: a 3-objective majority at turn limit is a player win")
 	await _free_battlefield(bf)
 
 	# DEFENSE: losing every citadel node at turn end is a defeat
@@ -275,6 +278,8 @@ func _play_mission(map_idx: int, policy: String) -> void:
 		if GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not bf._is_animating_move:
 			if policy == "turtle":
 				_turtle_policy_step(bf, stats)
+			elif policy.begins_with("holdout"):
+				_holdout_policy_step(bf, policy, stats)
 			elif policy.begins_with("random"):
 				_random_policy_step(bf, stats)
 			else:
@@ -292,6 +297,82 @@ func _play_mission(map_idx: int, policy: String) -> void:
 		GlobalState.turn_number, stats["moves"], stats["waits"], stats["skirmishes"], GlobalState.last_battle_reason
 	])
 	await _free_battlefield(bf)
+
+# Iron Bridge must not be winnable by digging in and running out the clock. Five objectives rule out
+# a 2-2 tie, the neutral Central Island Depot decides the default standoff, and every city sits level
+# with the roads so a garrison can be assaulted without an uphill penalty.
+const IRON_BRIDGE_CENTER := Vector2i(4, 4)
+const IRON_BRIDGE_BANK_CITIES: Array[Vector2i] = [Vector2i(3, 1), Vector2i(6, 1), Vector2i(3, 6), Vector2i(6, 6)]
+
+func _check_iron_bridge_layout() -> void:
+	var m: MapDefinition = GlobalState.maps[0]
+	_check(m.objectives.size() == 5, "iron bridge: five objectives, so the bridgeheads can't split 2-2 (got %d)" % m.objectives.size())
+	var grid := IsoGridMap.new()
+	grid.load_from_definition(m)
+	var center: GridTileData = grid.get_tile(IRON_BRIDGE_CENTER)
+	_check(center != null and center.is_objective and center.terrain_type == GridTileData.TerrainType.CITY,
+		"iron bridge: the Central Island Depot at (4,4) is an objective city")
+	_check(center != null and center.controlled_by == -1, "iron bridge: the Central Island Depot starts neutral")
+	_check(center != null and center.elevation == 1, "iron bridge: the Central Island Depot is level with the bridges (height 1)")
+	for c in IRON_BRIDGE_BANK_CITIES:
+		var td: GridTileData = grid.get_tile(c)
+		_check(td.terrain_type == GridTileData.TerrainType.CITY and td.elevation == 1,
+			"iron bridge: bank city %s is level with the road (height %d)" % [c, td.elevation])
+	grid.free()
+
+## Both passive lines that used to win Iron Bridge must now lose it: holding the two western cities
+## with the Falke and Donner parked on the corner mountains, and the same after grabbing the centre.
+func _check_iron_bridge_holdouts_lose() -> void:
+	for policy in ["holdout", "holdout_center"]:
+		await _play_mission(0, policy)
+		_check(GlobalState.last_battle_winner == 1,
+			"iron bridge: the passive '%s' line loses (%s)" % [policy, GlobalState.last_battle_reason])
+
+## The balance bot must reface like the Syndicate AI does after its moves, through the player's own
+## rotate action, or bot win rates understate a player under the facing rules.
+func _check_tactical_bot_refaces() -> void:
+	var bf := await _spawn_battlefield(0)
+	var iron: MechUnit = null
+	for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
+		if u.mech_data.callsign.begins_with("IRON-1"):
+			iron = u
+	iron.mech_data.has_moved = true
+	iron.mech_data.facing = Vector2i(0, 1)
+	bf._select_unit(iron)
+	var want := AIController.choose_best_facing(iron.mech_data.grid_pos, bf.unit_container.get_faction_units(MechData.Faction.AI))
+	_check(want != Vector2i(0, 1), "precondition: IRON-1 starts facing away from the nearest Syndikat walker")
+	var bot: Object = load("res://tests/TacticalBot.gd").new()
+	_check(bot.has_method("reface_step"), "TacticalBot has a reface_step for the player rotate action")
+	var steps := 0
+	while steps < 6 and bot.has_method("reface_step") and bot.call("reface_step", bf):
+		steps += 1
+	_check(iron.mech_data.facing == want, "TacticalBot refaces an ordered walker toward the nearest Syndikat walker (%s, want %s)" % [iron.mech_data.facing, want])
+	_check(steps > 0 and steps <= 3, "refacing takes 1-3 rotate actions (took %d)" % steps)
+	_check(not bot.call("reface_step", bf) if bot.has_method("reface_step") else false, "reface_step reports nothing left to do once facing the threat")
+	await _free_battlefield(bf)
+
+const HOLDOUT_POSTS :={"TITAN-2": Vector2i(3, 6), "IRON-1": Vector2i(3, 1), "SWIFT-3": Vector2i(1, 7), "CRAG-4": Vector2i(1, 0)}
+
+## Moves each walker to its post once, then only ever WAITs. Never attacks.
+func _holdout_policy_step(bf: Battlefield, policy: String, stats: Dictionary) -> void:
+	var sel: MechUnit = bf.selected_unit
+	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
+		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
+			if not u.mech_data.has_moved:
+				bf._select_unit(u)
+				return
+		return
+	var m := sel.mech_data
+	var post: Vector2i = HOLDOUT_POSTS.get(m.callsign.get_slice(" ", 0), m.grid_pos)
+	if policy == "holdout_center" and m.callsign.begins_with("SWIFT-3"):
+		post = IRON_BRIDGE_CENTER
+	var info: Dictionary = bf.grid_map.reachable_info.get(post, {})
+	if post != m.grid_pos and not info.is_empty() and not info["is_attack"]:
+		stats["moves"] += 1
+		bf._on_tile_clicked(post, null)
+	else:
+		stats["waits"] += 1
+		bf._on_wait_refuel_requested()
 
 func _turtle_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 	if GlobalState.turn_number % 2 == 0:
