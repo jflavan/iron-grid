@@ -802,7 +802,25 @@ func _right_text(s: String, right_x: int, y: int, col: Color) -> void:
 
 func _draw_banner() -> void:
 	var b := current_beat()
-	if phase == "command_select":
+	if phase == "intro" and result != null:
+		var intro_lines: Array[String] = []
+		if result.approach_angle == "REAR":
+			intro_lines.append("TACTICAL AMBUSH // REAR ATTACK (+30% FP)")
+		elif result.approach_angle == "FLANK":
+			intro_lines.append("FLANKING ASSAULT // SIDE ANGLE (+15% FP)")
+		else:
+			intro_lines.append("HEAD-ON ENGAGEMENT // FRONTAL CLASH")
+		if not result.tactical_tags.is_empty():
+			intro_lines.append(result.tactical_tags[0])
+		var w := 180
+		for l in intro_lines:
+			w = maxi(w, PixelFont.text_width(l) + 16)
+		w = mini(w, 352)
+		var r := Rect2(roundf((W - w) / 2.0), 4, w, 6 + intro_lines.size() * 10)
+		BattleFX.panel(self, r)
+		for i in intro_lines.size():
+			PixelFont.draw_centered(self, intro_lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_CURSOR)
+	elif phase == "command_select":
 		var coa_data: MechData = coalition_mech()["data"]
 		var top_lines: Array[String] = []
 		if in_tech_submenu and tech_cursor >= 0 and tech_cursor < coa_data.abilities.size():

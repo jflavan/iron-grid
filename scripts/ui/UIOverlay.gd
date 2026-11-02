@@ -8,6 +8,8 @@ extends CanvasLayer
 ## Up/Down + Enter.
 
 signal action_wait_refuel_requested()
+signal action_rotate_requested()
+signal action_next_mech_requested()
 signal action_end_turn_requested()
 signal action_center_camera_requested()
 signal action_return_menu_requested()
@@ -120,8 +122,14 @@ func trigger_game_over() -> void:
 func _is_player_command_time() -> bool:
 	return GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not skirmish_modal.visible and not show_game_over_modal
 
+func _can_turn() -> bool:
+	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER
+
 func _can_wait() -> bool:
 	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and not selected_mech.has_moved
+
+func _can_next_mech() -> bool:
+	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and selected_mech.has_moved
 
 # ---------------------------------------------------------------- input
 func _input(event: InputEvent) -> void:
@@ -159,6 +167,10 @@ func _activate(id: String) -> void:
 		"menu":
 			SoundManager.play("ui_cancel")
 			action_return_menu_requested.emit()
+		"turn":
+			action_rotate_requested.emit()
+		"next_mech":
+			action_next_mech_requested.emit()
 		"wait":
 			SoundManager.play("ui_confirm")
 			action_wait_refuel_requested.emit()
@@ -296,6 +308,7 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	y += port.size.y + 4
 	var status_txt := "ENTRENCHED +15% DEF" if m.is_entrenched else ("ORDER COMPLETE" if m.has_moved else "SYSTEMS READY")
 	_t(status_txt, Vector2(x, y), CrtUI.C_LABEL if not m.has_moved else CrtUI.C_LABEL_DIM)
+	_tr(m.get_facing_arrow(), x + w, y, CrtUI.C_CURSOR)
 	y += 12
 
 	_t("HULL", Vector2(x, y), CrtUI.C_LABEL)
@@ -458,8 +471,12 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 ## Bottom-right command menu; bottom edge sits at rect.position.y.
 func _draw_commands(rect: Rect2) -> void:
 	var rows: Array = []
+	if _can_turn():
+		rows.append(["turn", "TURN / FACE", "T"])
 	if _can_wait():
 		rows.append(["wait", "WAIT / REFUEL +5F", "R"])
+	elif _can_next_mech():
+		rows.append(["next_mech", "NEXT MECH", "SPACE"])
 	if _is_player_command_time():
 		rows.append(["end_turn", "END TURN", "E"])
 	if rows.is_empty():

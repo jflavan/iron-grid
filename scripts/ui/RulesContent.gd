@@ -150,15 +150,17 @@ static func _clash() -> Dictionary:
 	var S := SkirmishEngine
 	return {"title": "THE CLASH", "blocks": [
 		{"p": "Moving onto an enemy starts a turn-based battle. Turn order each round is by SPD. The attacker gets +%d SPD in round 1." % S.ROUND1_ATTACKER_SPD_BONUS},
+		{"key": "FACING: REAR attack grants +%d%% ATK, %+d%% DEF shred, +%d%% Hit/Crit, +%d SPD and BYPASSES entrenchment! FLANK attack grants +%d%% ATK, %+d%% DEF shred and halves entrenchment." % [
+			S.REAR_ATK_FP_PCT, S.REAR_DEF_ARMOR_PCT, S.REAR_ATK_ACC_PCT, S.REAR_ATK_SPD_BONUS, S.FLANK_ATK_FP_PCT, S.FLANK_DEF_ARMOR_PCT]},
+		{"p": "FORMATIONS: Each adjacent ally adds +%d%% ATK crossfire (opposite = +%d%% pincer). Each defender ally adds +%d%% DEF escort. Press T to turn in place." % [
+			S.ADJ_CROSSFIRE_FP_PER_ALLY, S.PINCER_CROSSFIRE_FP_BONUS, S.ADJ_ESCORT_DEF_PER_ALLY]},
 		{"p": "ENTRENCHED (the defender used WAIT/REFUEL): %s DEF, +%d SPD in round 1 and +%d after, %s EVA and %s hit." % [
 			_pct(BalanceProbe.def_pct[0]), S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS, S.ENTRENCHED_SPD_BONUS, _pct(S.ENTRENCHED_EVA_BONUS), _pct(S.ENTRENCHED_ACC_BONUS)]},
-		{"key": "ATTACK: the chassis's basic gun, 0 EN."},
-		{"key": "TECH: heavy weapons and support systems paid with reactor EN. ARMOR and TACTIC TECHs work once per battle."},
-		{"key": "DEFEND: the next enemy shot that lands does %d%% damage, and you gain +%d EN. A guard lasts through misses and can't be stacked." % [
+		{"key": "ATTACK: basic gun (0 EN). TECH: special systems (uses EN). DEFEND: next hit %d%% (+%d EN)." % [
 			int(round(S.GUARD_DAMAGE_MULT * 100.0)), S.DEFEND_EN_GAIN]},
-		{"key": "RETREAT: break off. The chance is %d%% %+d%% per point of SPD lead, between %d%% and %d%%. A defender with no open tile behind it can't retreat." % [
+		{"key": "RETREAT: break off (%d%% %+d%%/SPD lead, between %d%%-%d%%). Defender must have an open tile behind." % [
 			S.ESCAPE_BASE_PCT, S.ESCAPE_PER_SPD_PCT, S.ESCAPE_MIN_PCT, S.ESCAPE_MAX_PCT]},
-		{"p": "EN regenerates every turn on the map. A battle lasts until a walker is wrecked, one side retreats, or %d rounds pass." % S.MAX_BATTLE_ROUNDS},
+		{"p": "A battle lasts until a walker is wrecked, one retreats, or %d rounds pass." % S.MAX_BATTLE_ROUNDS},
 	]}
 
 static func _after_clash() -> Dictionary:

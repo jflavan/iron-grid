@@ -34,6 +34,11 @@ func _ready() -> void:
 		"test_hud_plan_clears_after_order", "test_rules_offense_final_turn", "test_rules_example_follows_chassis_data",
 		"test_next_turn_fuel_matches_upkeep", "test_manual_numbers_come_from_data", "test_rules_render_is_cached",
 		"test_strike_plan_reused_until_state_changes", "test_overlay_click_that_leaves_scene",
+		"test_facing_direction_vectors", "test_back_attack_combat_modifiers", "test_flanking_combat_modifiers",
+		"test_adjacent_formation_crossfire_and_escort", "test_forecast_matches_directional_resolution",
+		"test_unit_container_formation_context", "test_in_place_rotation_and_movement_facing",
+		"test_ai_prefers_flank_and_rear_attacks",
+		"test_player_and_ai_reface_after_movement",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -1211,5 +1216,284 @@ func test_overlay_click_that_leaves_scene() -> void:
 	ev.position = rect.get_center() * ov._scale
 	ov._input(ev)
 	_check(not bf.is_inside_tree(), "the click took the battlefield out of the tree")
+	bf.queue_free()
+	await get_tree().process_frame
+
+# ---------------------------------------------------------------- Directional Facing & Formations
+func test_facing_direction_vectors() -> void:
+	var m := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "T", Vector2i(2, 2))
+	m.facing = Vector2i(1, 0)
+	_check(m.get_facing_name() == "SE", "Vector2i(1, 0) is SE")
+	m.facing = Vector2i(0, 1)
+	_check(m.get_facing_name() == "SW", "Vector2i(0, 1) is SW")
+	m.facing = Vector2i(-1, 0)
+	_check(m.get_facing_name() == "NW", "Vector2i(-1, 0) is NW")
+	m.facing = Vector2i(0, -1)
+	_check(m.get_facing_name() == "NE", "Vector2i(0, -1) is NE")
+
+	m.set_facing(Vector2i(5, 1))
+	_check(m.facing == Vector2i(1, 0), "set_facing(5, 1) normalizes to (1, 0)")
+	m.set_facing(Vector2i(1, 4))
+	_check(m.facing == Vector2i(0, 1), "set_facing(1, 4) normalizes to (0, 1)")
+
+	# Test relative approach angles for all 4 defender facings
+	var T := GridTileData.TerrainType
+	var target := GridTileData.new(Vector2i(2, 2), T.PLAIN, 1)
+	var from_west := GridTileData.new(Vector2i(1, 2), T.PLAIN, 1) # approach is +X (1, 0)
+	var from_east := GridTileData.new(Vector2i(3, 2), T.PLAIN, 1) # approach is -X (-1, 0)
+	var from_north := GridTileData.new(Vector2i(2, 1), T.PLAIN, 1) # approach is +Y (0, 1)
+	var from_south := GridTileData.new(Vector2i(2, 3), T.PLAIN, 1) # approach is -Y (0, -1)
+
+	var def_se := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "D", Vector2i(2, 2))
+	def_se.facing = Vector2i(1, 0) # Defender faces SE (+X)
+	var r_rear := SkirmishEngine._init_result_modifiers(m, def_se, from_west, target)
+	_check(r_rear.approach_angle == "REAR", "attacking from behind facing SE is REAR")
+	var r_front := SkirmishEngine._init_result_modifiers(m, def_se, from_east, target)
+	_check(r_front.approach_angle == "FRONT", "attacking into facing SE is FRONT")
+	var r_flank_n := SkirmishEngine._init_result_modifiers(m, def_se, from_north, target)
+	_check(r_flank_n.approach_angle == "FLANK", "attacking from north into facing SE is FLANK")
+	var r_flank_s := SkirmishEngine._init_result_modifiers(m, def_se, from_south, target)
+	_check(r_flank_s.approach_angle == "FLANK", "attacking from south into facing SE is FLANK")
+
+func test_back_attack_combat_modifiers() -> void:
+	var T := GridTileData.TerrainType
+	var from_tile := GridTileData.new(Vector2i(2, 2), T.PLAIN, 1)
+	var target_tile := GridTileData.new(Vector2i(3, 2), T.PLAIN, 1) # approach is +X (1, 0)
+
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "ATK", Vector2i(2, 2))
+	var def_front := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "DEF_F", Vector2i(3, 2))
+	def_front.facing = Vector2i(-1, 0) # Facing -X -> attacker coming from +X is FRONTAL
+
+	var def_rear := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "DEF_R", Vector2i(3, 2))
+	def_rear.facing = Vector2i(1, 0) # Facing +X -> attacker coming from -X into it is REAR
+
+	var res_front := SkirmishEngine.resolve_skirmish(atk, def_front, from_tile, target_tile, false, true)
+	var res_rear := SkirmishEngine.resolve_skirmish(atk, def_rear, from_tile, target_tile, false, true)
+
+	_check(res_rear.approach_angle == "REAR", "approach classified as REAR")
+	_check(res_rear.atk_directional_mod_pct == SkirmishEngine.REAR_ATK_FP_PCT, "rear attack adds +%d%% ATK" % SkirmishEngine.REAR_ATK_FP_PCT)
+	_check(res_rear.def_directional_mod_pct == SkirmishEngine.REAR_DEF_ARMOR_PCT, "rear attack shreds %d%% DEF" % SkirmishEngine.REAR_DEF_ARMOR_PCT)
+	_check(res_rear.total_dmg_to_defender > res_front.total_dmg_to_defender, "rear attack deals significantly more damage (%d vs %d)" % [res_rear.total_dmg_to_defender, res_front.total_dmg_to_defender])
+
+	# Entrenchment bypass on back attacks
+	var def_ent_front := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "DEF_EF", Vector2i(3, 2))
+	def_ent_front.facing = Vector2i(-1, 0)
+	def_ent_front.is_entrenched = true
+	var def_ent_rear := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "DEF_ER", Vector2i(3, 2))
+	def_ent_rear.facing = Vector2i(1, 0)
+	def_ent_rear.is_entrenched = true
+
+	var res_ent_f := SkirmishEngine.resolve_skirmish(atk, def_ent_front, from_tile, target_tile, false, true)
+	var res_ent_r := SkirmishEngine.resolve_skirmish(atk, def_ent_rear, from_tile, target_tile, false, true)
+
+	_check(res_ent_f.def_total_mod_pct == 5 + BalanceProbe.def_pct[1], "frontal entrenched def includes full entrenchment DEF (+15%)")
+	_check(res_ent_r.def_total_mod_pct == 5 + SkirmishEngine.REAR_DEF_ARMOR_PCT, "rear attack bypasses entrenchment DEF (got %d%%)" % res_ent_r.def_total_mod_pct)
+
+func test_flanking_combat_modifiers() -> void:
+	var T := GridTileData.TerrainType
+	var from_tile := GridTileData.new(Vector2i(2, 2), T.PLAIN, 1)
+	var target_tile := GridTileData.new(Vector2i(3, 2), T.PLAIN, 1) # approach is (1, 0)
+
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "ATK", Vector2i(2, 2))
+	var def_flank := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "DEF_FLK", Vector2i(3, 2))
+	def_flank.facing = Vector2i(0, 1) # Facing SW (0, 1) -> approach from (1, 0) is FLANK
+
+	var res_flank := SkirmishEngine.resolve_skirmish(atk, def_flank, from_tile, target_tile, false, true)
+	_check(res_flank.approach_angle == "FLANK", "approach is FLANK")
+	_check(res_flank.atk_directional_mod_pct == SkirmishEngine.FLANK_ATK_FP_PCT, "flank adds +%d%% ATK" % SkirmishEngine.FLANK_ATK_FP_PCT)
+	_check(res_flank.def_directional_mod_pct == SkirmishEngine.FLANK_DEF_ARMOR_PCT, "flank shreds %d%% DEF" % SkirmishEngine.FLANK_DEF_ARMOR_PCT)
+
+	# Flank halves entrenchment
+	def_flank.is_entrenched = true
+	var res_flank_ent := SkirmishEngine.resolve_skirmish(atk, def_flank, from_tile, target_tile, false, true)
+	var half_ent: int = int(round(float(BalanceProbe.def_pct[1]) * 0.5))
+	_check(res_flank_ent.def_total_mod_pct == 5 + half_ent + SkirmishEngine.FLANK_DEF_ARMOR_PCT, "flank halves entrenchment DEF (got %d%%)" % res_flank_ent.def_total_mod_pct)
+
+func test_adjacent_formation_crossfire_and_escort() -> void:
+	var T := GridTileData.TerrainType
+	var from_tile := GridTileData.new(Vector2i(2, 2), T.PLAIN, 1)
+	var target_tile := GridTileData.new(Vector2i(3, 2), T.PLAIN, 1)
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "ATK", Vector2i(2, 2))
+	var dfn := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "DEF", Vector2i(3, 2))
+	dfn.facing = Vector2i(-1, 0) # Frontal baseline
+
+	# 1 ally assisting -> +8% ATK crossfire
+	var ctx_1ally: Dictionary = {"atk_allies_adj": 1, "def_allies_adj": 0, "is_pincer": false, "atk_suppression": 0}
+	var res_1ally := SkirmishEngine.resolve_skirmish(atk, dfn, from_tile, target_tile, false, true, ctx_1ally)
+	_check(res_1ally.atk_directional_mod_pct == SkirmishEngine.ADJ_CROSSFIRE_FP_PER_ALLY, "1 adjacent ally gives +%d%% ATK" % SkirmishEngine.ADJ_CROSSFIRE_FP_PER_ALLY)
+
+	# Pincer formation -> +8% + 6% = +14% ATK
+	var ctx_pincer: Dictionary = {"atk_allies_adj": 1, "def_allies_adj": 0, "is_pincer": true, "atk_suppression": 0}
+	var res_pincer := SkirmishEngine.resolve_skirmish(atk, dfn, from_tile, target_tile, false, true, ctx_pincer)
+	_check(res_pincer.atk_directional_mod_pct == SkirmishEngine.ADJ_CROSSFIRE_FP_PER_ALLY + SkirmishEngine.PINCER_CROSSFIRE_FP_BONUS, "pincer crossfire gives +14% ATK")
+
+	# Defender Escort Screen -> +10% DEF to defender
+	var ctx_escort: Dictionary = {"atk_allies_adj": 0, "def_allies_adj": 1, "is_pincer": false, "atk_suppression": 0}
+	var res_escort := SkirmishEngine.resolve_skirmish(atk, dfn, from_tile, target_tile, false, true, ctx_escort)
+	_check(res_escort.def_directional_mod_pct == SkirmishEngine.ADJ_ESCORT_DEF_PER_ALLY, "escort ally gives defender +%d%% DEF" % SkirmishEngine.ADJ_ESCORT_DEF_PER_ALLY)
+
+	# Attacker launch suppression -> -6% ATK
+	var ctx_supp: Dictionary = {"atk_allies_adj": 0, "def_allies_adj": 0, "is_pincer": false, "atk_suppression": 1}
+	var res_supp := SkirmishEngine.resolve_skirmish(atk, dfn, from_tile, target_tile, false, true, ctx_supp)
+	_check(res_supp.atk_directional_mod_pct == SkirmishEngine.ADJ_SUPPRESSION_FP_PER_ENEMY, "suppression gives attacker -6% ATK")
+
+func test_forecast_matches_directional_resolution() -> void:
+	var T := GridTileData.TerrainType
+	var from_tile := GridTileData.new(Vector2i(2, 2), T.PLAIN, 1)
+	var target_tile := GridTileData.new(Vector2i(3, 2), T.PLAIN, 1)
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "ATK", Vector2i(2, 2))
+	var dfn := GlobalState.create_mech_instance("vanguard", MechData.Faction.AI, "DEF", Vector2i(3, 2))
+
+	for facing_dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1)]:
+		dfn.facing = facing_dir
+		for ent in [false, true]:
+			dfn.is_entrenched = ent
+			for allies in [0, 2]:
+				var ctx: Dictionary = {"atk_allies_adj": allies, "def_allies_adj": 1, "is_pincer": allies >= 2, "atk_suppression": 0}
+				var fc := SkirmishEngine.compute_forecast(atk, dfn, from_tile, target_tile, ctx)
+				var res := SkirmishEngine.resolve_skirmish(atk, dfn, from_tile, target_tile, false, true, ctx)
+				_check(fc["est_dmg_to_def"] == res.total_dmg_to_defender, "forecast damage matches deterministic resolution")
+				_check(fc["est_dmg_to_atk"] == res.total_dmg_to_attacker, "forecast return damage matches deterministic resolution")
+				_check(fc["approach_angle"] == res.approach_angle, "forecast angle matches resolution")
+				_check(fc["atk_mod_pct"] == res.atk_total_mod_pct, "forecast atk mod matches resolution")
+
+func test_unit_container_formation_context() -> void:
+	var bf := await _spawn_iron_bridge()
+	var uc := bf.unit_container
+	# Place test units manually on the battlefield
+	var iron1 := _unit_by_callsign(bf, "IRON-1")
+	var rote1 := _unit_by_callsign(bf, "ROTE-1")
+	iron1.mech_data.grid_pos = Vector2i(4, 4)
+	rote1.mech_data.grid_pos = Vector2i(5, 4)
+
+	# Single attacker approaching with no allies around
+	var ctx_solo := uc.get_formation_context(Vector2i(5, 4), Vector2i(4, 4), int(MechData.Faction.PLAYER))
+	_check(ctx_solo["atk_allies_adj"] == 0, "no adjacent allies initially")
+	_check(ctx_solo["is_pincer"] == false, "no pincer initially")
+
+	# Move a friendly player unit to (6, 4) -> exactly opposite from_pos (4, 4) through target (5, 4)!
+	var titan2 := _unit_by_callsign(bf, "TITAN-2")
+	titan2.mech_data.grid_pos = Vector2i(6, 4)
+	var ctx_pincer := uc.get_formation_context(Vector2i(5, 4), Vector2i(4, 4), int(MechData.Faction.PLAYER))
+	_check(ctx_pincer["atk_allies_adj"] == 1, "1 ally adjacent to target")
+	_check(ctx_pincer["is_pincer"] == true, "pincer detected across target")
+
+	# Move an enemy unit next to target (5, 5) -> escort screen
+	var glut2 := _unit_by_callsign(bf, "GLUT-2")
+	glut2.mech_data.grid_pos = Vector2i(5, 5)
+	var ctx_escort := uc.get_formation_context(Vector2i(5, 4), Vector2i(4, 4), int(MechData.Faction.PLAYER))
+	_check(ctx_escort["def_allies_adj"] == 1, "1 defender ally adjacent to target")
+
+	# Move another enemy unit next to attacker launch tile (4, 3) -> suppression
+	var jager3 := _unit_by_callsign(bf, "JÄGER-3")
+	jager3.mech_data.grid_pos = Vector2i(4, 3)
+	var ctx_supp := uc.get_formation_context(Vector2i(5, 4), Vector2i(4, 4), int(MechData.Faction.PLAYER))
+	_check(ctx_supp["atk_suppression"] == 1, "1 enemy adjacent to launch tile")
+
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_in_place_rotation_and_movement_facing() -> void:
+	var bf := await _spawn_iron_bridge()
+	var iron1 := _unit_by_callsign(bf, "IRON-1")
+	iron1.mech_data.facing = Vector2i(1, 0)
+	bf._select_unit(iron1)
+
+	# Test rotation cycle
+	bf._rotate_selected_unit()
+	_check(iron1.mech_data.facing == Vector2i(0, 1), "first rotate gives SW (0, 1)")
+	bf._rotate_selected_unit()
+	_check(iron1.mech_data.facing == Vector2i(-1, 0), "second rotate gives NW (-1, 0)")
+	bf._rotate_selected_unit()
+	_check(iron1.mech_data.facing == Vector2i(0, -1), "third rotate gives NE (0, -1)")
+	bf._rotate_selected_unit()
+	_check(iron1.mech_data.facing == Vector2i(1, 0), "fourth rotate returns to SE (1, 0)")
+
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_ai_prefers_flank_and_rear_attacks() -> void:
+	var bf := await _spawn_iron_bridge()
+	var ai_unit := _unit_by_callsign(bf, "ROTE-1")
+	var player_unit := _unit_by_callsign(bf, "IRON-1")
+	# Place player unit at (5, 5) facing SE (1, 0)
+	player_unit.mech_data.grid_pos = Vector2i(5, 5)
+	player_unit.mech_data.facing = Vector2i(1, 0)
+
+	# Place AI unit at (3, 5) with ample fuel to reach either (4, 5) [Rear attack!] or (5, 4) [Flank attack!]
+	ai_unit.mech_data.grid_pos = Vector2i(3, 5)
+	ai_unit.mech_data.current_fuel = 14
+	ai_unit.mech_data.has_moved = false
+
+	var decision := AIController.choose_best_action(ai_unit, bf.grid_map, bf.unit_container, bf.current_map_def)
+	_check(decision["type"] == "ENGAGE", "AI chooses to engage")
+	_check(decision["target_pos"] == Vector2i(5, 5), "AI targets the player walker")
+	# Verify that the approach taken is from the rear:
+	var path: Array[Vector2i] = decision["path"]
+	var from_pos: Vector2i = path[path.size() - 2]
+	var approach: Vector2i = Vector2i(5, 5) - from_pos
+	var dot: int = approach.x * player_unit.mech_data.facing.x + approach.y * player_unit.mech_data.facing.y
+	_check(dot == 1, "AI chose a rear approach vector (dot == 1)")
+
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_player_and_ai_reface_after_movement() -> void:
+	var bf := await _spawn_iron_bridge()
+	var iron1 := _unit_by_callsign(bf, "IRON-1")
+	iron1.mech_data.facing = Vector2i(1, 0)
+	bf._select_unit(iron1)
+
+	# Execute a move to (2, 2)
+	var move_path: Array[Vector2i] = [iron1.mech_data.grid_pos, Vector2i(2, 2)]
+	bf._execute_unit_movement(iron1, Vector2i(2, 2), move_path, 2)
+	for i in 60:
+		await get_tree().process_frame
+
+	_check(iron1.mech_data.has_moved, "IRON-1 marked has_moved after moving")
+	_check(bf.selected_unit == iron1, "IRON-1 stays selected after move so player can reface")
+	_check(bf._can_rotate_selected_unit(), "_can_rotate_selected_unit is true for moved player mech")
+	_check(bf.ui_overlay._can_turn(), "UI command bar enables TURN / FACE after move")
+
+	# Rotate using in-place turn command
+	var initial_facing: Vector2i = iron1.mech_data.facing
+	bf._rotate_selected_unit()
+	_check(iron1.mech_data.facing != initial_facing, "IRON-1 facing changed via _rotate_selected_unit")
+
+	# Reface by clicking an orthogonal neighbor empty tile (North: (2, 1))
+	bf._on_tile_clicked(Vector2i(2, 1), null)
+	_check(iron1.mech_data.facing == Vector2i(0, -1), "IRON-1 refaced to North (0, -1) by clicking neighbor tile")
+
+	# Reface by clicking East neighbor: (3, 2)
+	bf._on_tile_clicked(Vector2i(3, 2), null)
+	_check(iron1.mech_data.facing == Vector2i(1, 0), "IRON-1 refaced to East (1, 0) by clicking neighbor tile")
+
+	# Deselect and re-select moved unit: player can still reface it
+	bf._deselect_unit()
+	_check(bf.selected_unit == null, "deselected")
+	bf._on_tile_clicked(Vector2i(2, 2), null)
+	_check(bf.selected_unit == iron1, "re-selected IRON-1")
+	_check(bf._can_rotate_selected_unit(), "can still rotate re-selected moved unit")
+	bf._rotate_selected_unit()
+	_check(iron1.mech_data.facing == Vector2i(0, 1), "rotated to South (0, 1)")
+
+	# AI Refacing after movement
+	var ai_unit := _unit_by_callsign(bf, "ROTE-1")
+	ai_unit.mech_data.grid_pos = Vector2i(7, 7)
+	# Position player unit at (7, 4) (North of AI destination)
+	iron1.mech_data.grid_pos = Vector2i(7, 4)
+	iron1.mech_data.current_armor = 50
+
+	# Switch to AI phase to test AI post-move refacing
+	GlobalState.set_phase(GlobalState.TurnPhase.AI_PHASE)
+	var ai_move_path: Array[Vector2i] = [Vector2i(7, 7), Vector2i(7, 6)]
+	bf._execute_unit_movement(ai_unit, Vector2i(7, 6), ai_move_path, 2)
+	for i in 60:
+		await get_tree().process_frame
+
+	_check(ai_unit.mech_data.grid_pos == Vector2i(7, 6), "AI arrived at (7, 6)")
+	# Closest player threat is at (7, 4) which is North (0, -1) relative to (7, 6)
+	_check(ai_unit.mech_data.facing == Vector2i(0, -1), "AI refaced North (0, -1) to confront closest player threat")
+
 	bf.queue_free()
 	await get_tree().process_frame
