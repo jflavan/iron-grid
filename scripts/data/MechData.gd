@@ -48,6 +48,7 @@ var max_fuel: int = 14         # Maximum diesel-turbine fuel capacity
 var current_fuel: int = 14     # Remaining fuel for movement
 var fuel_efficiency_mod: int = 0 # -1 = Light All-Terrain, 0 = Standard, +1 = Heavy Surcharge on rough ground
 var passive_refuel: int = 4    # Diesel generator recharge at start of each turn
+var fuel_usage: int = 2        # Diesel fuel usage multiplier (doubled from 1 to 2)
 var amphibious_gear: bool = false # Reduces River fuel penalty
 var mountain_gear: bool = false   # Reduces Mountain climb fuel penalty
 
@@ -114,14 +115,15 @@ func _init(
 ## Hot path (every Dijkstra edge): plain ints, no Dictionary.
 func get_step_fuel_cost(from_tile: GridTileData, to_tile: GridTileData) -> int:
 	var t := _step_terms(from_tile, to_tile)
-	return maxi(1, t.x + t.y + t.z)
+	return maxi(1, t.x + t.y + t.z) * fuel_usage
 
 ## The step cost split into the terms the HUD and Rules page show. base + chassis + climb == total.
 ## chassis_label: "HEAVY" / "LIGHT" (fuel_efficiency_mod off-road), "AMPHIB" (river with
 ## amphibious_gear), "CLIMB GEAR" (mountain with mountain_gear) or "" when no adjustment applies.
 func get_step_fuel_breakdown(from_tile: GridTileData, to_tile: GridTileData) -> Dictionary:
 	var t := _step_terms(from_tile, to_tile)
-	var total: int = maxi(1, t.x + t.y + t.z)
+	var single_total: int = maxi(1, t.x + t.y + t.z)
+	var total: int = single_total * fuel_usage
 	var label: String = ""
 	if to_tile.terrain_type == GridTileData.TerrainType.RIVER and amphibious_gear:
 		label = "AMPHIB"
@@ -129,11 +131,14 @@ func get_step_fuel_breakdown(from_tile: GridTileData, to_tile: GridTileData) -> 
 		label = "CLIMB GEAR"
 	elif t.y != 0:
 		label = "HEAVY" if fuel_efficiency_mod > 0 else "LIGHT"
+	var base_cost: int = t.x * fuel_usage
+	var chassis_cost: int = (t.y + single_total - (t.x + t.y + t.z)) * fuel_usage
+	var climb_cost: int = t.z * fuel_usage
 	return {
-		"base": t.x, "terrain": to_tile.get_terrain_short_code(),
+		"base": base_cost, "terrain": to_tile.get_terrain_short_code(),
 		# The 1-fuel floor is credited to the chassis term so the parts still add up to the total.
-		"chassis": t.y + total - (t.x + t.y + t.z), "chassis_label": label,
-		"climb": t.z, "total": total,
+		"chassis": chassis_cost, "chassis_label": label,
+		"climb": climb_cost, "total": total,
 	}
 
 ## (terrain base, chassis adjustment, climb) before the 1-fuel floor.
@@ -194,6 +199,7 @@ func duplicate_mech() -> MechData:
 	copy.current_energy = current_energy
 	copy.amphibious_gear = amphibious_gear
 	copy.mountain_gear = mountain_gear
+	copy.fuel_usage = fuel_usage
 	copy.has_moved = has_moved
 	copy.has_attacked = has_attacked
 	copy.is_entrenched = is_entrenched

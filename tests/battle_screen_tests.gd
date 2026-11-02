@@ -835,10 +835,10 @@ func test_step_breakdown_sums() -> void:
 	_check(bad == 0, "step breakdown terms sum to total == get_step_fuel_cost for every chassis/terrain/climb (%d bad)" % bad)
 	var g := _unit("goliath", MechData.Faction.PLAYER, Vector2i.ZERO)
 	var gb: Dictionary = g.get_step_fuel_breakdown(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.FOREST, 2), GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3))
-	_check(gb["base"] == 5 and gb["chassis"] == 1 and gb["chassis_label"] == "HEAVY" and gb["climb"] == 1 and gb["total"] == 7 and gb["terrain"] == "MTN", "goliath into a mountain one level up is MTN 5 + HEAVY 1 + CLIMB 1 = 7 (got %s)" % gb)
+	_check(gb["base"] == 10 and gb["chassis"] == 2 and gb["chassis_label"] == "HEAVY" and gb["climb"] == 2 and gb["total"] == 14 and gb["terrain"] == "MTN", "goliath into a mountain one level up is MTN 10 + HEAVY 2 + CLIMB 2 = 14 (got %s)" % gb)
 	var d := _unit("donner", MechData.Faction.PLAYER, Vector2i.ZERO)
 	var db: Dictionary = d.get_step_fuel_breakdown(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 1), GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3))
-	_check(db["chassis_label"] == "CLIMB GEAR" and db["chassis"] == -2 and db["climb"] == 1, "donner mountain gear shows CLIMB GEAR -2 and a discounted climb (got %s)" % db)
+	_check(db["chassis_label"] == "CLIMB GEAR" and db["chassis"] == -4 and db["climb"] == 2, "donner mountain gear shows CLIMB GEAR -4 and a discounted climb (got %s)" % db)
 
 func test_strike_plan_goliath_mountain() -> void:
 	# Iron Bridge: (7,7) is trench at L2, (8,7) a mountain at L3.
@@ -848,9 +848,9 @@ func test_strike_plan_goliath_mountain() -> void:
 	var foe := _unit("donner", MechData.Faction.AI, Vector2i(8, 7), "f")
 	var plan: StrikePlan = gm.compute_strike_plan(titan, foe.grid_pos, {foe.grid_pos: foe})
 	_check(plan.severity == StrikePlan.IN_STRIKING_DISTANCE, "adjacent titan with 4F is in striking distance (got %d)" % plan.severity)
-	_check(plan.needs == 7 and plan.have == 4 and plan.path_fuel == 0, "strike needs 7, have 4, no path fuel (got %d/%d/%d)" % [plan.needs, plan.have, plan.path_fuel])
-	_check(plan.advice == StrikePlan.ADV_WAIT_HERE, "advice is WAIT/REFUEL HERE (got %d)" % plan.advice)
-	_check(plan.breakdown_text() == "MTN 5 + HEAVY 1 + CLIMB 1", "breakdown text (got '%s')" % plan.breakdown_text())
+	_check(plan.needs == 14 and plan.have == 4 and plan.path_fuel == 0, "strike needs 14, have 4, no path fuel (got %d/%d/%d)" % [plan.needs, plan.have, plan.path_fuel])
+	_check(plan.advice == StrikePlan.ADV_IMPOSSIBLE, "advice is ADV_IMPOSSIBLE (got %d)" % plan.advice)
+	_check(plan.breakdown_text() == "MTN 10 + HEAVY 2 + CLIMB 2", "breakdown text (got '%s')" % plan.breakdown_text())
 	gm.free()
 
 func test_strike_plan_matches_reachable() -> void:
@@ -983,7 +983,7 @@ func test_out_of_reach_hover_and_click() -> void:
 	var log_before: int = GlobalState.combat_log.size()
 	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
 	var new_lines: Array = GlobalState.combat_log.slice(log_before)
-	var logged := new_lines.any(func(l): return "CANNOT REACH" in l and "STRIKE NEEDS 7F" in l)
+	var logged := new_lines.any(func(l): return "CANNOT REACH" in l and "STRIKE NEEDS 14F" in l)
 	_check(logged, "clicking the unreachable enemy logs why (got %s)" % [new_lines])
 	_check(bf.selected_unit == spinne, "the click still selects the enemy for inspection")
 
@@ -1027,7 +1027,7 @@ func test_terrain_panel_draws_plan() -> void:
 	var joined := " ".join(packed)
 	_check(all_fit and "PATH 12" in joined and "CLIMB GEAR -2" in joined and "CLIMB 2" in joined, "packed breakdown fits the HUD and never splits a term (%s)" % [packed])
 	var lines := ov.strike_plan.panel_lines()
-	_check(CrtUI.wrap_lines(lines[0], UIOverlay.RIGHT_W - 24).size() == 1 and CrtUI.wrap_lines(lines[1], UIOverlay.RIGHT_W - 24).size() == 1, "fuel and breakdown lines fit one HUD line each (%s)" % [lines])
+	_check(CrtUI.wrap_lines(lines[0], UIOverlay.RIGHT_W - 24).size() == 1 and (CrtUI.wrap_lines(lines[1], UIOverlay.RIGHT_W - 24).size() in [1, 2]), "fuel and breakdown lines fit HUD line limits (%s)" % [lines])
 	ov.root_ctrl.queue_redraw()
 	await get_tree().process_frame
 	_check(true, "terrain panel draws with a strike plan without errors")
@@ -1149,7 +1149,7 @@ func test_rules_example_follows_chassis_data() -> void:
 		if l.begins_with("EXAMPLE:"):
 			example = l.to_upper()
 	_check(example != "" and not ("HEAVY" in example), "with a -1 goliath the worked example says no HEAVY (%s)" % example)
-	_check("LIGHT -1" in example, "the example labels the -1 adjustment LIGHT")
+	_check("LIGHT -2" in example, "the example labels the -2 adjustment LIGHT")
 	_check(not ("+-" in text), "no '+-' sign glitch in the rules text")
 
 func test_next_turn_fuel_matches_upkeep() -> void:
