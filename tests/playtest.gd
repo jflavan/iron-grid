@@ -301,7 +301,7 @@ func _play_mission(map_idx: int, policy: String) -> void:
 # Iron Bridge must not be winnable by digging in and running out the clock. Five objectives rule out
 # a 2-2 tie, the neutral Central Island Depot decides the default standoff, and every city sits level
 # with the roads so a garrison can be assaulted without an uphill penalty.
-const IRON_BRIDGE_CENTER := Vector2i(5, 3)
+const IRON_BRIDGE_CENTER := Vector2i(4, 4)
 const IRON_BRIDGE_BANK_CITIES: Array[Vector2i] = [Vector2i(3, 1), Vector2i(6, 1), Vector2i(3, 6), Vector2i(6, 6)]
 
 func _check_iron_bridge_layout() -> void:
@@ -311,7 +311,7 @@ func _check_iron_bridge_layout() -> void:
 	grid.load_from_definition(m)
 	var center: GridTileData = grid.get_tile(IRON_BRIDGE_CENTER)
 	_check(center != null and center.is_objective and center.terrain_type == GridTileData.TerrainType.CITY,
-		"iron bridge: the Central Island Depot at (5,3) is an objective city")
+		"iron bridge: the Central Island Depot at (4,4) is an objective city")
 	_check(center != null and center.controlled_by == -1, "iron bridge: the Central Island Depot starts neutral")
 	_check(center != null and center.elevation == 1, "iron bridge: the Central Island Depot is level with the bridges (height 1)")
 	for c in IRON_BRIDGE_BANK_CITIES:

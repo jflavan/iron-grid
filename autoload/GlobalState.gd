@@ -312,8 +312,8 @@ func _init_maps() -> void:
 		"M M F P R R P F M M",
 		"F P P C R R C P P F",
 		"D D D D D D D D D D",
-		"P F P P R C P P F P",
 		"P F P P R R P P F P",
+		"P F P P C R P P F P",
 		"D D D D D D D D D D",
 		"F P P C R R C P P F",
 		"M M F P R R P F M M"
@@ -322,8 +322,8 @@ func _init_maps() -> void:
 		"3 3 2 1 0 0 1 2 3 3",
 		"2 1 1 1 0 0 1 1 1 2",
 		"1 1 1 1 1 1 1 1 1 1",
-		"1 2 1 1 0 1 1 1 2 1",
 		"1 2 1 1 0 0 1 1 2 1",
+		"1 2 1 1 1 0 1 1 2 1",
 		"1 1 1 1 1 1 1 1 1 1",
 		"2 1 1 1 0 0 1 1 1 2",
 		"3 3 2 1 0 0 1 2 3 3"
@@ -333,7 +333,7 @@ func _init_maps() -> void:
 		{ "pos": Vector2i(6, 1), "label": "North East Bridgehead", "owner": 1 },
 		{ "pos": Vector2i(3, 6), "label": "South West Bridgehead", "owner": 0 },
 		{ "pos": Vector2i(6, 6), "label": "South East Bridgehead", "owner": 1 },
-		{ "pos": Vector2i(5, 3), "label": "Central Island Depot", "owner": -1 }
+		{ "pos": Vector2i(4, 4), "label": "Central Island Depot", "owner": -1 }
 	]
 	map1.spawns = [
 		# Player Coalition Forces (West Side)
