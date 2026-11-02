@@ -27,28 +27,61 @@ Players command the **8th Iron Division** against the **Kriegs-Syndikat Red** ac
 Each turn cycles through three phases:
 
 1. **Player Command Phase**:
-   - Select any friendly Armored Fighting Walker (AFW) to compute reachable movement nodes within its current **Diesel Fuel** budget (using Dijkstra pathfinding across terrain and elevation climbs).
-   - Hover over reachable enemy nodes to inspect a real-time **Skirmish Engagement Forecast** detailing approach vectors, terrain/elevation modifiers, initiative order, and estimated hull damage.
-   - **Attacking is a move onto the enemy's node, so a strike pays that node's fuel**: its terrain cost, the chassis surcharge or gear discount, and the climb. A Goliath striking a mountain one level up pays `5 + 1 + 1 = 7` of its `10` fuel. When the selected walker could reach a tile next to an enemy this turn but can't afford the final step, hovering that enemy shows an **OUT OF REACH** box with the fuel it needs, the breakdown, and advice that has been checked against next turn's refuel (wait here, move to a named tile, or refuel over several turns). Clicking it writes the same reason to the Comms Log. Enemies simply too far away show a quiet `BEYOND MOVE RANGE` line. While a walker is selected, the sector panel shows **its own** step cost for the hovered terrain.
-   - Move to secure strategic **Objective Cities**, press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF`, `+5 Fuel`, `+4 EN`, and `+8 Hull` when holding a City), or move directly onto an enemy-occupied node to trigger a combat encounter.
+   - Select any friendly Armored Fighting Walker (AFW) to compute reachable movement nodes within its current **Diesel Fuel** budget (using Dijkstra pathfinding across terrain and elevation climbs). Walkers can move across unoccupied nodes, and moving does not forfeit attacking if sufficient fuel remains for the strike.
+   - **Combat Selection**: Hover over reachable adjacent enemy nodes (highlighted with red targeting reticles) to inspect a real-time **Skirmish Engagement Forecast** detailing approach vectors (`FRONTAL CLASH`, `FLANKING ATTACK`, `REAR AMBUSH`), tactical formation modifiers, terrain/elevation modifiers, initiative order, and estimated hull damage.
+   - **Attacking Pays Target Step Fuel but Holds Ground**: A strike is launched from the walker's adjacent tile onto the enemy-held node, paying that target node's step fuel: base terrain cost, chassis off-road surcharge or gear discount, and elevation climb. A Goliath striking a mountain one level up pays `5 + 1 + 1 = 7` of its `10` fuel. **Attacking never moves your walker onto the defender's node; both walkers hold their respective tiles during and after combat.** If the defender is destroyed, the sector is cleared and can be occupied on subsequent turns or moves.
+   - **Out of Reach Telemetry**: When a selected walker could reach a tile next to an enemy this turn but lacks the fuel for the final attack step, hovering that enemy displays an **OUT OF REACH** box with the fuel needed, the exact formula breakdown, and turn-checked refuel advice (wait here, advance to an intermediate tile, or refuel over turns). Clicking it logs the tactical assessment to the Comms Log. Enemies beyond move range show a subtle `BEYOND MOVE RANGE` line.
+   - **Facing, Entrenching & Objectives**: Move to secure strategic **Objective Cities**, press **`T`** to cycle cardinal facing direction without burning fuel, or press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF`, `+5 Fuel`, `+4 EN`, and `+8 Hull` repair when holding a City).
 2. **Combat Encounter Phase (Final Fantasy Turn-Based Battle)**:
-   - When two opposing walkers occupy the same node, the game cuts from the isometric grid to a side-view **Final Fantasy-style Turn-Based Battle** against a terrain backdrop matching the contested sector.
-   - **Initiative & Rounds**: Combat runs in classic turn-based rounds determined by each walker's **Effective Speed (`SPD`)**, with a Round-1 Assault Initiative bonus (`+8 SPD`) for the initiating Attacker. An **Entrenched** Defender answers with `+10 SPD` in Round 1 (`+4` for the rest of the fight) plus `+5% EVA` and `+6% Hit`. The forecast's `INITIATIVE` line is read from the same Round-1 queue the battle uses.
+   - When an attack is confirmed against an adjacent enemy, the tactical grid transitions to a side-view **Final Fantasy-style Turn-Based Battle** against an authentic terrain backdrop matching the defender's sector.
+   - **Initiative & Rounds**: Combat runs in classic turn-based rounds determined by each walker's **Effective Speed (`SPD`)**. The initiating Attacker gains a Round-1 Assault Initiative bonus (`+8 SPD`), which jumps to `+20 SPD` during a Rear Ambush. An **Entrenched** Defender answers with `+10 SPD` in Round 1 (`+4 SPD` for the rest of the fight) plus `+5% EVA` and `+6% Hit`. The forecast's `INITIATIVE` line is read from the same Round-1 queue the battle uses.
    - **4-Command Battle Menu**:
      - **`ATTACK`**: Fires the chassis's primary standard weapon (`0 EN` cost).
      - **`TECH`**: Opens the chassis's 3 specialized **Combat Abilities** (`WEAPON`, `ARMOR`, and `TACTIC` modules) powered by **Reactor Energy (`EN`)**:
        - **Weapon TECHs**: Heavy ordnance, high-velocity AP shells, rocket salvos, and melee pile-bunkers with custom accuracy, critical hit bonuses, and armor penetration.
        - **Armor & Tactical TECHs**: Once-per-battle support/status turns that deploy physical shields (`Sloped Krupp Plate`, `Ferro-Bunker Bulkhead`, `Quad Anchor Struts`, `Reactive Shield Wall`), boost offensive/evasive telemetry (`Gyro-Flank Thrusters`, `Optical Rangefinder`, `Elevation Ballistics`, `Command Uplink`), or jam enemy targeting (`Enigma ECM Scrambler`).
      - **`DEFEND`**: Braces hull plating (`-50%` damage from the enemy's next hit) and vents reactor coils (`+2 EN`). Like a shield, the guard holds through misses, support turns and an initiative flip, and is spent by the first shot that lands; `DEFEND` is unavailable while a guard is already up.
-     - **`RETREAT`**: Attempts an emergency combat disengagement based on relative Speed (`SPD`). If successful, the battle ends immediately and the retreating unit withdraws to an open adjacent sector. A defender only loses its entrenchment when it is destroyed, routed or pushed back, never because the attacker broke off.
-   - Each encounter continues until one walker is destroyed (`0 HULL`), one side successfully retreats, or the 10-round safety limit is reached (dislodging the loser of the exchange).
+     - **`RETREAT`**: Attempts an emergency combat disengagement based on relative Speed (`SPD`). If successful, the battle ends immediately and both surviving walkers remain on their respective tiles. A defender only loses its entrenchment when it is destroyed, routed or pushed back, never because the attacker broke off.
+   - Each encounter continues until one walker is destroyed (`0 HULL`), one side successfully retreats, or the 10-round safety limit is reached.
 3. **Syndicate AI Phase**:
-   - Enemy walkers evaluate reachable tiles, approach vectors, high-ground advantages, fuel reserves, and objective priorities tailored to the map's strategic profile (`Pitched Battle`, `Fortified Defense`, or `Blitzkrieg Offense`).
+   - Enemy walkers evaluate reachable tiles, optimal approach vectors (actively seeking flanking and rear angles), high-ground advantages, fuel reserves, and objective priorities tailored to the map's strategic profile (`Pitched Battle`, `Fortified Defense`, or `Blitzkrieg Offense`). Walkers that finish movement without attacking re-orient their facing toward Coalition threats.
 
 ### Victory Conditions
 - **Annihilation** of either side ends the mission immediately.
 - **Objective victories** (holding every Iron Bridge objective, holding a Syndicate HQ bunker, or the Syndicate overrunning every Citadel node) are confirmed at the **end of a full turn**, so a capture has to survive the enemy's response phase.
 - When the **turn limit** expires, the mission is scored by its strategic profile (bridgehead majority, Citadel held, or HQ not taken).
+
+---
+
+## Tactical Facing, Flanking & Formations
+
+Directional orientation, approach vectors, and surrounding unit formations heavily influence skirmish outcomes in *Operation: Iron Grid*.
+
+### Directional Facing & In-Place Turning
+Every walker maintains a cardinal facing orientation on the isometric grid:
+- **Four Cardinal Facings**: `SE` (`1, 0` / `>`), `SW` (`0, 1` / `v`), `NW` (`-1, 0` / `<`), and `NE` (`0, -1` / `^`).
+- **Telemetry & Visuals**: Walker bases feature an articulated directional chevron; the CRT HUD displays the orientation arrow next to the unit's portrait (`SE >`, `SW v`, `NW <`, `NE ^`), and sprite poses flip horizontally according to facing.
+- **Dynamic Orientation**: Moving automatically points the walker along its final step vector (`target_coords - from_coords`). Initiating an attack automatically rotates the attacker to face the defender (`def_coords - atk_coords`).
+- **Manual Turning (`T` / CRT HUD)**: Pressing **`T`** (`TURN / FACE`) or clicking the CRT command row cycles the selected walker's facing clockwise without expending fuel or ending its turn.
+- **Post-Move Refacing**: After completing a move, clicking an adjacent empty orthogonal tile refaces the walker in that direction.
+- **Defenders Do Not Auto-Rotate**: Defending walkers **never turn to face incoming attacks**. Once oriented, their exposed flank and rear arcs remain vulnerable to subsequent strikes until their own turn.
+
+### Flanking & Approach Vectors
+The approach vector is evaluated using the dot product between the attacker's approach step (`target_coords - from_coords`) and the defender's current facing vector:
+
+| Approach Vector | Angle Condition | Firepower (`ATK`) | Enemy Armor (`DEF`) | Accuracy & Crit | Round 1 Speed | Entrenchment Defense |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Rear Ambush** | Striking from behind (`dot = +1`) | **+30%** | **-25%** | **+16% Hit / +15% Crit** (`-10% enemy EVA`) | **+12 SPD** | **Completely Bypassed** (`+0% DEF`) |
+| **Flanking Attack** | Perpendicular side strike (`dot = 0`) | **+15%** | **-10%** | **+8% Hit / +8% Crit** | `+0 SPD` | **Halved** (`+7.5% DEF`) |
+| **Frontal Clash** | Head-on into front armor (`dot = -1`) | `+0%` | `+0%` | `+0%` | `+0%` | **Full Protection** (`+15% DEF`) |
+
+### Formation Tactics & Adjacent Ally Buffs
+Units stationed on adjacent nodes project tactical support and suppression into the engagement:
+- **Allied Crossfire**: Each living allied walker adjacent to the defender provides **+8% Firepower**, **+5% Hit Accuracy**, and **+3% Crit**, while reducing the defender's evasion by **-4%**.
+- **Pincer Crossfire**: When an allied walker is positioned directly opposite the attacker's approach tile across the defender (`target_coords + (target_coords - from_coords)`), it triggers a Pincer bonus: an additional **+6% Firepower** and **+5% Crit** (granting **+14% Firepower** and **+8% Crit** from that supporting ally).
+- **Defender Escort Screen**: Each living defender ally adjacent to the defender forms a defensive screen, granting the defender **+10% Armor**, **+4% Evasion**, and **+5% Return Firepower**.
+- **Launch Suppression (Pinned at Launch)**: If enemy units are adjacent to the attacker's launch tile (`from_pos`), the attacker suffers **-6% Firepower** per suppressing enemy due to harassment fire during attack deployment.
+- **Command Auras & TECH Buffs**: Walkers like the Befehls-IV "Kommandant" project operational advantages through support TECHs (e.g. *Command Uplink* and *Enigma ECM Scrambler*), dynamically modifying in-combat stats and status badges (`GUARD`, `SHIELD`, `ARM+`/`ARM-`, `LOCK`, `HASTE`, `JAM`).
 
 ---
 
@@ -114,6 +147,8 @@ Stats are read from `autoload/GlobalState.gd`; `EN (+n)` is the reactor pool and
 | **Right / Middle Mouse Drag** | Pan tactical camera |
 | **WASD / Arrow Keys** | Pan tactical camera (or navigate battle command menu) |
 | **Mouse Wheel Up / Down** | Zoom camera in / out |
+| **`T`** (battlefield) | Cycle facing direction clockwise (`SE` -> `SW` -> `NW` -> `NE`) |
+| **`Tab` / `Space`** (battlefield) | Select next ready player walker |
 | **`R`** (battlefield) | Wait, Entrench (`+15% DEF`), & Refuel (`+5 Fuel`, `+4 EN`) selected walker |
 | **`E`** | End Player Command Phase |
 | **`C`** | Reset & center camera on battlefield |
