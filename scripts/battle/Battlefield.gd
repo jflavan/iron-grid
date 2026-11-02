@@ -27,6 +27,8 @@ var _pending_defender: MechUnit = null
 var _pending_start_coords: Vector2i = Vector2i.ZERO
 var _pending_from_coords: Vector2i = Vector2i.ZERO
 var _pending_target_coords: Vector2i = Vector2i.ZERO
+var _pending_ai_target: MechUnit = null
+var _pending_ai_attack_fuel: int = 0
 
 # AI Turn Queue
 var _ai_queue: Array[MechUnit] = []
@@ -57,6 +59,8 @@ func start_mission(map_idx: int) -> void:
 	_ai_queue.clear()
 	_pending_attacker = null
 	_pending_defender = null
+	_pending_ai_target = null
+	_pending_ai_attack_fuel = 0
 	var idx: int = clampi(map_idx, 0, GlobalState.maps.size() - 1)
 	current_map_def = GlobalState.maps[idx]
 	SkirmishEngine.clear_forecast_cache()
@@ -173,6 +177,7 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 	for u in units:
 		var m := u.mech_data
 		m.has_moved = false
+		m.has_attacked = false
 		m.is_entrenched = false
 		u.position = grid_map.grid_to_screen(m.grid_pos, true)
 		if not include_refuel:
@@ -194,6 +199,7 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 ## restores up to 5 Fuel and +4 Energy, and patches +8 Armor when holding a City. Returns fuel gained.
 func _entrench_unit(m: MechData) -> int:
 	m.has_moved = true
+	m.has_attacked = true
 	m.is_entrenched = true
 	var gained_fuel: int = m.wait_fuel_gain(m.current_fuel)
 	m.current_fuel += gained_fuel
@@ -206,8 +212,16 @@ func _entrench_unit(m: MechData) -> int:
 		BalanceProbe.patch_healed[int(m.faction)] += m.current_armor - before
 	return gained_fuel
 
+func _finalize_post_move_order(u: MechUnit) -> void:
+	if u != null and is_instance_valid(u) and u.mech_data != null and u.mech_data.faction == MechData.Faction.PLAYER:
+		if u.mech_data.has_moved and not u.mech_data.has_attacked:
+			u.mech_data.has_attacked = true
+			u.queue_redraw()
+
 func _select_unit(u: MechUnit) -> void:
 	if selected_unit != null and is_instance_valid(selected_unit):
+		if selected_unit != u:
+			_finalize_post_move_order(selected_unit)
 		selected_unit.is_selected = false
 		selected_unit.queue_redraw()
 
@@ -217,7 +231,7 @@ func _select_unit(u: MechUnit) -> void:
 		selected_unit.queue_redraw()
 		ui_overlay.selected_mech = selected_unit.mech_data
 		grid_map.selected_coords = selected_unit.mech_data.grid_pos
-		if selected_unit.mech_data.faction == MechData.Faction.PLAYER and not selected_unit.mech_data.has_moved:
+		if selected_unit.mech_data.faction == MechData.Faction.PLAYER and not selected_unit.mech_data.is_order_complete():
 			var occ := unit_container.build_occupied_map(selected_unit)
 			grid_map.compute_reachable_tiles(selected_unit.mech_data, occ)
 		else:
@@ -230,7 +244,11 @@ func _select_unit(u: MechUnit) -> void:
 	_refresh_hover_telemetry(grid_map.hovered_coords)
 
 func _deselect_unit() -> void:
+	var was_pending_post_move := false
 	if selected_unit != null and is_instance_valid(selected_unit):
+		if selected_unit.mech_data != null and selected_unit.mech_data.faction == MechData.Faction.PLAYER:
+			was_pending_post_move = selected_unit.mech_data.has_moved and not selected_unit.mech_data.has_attacked
+		_finalize_post_move_order(selected_unit)
 		selected_unit.is_selected = false
 		selected_unit.queue_redraw()
 	selected_unit = null
@@ -239,6 +257,8 @@ func _deselect_unit() -> void:
 	ui_overlay.current_forecast = {}
 	_clear_strike_readout()
 	grid_map.clear_highlights()
+	if was_pending_post_move and GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not _has_unmoved_player_units():
+		_start_auto_advance_timer(0.45)
 
 ## Drops the OUT OF REACH box and the YOUR STEP COST row: the selected walker has used its order
 ## (or there is no selection), so neither applies any more.
@@ -282,7 +302,7 @@ func _can_rotate_selected_unit() -> bool:
 func _has_ready_player_selection() -> bool:
 	return (GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and selected_unit != null
 		and is_instance_valid(selected_unit) and selected_unit.mech_data.faction == MechData.Faction.PLAYER
-		and not selected_unit.mech_data.has_moved)
+		and not selected_unit.mech_data.is_order_complete())
 
 ## Why the selected walker cannot strike the enemy on `coords`, or null when there is nothing to
 ## explain: not the player phase, no ready player walker selected, no enemy there, or the enemy is
@@ -293,10 +313,12 @@ func strike_plan_for(coords: Vector2i) -> StrikePlan:
 	var u_at := unit_container.get_unit_at(coords)
 	if u_at == null or u_at.mech_data.faction == selected_unit.mech_data.faction:
 		return null
-	# Hover and the click that follows ask the same question: answer it once per board state.
 	var m := selected_unit.mech_data
+	if m.has_moved and absi(coords.x - m.grid_pos.x) + absi(coords.y - m.grid_pos.y) != 1:
+		return null
+	# Hover and the click that follows ask the same question: answer it once per board state.
 	var occ := unit_container.build_occupied_map(selected_unit)
-	var key := [m, m.grid_pos, m.current_fuel, coords, occ.keys()]
+	var key := [m, m.grid_pos, m.current_fuel, m.has_moved, coords, occ.keys()]
 	if _strike_plan_key == key:
 		return _strike_plan_cached
 	_strike_plan_key = key
@@ -309,14 +331,18 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 
 	var clicked_unit := unit_container.get_unit_at(coords)
 
-	# 1. If a ready player unit is selected and player clicked a reachable destination (move or attack!)
-	if selected_unit != null and selected_unit.mech_data.faction == MechData.Faction.PLAYER and not selected_unit.mech_data.has_moved:
+	# 1. If a ready player unit is selected and player clicked a reachable destination (move to empty tile, or attack adjacent enemy!)
+	if selected_unit != null and selected_unit.mech_data.faction == MechData.Faction.PLAYER and not selected_unit.mech_data.is_order_complete():
 		if grid_map.reachable_info.has(coords) and coords != selected_unit.mech_data.grid_pos:
 			var info: Dictionary = grid_map.reachable_info[coords]
-			var move_path: Array[Vector2i] = info["path"].duplicate()
 			var move_fuel: int = int(info["fuel_spent"])
-			_execute_unit_movement(selected_unit, coords, move_path, move_fuel)
-			return
+			if info.get("is_attack", false) and clicked_unit != null:
+				_execute_unit_attack(selected_unit, clicked_unit, move_fuel)
+				return
+			elif not selected_unit.mech_data.has_moved:
+				var move_path: Array[Vector2i] = info["path"].duplicate()
+				_execute_unit_movement(selected_unit, coords, move_path, move_fuel)
+				return
 
 	# 2. If a moved player unit is selected and player clicks an orthogonal neighbor empty tile -> reface toward it!
 	if selected_unit != null and selected_unit.mech_data.faction == MechData.Faction.PLAYER and selected_unit.mech_data.has_moved and clicked_unit == null:
@@ -347,6 +373,36 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 		_auto_advance_token += 1
 		SoundManager.play("ui_cancel")
 		_deselect_unit()
+
+func _execute_unit_attack(attacker: MechUnit, defender: MechUnit, fuel_spent: int) -> void:
+	if attacker == null or defender == null:
+		return
+	_auto_advance_token += 1
+	var m_data := attacker.mech_data
+	var atk_coords: Vector2i = m_data.grid_pos
+	var def_coords: Vector2i = defender.mech_data.grid_pos
+
+	m_data.prev_grid_pos = atk_coords
+	if def_coords != atk_coords:
+		m_data.set_facing(def_coords - atk_coords)
+	m_data.current_fuel = maxi(0, m_data.current_fuel - fuel_spent)
+	m_data.has_moved = true
+	m_data.has_attacked = true
+	m_data.is_entrenched = false
+	attacker.queue_redraw()
+
+	grid_map.clear_highlights()
+	ui_overlay.hovered_reach_info = {}
+	ui_overlay.current_forecast = {}
+	_clear_strike_readout()
+
+	GlobalState.add_log(
+		"%s engaged %s at (%d,%d) from (%d,%d) [-%dF] -> COMBAT ENGAGED!" % [
+			m_data.callsign, defender.mech_data.callsign, def_coords.x, def_coords.y,
+			atk_coords.x, atk_coords.y, fuel_spent
+		]
+	)
+	_trigger_skirmish_resolution(attacker, defender, atk_coords, atk_coords, def_coords)
 
 func _execute_unit_movement(unit: MechUnit, target_coords: Vector2i, path: Array[Vector2i], fuel_spent: int) -> void:
 	_is_animating_move = true
@@ -382,19 +438,7 @@ func _execute_unit_movement(unit: MechUnit, target_coords: Vector2i, path: Array
 		_on_unit_movement_finished(unit, start_coords, from_coords, target_coords, fuel_spent)
 	)
 
-func _on_unit_movement_finished(unit: MechUnit, start_coords: Vector2i, from_coords: Vector2i, target_coords: Vector2i, fuel_spent: int) -> void:
-	# Perform Collision Check on destination node!
-	var opposing_unit := unit_container.check_opposing_collision(unit)
-	if opposing_unit != null:
-		GlobalState.add_log(
-			"%s moved (-%dF) onto %s at (%d,%d) -> COMBAT ENGAGED!" % [
-				unit.mech_data.callsign, fuel_spent, opposing_unit.mech_data.callsign, target_coords.x, target_coords.y
-			]
-		)
-		_trigger_skirmish_resolution(unit, opposing_unit, start_coords, from_coords, target_coords)
-		return
-
-	# Non-collision move completed
+func _on_unit_movement_finished(unit: MechUnit, _start_coords: Vector2i, _from_coords: Vector2i, target_coords: Vector2i, fuel_spent: int) -> void:
 	var dest_tile := grid_map.get_tile(target_coords)
 	GlobalState.add_log(
 		"%s advanced to %s (%d,%d) [-%d Fuel, %dF left]." % [
@@ -409,10 +453,22 @@ func _on_unit_movement_finished(unit: MechUnit, start_coords: Vector2i, from_coo
 		return
 
 	if GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE:
+		var occ := unit_container.build_occupied_map(unit)
+		var reach := grid_map.compute_reachable_tiles(unit.mech_data, occ)
+		if reach.is_empty():
+			unit.mech_data.has_attacked = true
 		_select_unit(unit)
 		if not _has_unmoved_player_units():
 			_start_auto_advance_timer(0.45)
 	elif GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
+		if _pending_ai_target != null and is_instance_valid(_pending_ai_target) and _pending_ai_target.mech_data.is_alive():
+			var tgt := _pending_ai_target
+			var atk_f := _pending_ai_attack_fuel
+			_pending_ai_target = null
+			_pending_ai_attack_fuel = 0
+			_execute_unit_attack(unit, tgt, atk_f)
+			return
+		unit.mech_data.has_attacked = true
 		var p_units := unit_container.get_faction_units(MechData.Faction.PLAYER)
 		var desired_facing := AIController.choose_best_facing(unit.mech_data.grid_pos, p_units)
 		unit.mech_data.set_facing(desired_facing)
@@ -423,10 +479,23 @@ func _on_unit_movement_finished(unit: MechUnit, start_coords: Vector2i, from_coo
 func _on_wait_refuel_requested() -> void:
 	if GlobalState.current_phase != GlobalState.TurnPhase.PLAYER_PHASE or _is_animating_move:
 		return
-	if selected_unit == null or selected_unit.mech_data.faction != MechData.Faction.PLAYER or selected_unit.mech_data.has_moved:
+	if selected_unit == null or selected_unit.mech_data.faction != MechData.Faction.PLAYER or selected_unit.mech_data.is_order_complete():
 		return
 
 	var m := selected_unit.mech_data
+	if m.has_moved:
+		# Post-move HOLD POSITION: finishes the unit's turn without attacking or entrenching
+		m.has_attacked = true
+		GlobalState.add_log("%s holds position at (%d,%d)." % [m.callsign, m.grid_pos.x, m.grid_pos.y])
+		grid_map.clear_highlights()
+		grid_map.selected_coords = m.grid_pos
+		ui_overlay.hovered_reach_info = {}
+		ui_overlay.current_forecast = {}
+		_clear_strike_readout()
+		selected_unit.queue_redraw()
+		_check_auto_advance_player_phase()
+		return
+
 	var gained_fuel: int = _entrench_unit(m)
 
 	GlobalState.add_log("%s entrenched at (%d,%d) [%+d%% DEF, +%d Fuel, +%d EN]." % [
@@ -438,7 +507,7 @@ func _on_wait_refuel_requested() -> void:
 
 func _has_unmoved_player_units() -> bool:
 	for u in unit_container.get_faction_units(MechData.Faction.PLAYER):
-		if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive() and not u.mech_data.has_moved:
+		if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive() and not u.mech_data.is_order_complete():
 			return true
 	return false
 
@@ -455,7 +524,7 @@ func _check_auto_advance_player_phase(auto_select_unmoved: bool = true) -> void:
 	var p_units := unit_container.get_faction_units(MechData.Faction.PLAYER)
 	if auto_select_unmoved:
 		for u in p_units:
-			if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive() and not u.mech_data.has_moved:
+			if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive() and not u.mech_data.is_order_complete():
 				# Select next unmoved unit automatically
 				_select_unit(u)
 				return
@@ -470,10 +539,12 @@ func _select_next_player_unit() -> void:
 	if p_units.is_empty():
 		return
 	_auto_advance_token += 1
+	if selected_unit != null and is_instance_valid(selected_unit):
+		_finalize_post_move_order(selected_unit)
 	var cur_idx: int = p_units.find(selected_unit)
 	for i in range(1, p_units.size() + 1):
 		var candidate: MechUnit = p_units[(cur_idx + i) % p_units.size()]
-		if is_instance_valid(candidate) and candidate.mech_data != null and candidate.mech_data.is_alive() and not candidate.mech_data.has_moved:
+		if is_instance_valid(candidate) and candidate.mech_data != null and candidate.mech_data.is_alive() and not candidate.mech_data.is_order_complete():
 			_select_unit(candidate)
 			SoundManager.play("ui_click")
 			return
@@ -482,6 +553,8 @@ func _select_next_player_unit() -> void:
 		if is_instance_valid(candidate) and candidate.mech_data != null and candidate.mech_data.is_alive():
 			_select_unit(candidate)
 			SoundManager.play("ui_click")
+			if not _has_unmoved_player_units():
+				_start_auto_advance_timer(0.45)
 			return
 
 func _on_end_turn_requested() -> void:
@@ -506,10 +579,9 @@ func _trigger_skirmish_resolution(attacker: MechUnit, defender: MechUnit, start_
 	var target_tile := grid_map.get_tile(target_coords)
 
 	BalanceProbe.record_skirmish(attacker.mech_data, defender.mech_data, from_tile, target_tile)
-	var can_def_retreat := (unit_container.find_retreat_tile(target_coords, from_coords, grid_map) != Vector2i(-1, -1))
 	var form_ctx := unit_container.get_formation_context(target_coords, from_coords, int(attacker.mech_data.faction))
 	var session := SkirmishEngine.create_session(
-		attacker.mech_data, defender.mech_data, from_tile, target_tile, can_def_retreat, GlobalState.next_battle_seed(), form_ctx
+		attacker.mech_data, defender.mech_data, from_tile, target_tile, true, GlobalState.next_battle_seed(), form_ctx
 	)
 	ui_overlay.show_skirmish_session(session)
 
@@ -528,55 +600,15 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 		GlobalState.add_log("%s WRECKED during assault!" % [_pending_attacker.mech_data.callsign])
 		unit_container.remove_destroyed_unit(_pending_attacker)
 
-	# If both units survived (e.g. via RETREAT or round limit), resolve node occupancy so two opposing units never stay stacked
-	if atk_alive and def_alive:
-		if result.attacker_won_clash:
-			var retreat_coords := unit_container.find_retreat_tile(_pending_target_coords, _pending_from_coords, grid_map)
-			if retreat_coords != Vector2i(-1, -1):
-				# Capture locally: _pending_defender is cleared before the tween finishes
-				var retreating: MechUnit = _pending_defender
-				retreating.mech_data.grid_pos = retreat_coords
-				retreating.animate_move_along_screen_points(
-					[retreating.position, grid_map.grid_to_screen(retreat_coords, true)],
-					func():
-						if is_instance_valid(retreating):
-							retreating.position = grid_map.grid_to_screen(retreat_coords, true)
-				)
-				_pending_attacker.mech_data.grid_pos = _pending_target_coords
-				_pending_attacker.position = grid_map.grid_to_screen(_pending_target_coords, true)
-				GlobalState.add_log("%s retreated to (%d,%d)!" % [_pending_defender.mech_data.callsign, retreat_coords.x, retreat_coords.y])
-			else:
-				# Defender has no retreat tile -> overrun crush damage, attacker steps back to approach tile
-				_pending_defender.mech_data.current_armor = maxi(0, _pending_defender.mech_data.current_armor - CRUSH_DAMAGE)
-				if not _pending_defender.mech_data.is_alive():
-					GlobalState.add_log("%s crushed with no line of retreat!" % _pending_defender.mech_data.callsign)
-					unit_container.remove_destroyed_unit(_pending_defender)
-					_pending_attacker.mech_data.grid_pos = _pending_target_coords
-					_pending_attacker.position = grid_map.grid_to_screen(_pending_target_coords, true)
-				else:
-					var fallback := _get_safe_fallback_coords(_pending_attacker, _pending_from_coords, _pending_start_coords)
-					_pending_attacker.mech_data.grid_pos = fallback
-					_pending_attacker.position = grid_map.grid_to_screen(fallback, true)
-		else:
-			# Attacker retreated or assault was repelled -> Attacker falls back to its approach node
-			var fallback := _get_safe_fallback_coords(_pending_attacker, _pending_from_coords, _pending_start_coords)
-			# Capture locally: _pending_attacker is cleared before the tween finishes
-			var repelled: MechUnit = _pending_attacker
-			repelled.mech_data.grid_pos = fallback
-			repelled.animate_move_along_screen_points(
-				[repelled.position, grid_map.grid_to_screen(fallback, true)],
-				func():
-					if is_instance_valid(repelled):
-						repelled.position = grid_map.grid_to_screen(fallback, true)
-			)
-
-	# Reface surviving AI combatants toward closest threat
-	var p_units := unit_container.get_faction_units(MechData.Faction.PLAYER)
-	if atk_alive and _pending_attacker != null and _pending_attacker.mech_data.faction == MechData.Faction.AI:
-		_pending_attacker.mech_data.set_facing(AIController.choose_best_facing(_pending_attacker.mech_data.grid_pos, p_units))
+	# Both units remain on their respective tiles; defenders never auto-reface out of turn.
+	if atk_alive and _pending_attacker != null:
+		_pending_attacker.position = grid_map.grid_to_screen(_pending_attacker.mech_data.grid_pos, true)
+		if _pending_attacker.mech_data.faction == MechData.Faction.AI:
+			var p_units := unit_container.get_faction_units(MechData.Faction.PLAYER)
+			_pending_attacker.mech_data.set_facing(AIController.choose_best_facing(_pending_attacker.mech_data.grid_pos, p_units))
 		_pending_attacker.queue_redraw()
-	if def_alive and _pending_defender != null and _pending_defender.mech_data.faction == MechData.Faction.AI:
-		_pending_defender.mech_data.set_facing(AIController.choose_best_facing(_pending_defender.mech_data.grid_pos, p_units))
+	if def_alive and _pending_defender != null:
+		_pending_defender.position = grid_map.grid_to_screen(_pending_defender.mech_data.grid_pos, true)
 		_pending_defender.queue_redraw()
 
 	var surviving_player_attacker: MechUnit = null
@@ -585,6 +617,8 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 
 	_pending_attacker = null
 	_pending_defender = null
+	_pending_ai_target = null
+	_pending_ai_attack_fuel = 0
 
 	_update_all_objective_ownership()
 	_sync_hud_counts()
@@ -603,16 +637,6 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 	elif _phase_before_resolution == GlobalState.TurnPhase.AI_PHASE:
 		var t := get_tree().create_timer(0.35)
 		t.timeout.connect(_process_next_ai_unit)
-
-func _get_safe_fallback_coords(attacker: MechUnit, from_coords: Vector2i, start_coords: Vector2i) -> Vector2i:
-	if unit_container.get_unit_at(from_coords, attacker) == null:
-		return from_coords
-	if unit_container.get_unit_at(start_coords, attacker) == null:
-		return start_coords
-	var adj := unit_container.find_retreat_tile(from_coords, _pending_target_coords, grid_map)
-	if adj != Vector2i(-1, -1):
-		return adj
-	return start_coords
 
 # =============================================================================
 # TURN FLOW: SYNDICATE AI PHASE
@@ -659,6 +683,8 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			ai_unit.mech_data.facing = decision["facing"]
 		var action_type: String = decision.get("type", "WAIT_ENTRENCH")
 		if action_type == "WAIT_ENTRENCH":
+			_pending_ai_target = null
+			_pending_ai_attack_fuel = 0
 			_entrench_unit(ai_unit.mech_data)
 			GlobalState.add_log("%s entrenched & refueled at (%d,%d)." % [
 				ai_unit.mech_data.callsign, ai_unit.mech_data.grid_pos.x, ai_unit.mech_data.grid_pos.y
@@ -666,7 +692,24 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			ai_unit.queue_redraw()
 			var wait_t := get_tree().create_timer(0.32)
 			wait_t.timeout.connect(_process_next_ai_unit)
+		elif action_type == "ENGAGE":
+			var target_pos: Vector2i = decision["target_pos"]
+			var target_unit := unit_container.get_unit_at(target_pos, ai_unit)
+			var move_pos: Vector2i = decision.get("move_pos", ai_unit.mech_data.grid_pos)
+			var move_path: Array[Vector2i] = decision.get("move_path", [ai_unit.mech_data.grid_pos]).duplicate()
+			var move_fuel: int = int(decision.get("move_fuel", 0))
+			var attack_fuel: int = int(decision.get("attack_fuel", decision.get("fuel_spent", 0)))
+			if move_pos == ai_unit.mech_data.grid_pos or move_path.size() <= 1:
+				_pending_ai_target = null
+				_pending_ai_attack_fuel = 0
+				_execute_unit_attack(ai_unit, target_unit, attack_fuel)
+			else:
+				_pending_ai_target = target_unit
+				_pending_ai_attack_fuel = attack_fuel
+				_execute_unit_movement(ai_unit, move_pos, move_path, move_fuel)
 		else:
+			_pending_ai_target = null
+			_pending_ai_attack_fuel = 0
 			var target_pos: Vector2i = decision["target_pos"]
 			var path: Array[Vector2i] = decision["path"].duplicate()
 			var fuel_spent: int = int(decision["fuel_spent"])

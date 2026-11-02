@@ -49,7 +49,8 @@ func _draw() -> void:
 	if mech_data == null:
 		return
 
-	var dim_factor: float = 0.65 if (mech_data.has_moved and mech_data.faction == MechData.Faction.PLAYER) else 1.0
+	var order_done: bool = mech_data.is_order_complete()
+	var dim_factor: float = 0.65 if (order_done and mech_data.faction == MechData.Faction.PLAYER) else 1.0
 
 	# Isometric selection diamond ring on the tile surface
 	if is_selected:
@@ -75,7 +76,7 @@ func _draw() -> void:
 	var notch_pt: Vector2 = tip - f_screen * 4.5
 	var chev_pts := PackedVector2Array([tip, left_pt, notch_pt, right_pt])
 	var chev_col: Color = Color(1.0, 0.82, 0.22, 0.95) if mech_data.faction == MechData.Faction.PLAYER else Color(0.95, 0.32, 0.25, 0.95)
-	if mech_data.has_moved and mech_data.faction == MechData.Faction.PLAYER:
+	if order_done and mech_data.faction == MechData.Faction.PLAYER:
 		chev_col = chev_col.darkened(0.35)
 	draw_colored_polygon(chev_pts, chev_col)
 	draw_polyline(PackedVector2Array([left_pt, tip, right_pt]), Color(0.1, 0.1, 0.1, 0.8), 1.2)
@@ -112,7 +113,7 @@ func _draw() -> void:
 	draw_string(font, Vector2(bar_x, bar_y - 1), label_text, HORIZONTAL_ALIGNMENT_LEFT, int(bar_w - 6), 8, Color(0.95, 0.93, 0.85))
 
 	# Ready status pip
-	var pip_col := Color(0.35, 0.95, 0.45) if not mech_data.has_moved else Color(0.45, 0.45, 0.42)
+	var pip_col := Color(0.35, 0.95, 0.45) if not order_done else Color(0.45, 0.45, 0.42)
 	if mech_data.faction == MechData.Faction.AI:
 		pip_col = Color(0.95, 0.35, 0.3)
 	draw_circle(Vector2(bar_x + bar_w - 3, bar_y - 5), 2.2, pip_col)

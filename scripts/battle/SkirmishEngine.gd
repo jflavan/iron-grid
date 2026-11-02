@@ -671,7 +671,7 @@ class BattleSession extends RefCounted:
 
 		if result.defender_destroyed and not result.attacker_destroyed:
 			result.attacker_won_clash = true
-			result.summary_headline = "%s DESTROYED %s & CAPTURED SECTOR!" % [result.attacker.callsign, result.defender.callsign]
+			result.summary_headline = "%s DESTROYED %s!" % [result.attacker.callsign, result.defender.callsign]
 		elif result.attacker_destroyed and not result.defender_destroyed:
 			result.attacker_won_clash = false
 			result.summary_headline = "%s ANNIHILATED IN COUNTER-BARRAGE!" % [result.attacker.callsign]
@@ -684,16 +684,16 @@ class BattleSession extends RefCounted:
 		elif result.defender_retreated:
 			result.attacker_won_clash = true
 			result.defender_pushed_back = true
-			result.summary_headline = "%s FORCED TO RETREAT — %s SEIZES SECTOR!" % [result.defender.callsign, result.attacker.callsign]
+			result.summary_headline = "%s FORCED TO DISENGAGE BY %s!" % [result.defender.callsign, result.attacker.callsign]
 		else:
 			# Max rounds reached with both alive: compare remaining hull ratio / damage dealt
 			if result.total_dmg_to_defender > result.total_dmg_to_attacker:
 				result.attacker_won_clash = true
 				result.defender_pushed_back = true
-				result.summary_headline = "TACTICAL BREAKTHROUGH — %s DISLODGED!" % [result.defender.callsign]
+				result.summary_headline = "TACTICAL BREAKTHROUGH — %s OUTGUNNED!" % [result.defender.callsign]
 			else:
 				result.attacker_won_clash = false
-				result.summary_headline = "ASSAULT REPELLED — %s FALLS BACK!" % [result.attacker.callsign]
+				result.summary_headline = "ASSAULT REPELLED — %s HOLDS POSITION!" % [result.defender.callsign]
 
 	## Lets the AI pick and play the next turn. Returns the TurnStep, or null once the session is over.
 	func run_ai_turn() -> TurnStep:

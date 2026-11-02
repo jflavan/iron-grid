@@ -32,21 +32,43 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 
 	for dest_pos in reachable.keys():
 		var info: Dictionary = reachable[dest_pos]
-		var path: Array[Vector2i] = info["path"]
+		if info["is_attack"] or dest_pos == m.grid_pos:
+			continue
 		var dest_tile: GridTileData = grid_map.get_tile(dest_pos)
-		var score: float
-		if info["is_attack"]:
-			var tgt: MechUnit = uc.get_unit_at(dest_pos, unit)
-			if tgt == null: continue
-			var from_pos: Vector2i = path[path.size() - 2] if path.size() >= 2 else m.grid_pos
+		var score: float = _score_tile(dest_tile, m, foes, map_def, targets)
+		if deny.has(dest_pos): score += 150.0
+		score -= float(info["fuel_spent"]) * 1.1
+		if m.current_fuel - int(info["fuel_spent"]) <= 1: score -= 10.0
+		var act := { "type": "MOVE", "target_pos": dest_pos, "score": score }
+		cands.append(act)
+		if score > best["score"]:
+			best = act
+
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for tgt in foes:
+		if not is_instance_valid(tgt) or tgt.mech_data == null or not tgt.mech_data.is_alive():
+			continue
+		var dest_pos: Vector2i = tgt.mech_data.grid_pos
+		var dest_tile: GridTileData = grid_map.get_tile(dest_pos)
+		if dest_tile == null:
+			continue
+		for d in dirs:
+			var from_pos: Vector2i = dest_pos + d
+			if not grid_map.is_valid_coords(from_pos):
+				continue
+			if from_pos != m.grid_pos and (not reachable.has(from_pos) or reachable[from_pos]["is_attack"]):
+				continue
+			var move_fuel: int = 0 if from_pos == m.grid_pos else int(reachable[from_pos]["fuel_spent"])
 			var from_tile: GridTileData = grid_map.get_tile(from_pos)
+			var atk_fuel: int = m.get_step_fuel_cost(from_tile, dest_tile)
+			if move_fuel + atk_fuel > m.current_fuel:
+				continue
 			var form_ctx: Dictionary = uc.get_formation_context(dest_pos, from_pos, int(ME))
 			var fc: Dictionary = SkirmishEngine.compute_forecast(m, tgt.mech_data, from_tile, dest_tile, form_ctx)
 			var dd: int = fc["est_dmg_to_def"]; var da: int = fc["est_dmg_to_atk"]
 			var atk_won: bool = bool(fc.get("attacker_won", dd >= da))
-			score = 45.0 + float(dd - da) * 1.35 + (24.0 if atk_won else -20.0)
+			var score: float = 45.0 + float(dd - da) * 1.35 + (24.0 if atk_won else -20.0)
 			score += float(fc["atk_mod_pct"] - fc["def_mod_pct"]) * 0.45
-			# Same flank / rear preference as AIController
 			var angle := str(fc.get("approach_angle", "FRONT"))
 			if angle == "REAR": score += 45.0
 			elif angle == "FLANK": score += 20.0
@@ -59,16 +81,11 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 					score -= 42.0
 				if from_tile.elevation < start_tile.elevation:
 					score -= float(start_tile.elevation - from_tile.elevation) * 18.0
-		else:
-			if dest_pos == m.grid_pos: continue
-			score = _score_tile(dest_tile, m, foes, map_def, targets)
-			if deny.has(dest_pos): score += 150.0
-			score -= float(info["fuel_spent"]) * 1.1
-			if m.current_fuel - int(info["fuel_spent"]) <= 1: score -= 10.0
-		var act := { "type": "ENGAGE" if info["is_attack"] else "MOVE", "target_pos": dest_pos, "score": score }
-		cands.append(act)
-		if score > best["score"]:
-			best = act
+			var click_pos: Vector2i = dest_pos if from_pos == m.grid_pos else from_pos
+			var act := { "type": "ENGAGE", "target_pos": click_pos, "attack_pos": dest_pos, "move_pos": from_pos, "score": score }
+			cands.append(act)
+			if score > best["score"]:
+				best = act
 	grid_map.clear_highlights()
 	if jitter > 0.0:
 		var near: Array[Dictionary] = cands.filter(func(c): return c["score"] >= best["score"] - jitter)

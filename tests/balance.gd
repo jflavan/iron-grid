@@ -119,12 +119,13 @@ func _holder_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 
 ## Competent commander: TacticalBot (AIController's attack/positional scoring with Coalition garrison weights) through the human click flow.
 func _tactical_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Dictionary) -> void:
-	if TacticalBot.reface_step(bf):
-		return # face the nearest threat after each order, as the Syndicate AI does
 	var sel: MechUnit = bf.selected_unit
-	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
+	if sel != null and sel.mech_data.faction == MechData.Faction.PLAYER and sel.mech_data.is_order_complete():
+		if TacticalBot.reface_step(bf):
+			return # face the nearest threat after each order, as the Syndicate AI does
+	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.is_order_complete():
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
-			if not u.mech_data.has_moved:
+			if not u.mech_data.is_order_complete():
 				bf._on_tile_clicked(u.mech_data.grid_pos, null)
 				return
 		return

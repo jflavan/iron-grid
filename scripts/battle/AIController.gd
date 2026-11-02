@@ -39,18 +39,58 @@ static func choose_best_action(
 	for pos_key in reachable.keys():
 		var dest_pos: Vector2i = pos_key
 		var info: Dictionary = reachable[dest_pos]
+		if info["is_attack"] or dest_pos == start_pos:
+			continue
 		var path: Array[Vector2i] = info["path"]
 		var fuel_spent: int = info["fuel_spent"]
 		var dest_tile: GridTileData = grid_map.get_tile(dest_pos)
 
-		if info["is_attack"]:
-			var target_unit: MechUnit = unit_container.get_unit_at(dest_pos, ai_unit)
-			if target_unit == null or target_unit.mech_data == null:
-				continue
-			var from_pos: Vector2i = path[path.size() - 2] if path.size() >= 2 else start_pos
-			var from_tile: GridTileData = grid_map.get_tile(from_pos)
-			var form_ctx := unit_container.get_formation_context(dest_pos, from_pos, int(m_data.faction))
+		var pos_score: float = _score_positional_tile(dest_tile, m_data, player_units, map_def, obj_targets)
+		if deny_tiles.has(dest_pos):
+			pos_score += 150.0 # Retaking this node breaks the Coalition's pending objective victory
+		# Small penalty for burning all fuel without engaging
+		pos_score -= float(fuel_spent) * 1.1
+		if m_data.current_fuel - fuel_spent <= 1:
+			pos_score -= 10.0
 
+		if pos_score > best_action["score"]:
+			best_action = {
+				"type": "MOVE",
+				"target_pos": dest_pos,
+				"path": path,
+				"fuel_spent": fuel_spent,
+				"score": pos_score
+			}
+
+	# Evaluate decoupled attacks against each living player unit from all reachable adjacent launch tiles (including start_pos)
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for target_unit in player_units:
+		if not is_instance_valid(target_unit) or target_unit.mech_data == null or not target_unit.mech_data.is_alive():
+			continue
+		var dest_pos: Vector2i = target_unit.mech_data.grid_pos
+		var dest_tile: GridTileData = grid_map.get_tile(dest_pos)
+		if dest_tile == null:
+			continue
+
+		for d in dirs:
+			var from_pos: Vector2i = dest_pos + d
+			if not grid_map.is_valid_coords(from_pos):
+				continue
+			if from_pos != start_pos and (not reachable.has(from_pos) or reachable[from_pos]["is_attack"]):
+				continue
+			var move_fuel: int = 0 if from_pos == start_pos else int(reachable[from_pos]["fuel_spent"])
+			var move_path: Array[Vector2i] = []
+			if from_pos == start_pos:
+				move_path.append(start_pos)
+			else:
+				move_path.assign(reachable[from_pos]["path"])
+			var from_tile: GridTileData = grid_map.get_tile(from_pos)
+			var attack_fuel: int = m_data.get_step_fuel_cost(from_tile, dest_tile)
+			var total_fuel: int = move_fuel + attack_fuel
+			if total_fuel > m_data.current_fuel:
+				continue
+
+			var form_ctx := unit_container.get_formation_context(dest_pos, from_pos, int(m_data.faction))
 			var forecast: Dictionary = SkirmishEngine.compute_forecast(
 				m_data, target_unit.mech_data, from_tile, dest_tile, form_ctx
 			)
@@ -62,6 +102,7 @@ static func choose_best_action(
 			atk_score += float(est_dmg_def - est_dmg_atk) * 1.35
 			atk_score += 24.0 if atk_won else -20.0
 			atk_score += float(forecast["atk_mod_pct"] - forecast["def_mod_pct"]) * 0.45
+			atk_score -= float(total_fuel) * 0.25
 
 			# Bonus for flanking and rear attack angles
 			var approach_ang := str(forecast.get("approach_angle", "FRONT"))
@@ -73,7 +114,7 @@ static func choose_best_action(
 			# Huge bonus for finishing off an enemy walker cleanly (scaled if mutual destruction)
 			if est_dmg_def >= target_unit.mech_data.current_armor:
 				atk_score += 130.0 if est_dmg_atk < m_data.current_armor else 35.0
-			# Dislodging a walker that is holding an objective contests the capture before turn end
+			# Attacking a walker that is holding an objective
 			if dest_tile.is_objective and dest_tile.controlled_by != MechData.Faction.AI:
 				atk_score += 30.0
 			if deny_tiles.has(dest_pos):
@@ -90,31 +131,19 @@ static func choose_best_action(
 				atk_score -= 95.0
 
 			if atk_score > best_action["score"]:
+				var full_path: Array[Vector2i] = move_path.duplicate()
+				full_path.append(dest_pos)
 				best_action = {
 					"type": "ENGAGE",
+					"move_pos": from_pos,
+					"move_path": move_path,
+					"move_fuel": move_fuel,
 					"target_pos": dest_pos,
-					"path": path,
-					"fuel_spent": fuel_spent,
+					"attack_fuel": attack_fuel,
+					"path": full_path,
+					"fuel_spent": total_fuel,
+					"facing": dest_pos - from_pos,
 					"score": atk_score
-				}
-		else:
-			if dest_pos == start_pos:
-				continue
-			var pos_score: float = _score_positional_tile(dest_tile, m_data, player_units, map_def, obj_targets)
-			if deny_tiles.has(dest_pos):
-				pos_score += 150.0 # Retaking this node breaks the Coalition's pending objective victory
-			# Small penalty for burning all fuel without engaging
-			pos_score -= float(fuel_spent) * 1.1
-			if m_data.current_fuel - fuel_spent <= 1:
-				pos_score -= 10.0
-
-			if pos_score > best_action["score"]:
-				best_action = {
-					"type": "MOVE",
-					"target_pos": dest_pos,
-					"path": path,
-					"fuel_spent": fuel_spent,
-					"score": pos_score
 				}
 
 	if not best_action.has("facing"):

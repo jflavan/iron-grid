@@ -39,6 +39,7 @@ func _ready() -> void:
 		"test_unit_container_formation_context", "test_in_place_rotation_and_movement_facing",
 		"test_ai_prefers_flank_and_rear_attacks",
 		"test_player_and_ai_reface_after_movement",
+		"test_decoupled_movement_and_combat",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -869,13 +870,20 @@ func test_strike_plan_matches_reachable() -> void:
 					var occ := {target: foe}
 					var reach: Dictionary = gm.compute_reachable_tiles(atk, occ)
 					var plan: StrikePlan = gm.compute_strike_plan(atk, target, occ)
-					if reach.has(target):
-						if plan.severity != StrikePlan.REACHABLE or plan.needs != int(reach[target]["fuel_spent"]):
-							mismatches.append([mi, c, start, target])
-					elif plan.severity == StrikePlan.REACHABLE:
-						mismatches.append([mi, c, start, target, "plan says reachable"])
+					if dist == 1:
+						if reach.has(target):
+							if plan.severity != StrikePlan.REACHABLE or plan.needs != int(reach[target]["fuel_spent"]):
+								mismatches.append([mi, c, start, target])
+						elif plan.severity == StrikePlan.REACHABLE:
+							mismatches.append([mi, c, start, target, "plan says reachable at dist 1"])
+					else:
+						if reach.has(target):
+							mismatches.append([mi, c, start, target, "non-adjacent enemy in reachable_info"])
+						elif plan.severity == StrikePlan.REACHABLE:
+							if not reach.has(plan.launch) or int(reach[plan.launch]["fuel_spent"]) + int(plan.step["total"]) != plan.needs:
+								mismatches.append([mi, c, start, target, "plan launch mismatch"])
 		gm.free()
-	_check(mismatches.is_empty(), "strike plan agrees with reachable_info (%d mismatches, first %s)" % [mismatches.size(), mismatches.slice(0, 1)])
+	_check(mismatches.is_empty(), "strike plan agrees with two-step reachable_info (%d mismatches, first %s)" % [mismatches.size(), mismatches.slice(0, 1)])
 
 func test_strike_plan_beyond_range() -> void:
 	var gm := _grid(0)
@@ -1111,6 +1119,7 @@ func test_hud_plan_clears_after_order() -> void:
 	for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
 		if u != titan:
 			u.mech_data.has_moved = true
+			u.mech_data.has_attacked = true
 	bf._on_wait_refuel_requested()
 	_check(bf.ui_overlay.strike_plan == null and bf.ui_overlay.step_cost_mech == null, "WAIT clears the strike plan and step-cost row")
 	var iron := _unit_by_callsign(bf, "IRON-1")
@@ -1494,6 +1503,98 @@ func test_player_and_ai_reface_after_movement() -> void:
 	_check(ai_unit.mech_data.grid_pos == Vector2i(7, 6), "AI arrived at (7, 6)")
 	# Closest player threat is at (7, 4) which is North (0, -1) relative to (7, 6)
 	_check(ai_unit.mech_data.facing == Vector2i(0, -1), "AI refaced North (0, -1) to confront closest player threat")
+
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_decoupled_movement_and_combat() -> void:
+	var bf := await _spawn_iron_bridge()
+	var modal: BattleScreen = bf.ui_overlay.skirmish_modal
+
+	# 1. Face and Entrench
+	var titan := _unit_by_callsign(bf, "TITAN-2")
+	titan.mech_data.facing = Vector2i(1, 0)
+	bf._select_unit(titan)
+	bf._rotate_selected_unit()
+	_check(titan.mech_data.facing == Vector2i(0, 1), "unit rotated before entrenching")
+	bf._on_wait_refuel_requested()
+	_check(titan.mech_data.is_entrenched and titan.mech_data.is_order_complete(), "WAIT entrenches and completes the unit's order")
+
+	# 2. Face and Attack without moving (stationary rear attack; defender never auto-faces)
+	var iron := _unit_by_callsign(bf, "IRON-1")
+	var rote := _unit_by_callsign(bf, "ROTE-1")
+	iron.mech_data.grid_pos = Vector2i(4, 4)
+	iron.mech_data.facing = Vector2i(0, -1)
+	iron.mech_data.current_fuel = 10
+	iron.mech_data.has_moved = false
+	iron.mech_data.has_attacked = false
+	rote.mech_data.grid_pos = Vector2i(5, 4)
+	# ROTE-1 faces SE (1, 0), so IRON-1 at (4, 4) attacks from the rear!
+	rote.mech_data.facing = Vector2i(1, 0)
+	rote.mech_data.current_armor = rote.mech_data.max_armor
+
+	bf._select_unit(iron)
+	_check(bf.grid_map.reachable_info.has(Vector2i(5, 4)) and bool(bf.grid_map.reachable_info[Vector2i(5, 4)]["is_attack"]), "adjacent enemy is highlighted as an attack target")
+	var expected_atk_fuel: int = iron.mech_data.get_step_fuel_cost(bf.grid_map.get_tile(Vector2i(4, 4)), bf.grid_map.get_tile(Vector2i(5, 4)))
+	bf._on_tile_clicked(Vector2i(5, 4), bf.grid_map.get_tile(Vector2i(5, 4)))
+	while bf._is_animating_move or modal.visible:
+		if modal.visible:
+			if modal._all_steps_done:
+				modal._on_confirm_pressed()
+			else:
+				modal._on_skip_pressed()
+		await get_tree().process_frame
+
+	_check(iron.mech_data.grid_pos == Vector2i(4, 4), "attacker stays on its own tile (4, 4) during and after combat")
+	_check(iron.mech_data.facing == Vector2i(1, 0), "attacker automatically turns to face the target it attacks")
+	_check(iron.mech_data.current_fuel == 10 - expected_atk_fuel, "stationary attack spends only the target tile step cost")
+	_check(iron.mech_data.is_order_complete(), "attacking completes the unit's order")
+	if is_instance_valid(rote) and not rote.mech_data.is_destroyed():
+		_check(rote.mech_data.grid_pos == Vector2i(5, 4), "surviving defender stays on its own tile (5, 4)")
+		_check(rote.mech_data.facing == Vector2i(1, 0), "defender does NOT auto-face the attacker (preserves rear/flank orientation)")
+
+	# 3. Move and Face or Attack (move to an empty tile adjacent to an enemy, rotate, then attack or hold)
+	var falke := _unit_by_callsign(bf, "SWIFT-3")
+	var glut := _unit_by_callsign(bf, "GLUT-2")
+	falke.mech_data.grid_pos = Vector2i(3, 5)
+	falke.mech_data.current_fuel = 14
+	falke.mech_data.has_moved = false
+	falke.mech_data.has_attacked = false
+	glut.mech_data.grid_pos = Vector2i(5, 5)
+	glut.mech_data.facing = Vector2i(1, 0) # facing away from (4, 5)
+	glut.mech_data.current_armor = 1 # 1 HP so FALKE-3 destroys it in place
+
+	bf._select_unit(falke)
+	_check(not bf.grid_map.reachable_info.has(Vector2i(5, 5)), "non-adjacent enemy is not a direct one-click move+attack target")
+	_check(bf.grid_map.reachable_info.has(Vector2i(4, 5)) and not bool(bf.grid_map.reachable_info[Vector2i(4, 5)]["is_attack"]), "empty launch tile (4, 5) is reachable for movement")
+
+	# Step 1: Click empty tile (4, 5) to move adjacent to GLUT-2
+	bf._on_tile_clicked(Vector2i(4, 5), bf.grid_map.get_tile(Vector2i(4, 5)))
+	for i in 60:
+		await get_tree().process_frame
+
+	_check(falke.mech_data.grid_pos == Vector2i(4, 5), "FALKE-3 moved to (4, 5)")
+	_check(falke.mech_data.has_moved and not falke.mech_data.has_attacked, "FALKE-3 has moved but can still attack adjacent GLUT-2")
+	_check(bf.grid_map.reachable_info.has(Vector2i(5, 5)) and bool(bf.grid_map.reachable_info[Vector2i(5, 5)]["is_attack"]), "adjacent GLUT-2 is now highlighted as an attack target after moving")
+	_check(bf.ui_overlay._can_hold(), "HUD shows HOLD POSITION [R] while in post-move attack window")
+
+	# Rotate freely after moving; attack window remains available
+	bf._rotate_selected_unit()
+	_check(not falke.mech_data.has_attacked and bf.grid_map.reachable_info.has(Vector2i(5, 5)), "rotating after moving keeps adjacent attack target available")
+
+	# Step 2: Click adjacent GLUT-2 at (5, 5) to attack after moving
+	bf._on_tile_clicked(Vector2i(5, 5), bf.grid_map.get_tile(Vector2i(5, 5)))
+	while bf._is_animating_move or modal.visible:
+		if modal.visible:
+			if modal._all_steps_done:
+				modal._on_confirm_pressed()
+			else:
+				modal._on_skip_pressed()
+		await get_tree().process_frame
+
+	_check(falke.mech_data.grid_pos == Vector2i(4, 5), "even when destroying the defender, attacker remains on (4, 5) and never advances onto (5, 5)")
+	_check(falke.mech_data.is_order_complete(), "FALKE-3 order is complete after moving and attacking")
+	_check(bf.unit_container.get_unit_at(Vector2i(5, 5)) == null, "destroyed defender is removed from (5, 5)")
 
 	bf.queue_free()
 	await get_tree().process_frame

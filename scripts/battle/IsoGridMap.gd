@@ -121,46 +121,63 @@ func screen_to_grid(local_pos: Vector2) -> Vector2i:
 	return Vector2i(-1, -1)
 
 ## Computes all reachable tiles for `unit` given `occupied_units` (Dictionary: Vector2i -> MechData).
-## Allows moving onto an enemy node to trigger a Collision / Skirmish!
+## Movement tiles are unoccupied tiles within fuel budget (when not unit.has_moved).
+## Attack tiles are orthogonally adjacent enemy tiles within step fuel budget (when not unit.has_attacked).
 func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dictionary:
 	reachable_info.clear()
 	current_path_preview.clear()
-	if unit == null or unit.has_moved:
+	if unit == null or unit.is_order_complete():
 		queue_redraw()
 		return reachable_info
 
 	var start: Vector2i = unit.grid_pos
 	var max_budget: int = unit.current_fuel
-	var search: Array = _shortest_costs(unit, occupied_units, max_budget)
-	var best_cost: Dictionary = search[0]
-	var came_from: Dictionary = search[1]
 
-	# Build reachable_info dictionary (excluding tiles occupied by OTHER friendly units)
-	for pos_key in best_cost.keys():
-		var pos: Vector2i = pos_key
-		var is_enemy_target := false
-		if occupied_units.has(pos) and pos != start:
-			var occ: MechData = occupied_units[pos]
-			if occ.faction == unit.faction:
-				continue # Cannot end move on another friendly mech
-			else:
-				is_enemy_target = true
+	if not unit.has_moved:
+		var search: Array = _shortest_costs(unit, occupied_units, max_budget)
+		var best_cost: Dictionary = search[0]
+		var came_from: Dictionary = search[1]
 
-		# Reconstruct path
-		var path: Array[Vector2i] = []
-		var curr: Vector2i = pos
-		while curr != start:
-			path.push_front(curr)
-			curr = came_from[curr]
-		path.push_front(start)
+		# Build reachable_info dictionary for unoccupied tiles only
+		for pos_key in best_cost.keys():
+			var pos: Vector2i = pos_key
+			if pos != start and occupied_units.has(pos):
+				continue # Cannot end move on any occupied tile (friendly or enemy)
 
-		var spent: int = best_cost[pos]
-		reachable_info[pos] = {
-			"fuel_spent": spent,
-			"fuel_left": max_budget - spent,
-			"path": path,
-			"is_attack": is_enemy_target
-		}
+			# Reconstruct path
+			var path: Array[Vector2i] = []
+			var curr: Vector2i = pos
+			while curr != start:
+				path.push_front(curr)
+				curr = came_from[curr]
+			path.push_front(start)
+
+			var spent: int = best_cost[pos]
+			reachable_info[pos] = {
+				"fuel_spent": spent,
+				"fuel_left": max_budget - spent,
+				"path": path,
+				"is_attack": false
+			}
+
+	if not unit.has_attacked:
+		var start_tile: GridTileData = get_tile(start)
+		for d in _DIRS:
+			var adj: Vector2i = start + d
+			if not is_valid_coords(adj):
+				continue
+			if occupied_units.has(adj):
+				var occ: MechData = occupied_units[adj]
+				if occ.faction != unit.faction:
+					var strike_fuel: int = unit.get_step_fuel_cost(start_tile, get_tile(adj))
+					if strike_fuel <= max_budget:
+						var atk_path: Array[Vector2i] = [start, adj]
+						reachable_info[adj] = {
+							"fuel_spent": strike_fuel,
+							"fuel_left": max_budget - strike_fuel,
+							"path": atk_path,
+							"is_attack": true
+						}
 
 	queue_redraw()
 	return reachable_info
@@ -169,9 +186,8 @@ const _NO_FUEL_CAP: int = 1 << 30
 const _DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
 ## Dijkstra over fuel cost from unit.grid_pos, shared by movement ranges and strike plans so both
-## always agree. Returns [best_cost, came_from] (Vector2i -> int / Vector2i). Rules: never expand
-## through an enemy node, never launch an engagement from a node held by another friendly unit,
-## and drop any step whose running cost would exceed `budget`.
+## always agree. Returns [best_cost, came_from] (Vector2i -> int / Vector2i). Rules: never step onto
+## an enemy node, and drop any step whose running cost would exceed `budget`.
 ## `settle`, when given, stops the search once every listed node has been popped (its cost is final).
 func _shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
 	var start: Vector2i = unit.grid_pos
@@ -201,20 +217,13 @@ func _shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int, se
 		var cur_cost: int = best_cost[current]
 		var cur_tile: GridTileData = get_tile(current)
 
-		# Do not expand THROUGH an enemy unit (entering an enemy node triggers immediate collision)
-		if current != start and occupied_units.has(current):
-			var occ_unit: MechData = occupied_units[current]
-			if occ_unit.faction != unit.faction:
-				continue
-
 		for d in _DIRS:
 			var next_pos: Vector2i = current + d
 			if not is_valid_coords(next_pos):
 				continue
-			# Cannot launch an engagement onto an enemy node from a tile occupied by another friendly unit
+			# Never step onto an enemy-occupied tile during movement
 			if occupied_units.has(next_pos) and occupied_units[next_pos].faction != unit.faction:
-				if current != start and occupied_units.has(current):
-					continue
+				continue
 			var next_tile: GridTileData = get_tile(next_pos)
 			var step_fuel: int = unit.get_step_fuel_cost(cur_tile, next_tile)
 			var new_cost: int = cur_cost + step_fuel
@@ -248,6 +257,8 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 	var launches: Array[Dictionary] = []   # {pos, path, step: breakdown}
 	for d in _DIRS:
 		var l: Vector2i = target + d
+		if unit.has_moved and l != start:
+			continue
 		if not costs.has(l):
 			continue
 		if l != start and occupied_units.has(l):

@@ -220,6 +220,7 @@ func _check_victory_rules() -> void:
 	bf = await _spawn_battlefield(0)
 	for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
 		u.mech_data.has_moved = true
+		u.mech_data.has_attacked = true
 	bf._check_auto_advance_player_phase()
 	bf._declare_game_over(0, "test")
 	for i in 120:
@@ -337,6 +338,7 @@ func _check_tactical_bot_refaces() -> void:
 		if u.mech_data.callsign.begins_with("IRON-1"):
 			iron = u
 	iron.mech_data.has_moved = true
+	iron.mech_data.has_attacked = true
 	iron.mech_data.facing = Vector2i(0, 1)
 	bf._select_unit(iron)
 	var want := AIController.choose_best_facing(iron.mech_data.grid_pos, bf.unit_container.get_faction_units(MechData.Faction.AI))
@@ -356,13 +358,16 @@ const HOLDOUT_POSTS :={"TITAN-2": Vector2i(3, 6), "IRON-1": Vector2i(3, 1), "SWI
 ## Moves each walker to its post once, then only ever WAITs. Never attacks.
 func _holdout_policy_step(bf: Battlefield, policy: String, stats: Dictionary) -> void:
 	var sel: MechUnit = bf.selected_unit
-	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
+	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.is_order_complete():
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
-			if not u.mech_data.has_moved:
+			if not u.mech_data.is_order_complete():
 				bf._select_unit(u)
 				return
 		return
 	var m := sel.mech_data
+	if m.has_moved:
+		bf._on_wait_refuel_requested()
+		return
 	var post: Vector2i = HOLDOUT_POSTS.get(m.callsign.get_slice(" ", 0), m.grid_pos)
 	if policy == "holdout_center" and m.callsign.begins_with("SWIFT-3"):
 		post = IRON_BRIDGE_CENTER
@@ -380,15 +385,15 @@ func _turtle_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 		bf._on_end_turn_requested()
 		return
 	var sel: MechUnit = bf.selected_unit
-	if sel != null and sel.mech_data.faction == MechData.Faction.PLAYER and not sel.mech_data.has_moved:
+	if sel != null and sel.mech_data.faction == MechData.Faction.PLAYER and not sel.mech_data.is_order_complete():
 		stats["waits"] += 1
 		bf._on_wait_refuel_requested()
 
 func _random_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 	var sel: MechUnit = bf.selected_unit
-	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
+	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.is_order_complete():
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
-			if not u.mech_data.has_moved:
+			if not u.mech_data.is_order_complete():
 				bf._on_tile_clicked(u.mech_data.grid_pos, null)
 				return
 		return
@@ -403,9 +408,9 @@ func _random_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 
 func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Dictionary) -> void:
 	var sel: MechUnit = bf.selected_unit
-	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.has_moved:
+	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.is_order_complete():
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
-			if not u.mech_data.has_moved:
+			if not u.mech_data.is_order_complete():
 				bf._on_tile_clicked(u.mech_data.grid_pos, null)
 				return
 		return
@@ -419,7 +424,8 @@ func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 	for obj in map_def.objectives:
 		if bf.grid_map.get_tile(obj["pos"]).controlled_by != 0:
 			targets.append(obj["pos"])
-	for e in bf.unit_container.get_faction_units(MechData.Faction.AI):
+	var enemies := bf.unit_container.get_faction_units(MechData.Faction.AI)
+	for e in enemies:
 		targets.append(e.mech_data.grid_pos)
 
 	var here_dist: float = _nearest(m.grid_pos, targets)
@@ -430,8 +436,7 @@ func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 		var score: float
 		if info["is_attack"]:
 			var target := bf.unit_container.get_unit_at(pos, sel)
-			var path: Array = info["path"]
-			var fc := SkirmishEngine.compute_forecast(m, target.mech_data, bf.grid_map.get_tile(path[path.size() - 2]), bf.grid_map.get_tile(pos))
+			var fc := SkirmishEngine.compute_forecast(m, target.mech_data, bf.grid_map.get_tile(m.grid_pos), bf.grid_map.get_tile(pos))
 			score = 20.0 + float(fc["est_dmg_to_def"] - fc["est_dmg_to_atk"])
 			if fc["est_dmg_to_atk"] >= m.current_armor:
 				score -= 200.0
@@ -440,6 +445,17 @@ func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 			var td := bf.grid_map.get_tile(pos)
 			if td.is_objective and td.controlled_by != 0:
 				score += 40.0
+			# Check if moving to `pos` puts `m` adjacent to an enemy it can immediately attack with remaining fuel
+			for e in enemies:
+				var epos: Vector2i = e.mech_data.grid_pos
+				if absi(epos.x - pos.x) + absi(epos.y - pos.y) == 1:
+					var etile := bf.grid_map.get_tile(epos)
+					var atk_fuel: int = m.get_step_fuel_cost(td, etile)
+					if int(info["fuel_spent"]) + atk_fuel <= m.current_fuel:
+						var fc2 := SkirmishEngine.compute_forecast(m, e.mech_data, td, etile)
+						var atk_sc: float = 20.0 + float(fc2["est_dmg_to_def"] - fc2["est_dmg_to_atk"])
+						if fc2["est_dmg_to_atk"] < m.current_armor and atk_sc > score:
+							score = atk_sc
 		if score > best_score:
 			best_score = score
 			best_pos = pos

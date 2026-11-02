@@ -57,6 +57,7 @@ var abilities: Array[CombatAbility] = []
 
 # Turn State Flags
 var has_moved: bool = false
+var has_attacked: bool = false
 var is_entrenched: bool = false
 var lore_blurb: String = ""
 
@@ -169,6 +170,9 @@ func next_turn_fuel(fuel_now: int, tile: GridTileData, waited: bool) -> int:
 func is_alive() -> bool:
 	return current_armor > 0
 
+func is_order_complete() -> bool:
+	return has_moved and has_attacked
+
 func get_armor_ratio() -> float:
 	return clampf(float(current_armor) / float(maxi(1, max_armor)), 0.0, 1.0)
 
@@ -191,6 +195,7 @@ func duplicate_mech() -> MechData:
 	copy.amphibious_gear = amphibious_gear
 	copy.mountain_gear = mountain_gear
 	copy.has_moved = has_moved
+	copy.has_attacked = has_attacked
 	copy.is_entrenched = is_entrenched
 	copy.facing = facing
 	for a in abilities:

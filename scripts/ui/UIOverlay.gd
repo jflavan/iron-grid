@@ -29,7 +29,7 @@ static func manual_lines() -> Array[String]:
 		"1. TURN FLOW & FUEL MOBILITY:",
 		"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
 		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
-		"   - Attacking moves onto the enemy's tile: you pay ITS fuel cost (terrain + chassis surcharge + climb). Hover an enemy to see what a strike needs.",
+		"   - On its turn, a walker can face & entrench, move and then face or attack, or face and attack in place. Attacking an adjacent enemy costs its tile's step fuel (terrain + chassis surcharge + climb) and never moves onto its tile.",
 		"   - [WAIT / REFUEL] entrenches (%+d%% DEF, %+d%% EVA, %+d%% Hit, +%d SPD) & restores +%d Fuel / +%d EN (+%d Hull in a City). Cities repair +%d Hull, +%d Fuel, +%d EN each turn." % [
 			BalanceProbe.def_pct[0], S.ENTRENCHED_EVA_BONUS, S.ENTRENCHED_ACC_BONUS, S.ENTRENCHED_SPD_BONUS,
 			MechData.WAIT_FUEL, MechData.WAIT_ENERGY, BalanceProbe.patch[0], BalanceProbe.upkeep[0], MechData.CITY_FUEL, MechData.CITY_ENERGY],
@@ -50,7 +50,7 @@ static func manual_lines() -> Array[String]:
 			S.ELEV_CLIMB_FP_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_CLIMB_ENEMY_FP_PCT],
 		"",
 		"4. TURN-BASED RPG COMBAT (ATTACK / TECH / DEFEND / RETREAT):",
-		"   - Moving onto an enemy-occupied node triggers a classic Final Fantasy turn-based battle.",
+		"   - Attacking an adjacent enemy triggers a classic Final Fantasy turn-based battle; both walkers remain on their own tiles.",
 		"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +%d SPD; an Entrenched Defender answers with +%d." % [
 			S.ROUND1_ATTACKER_SPD_BONUS, S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS],
 		"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-%d%% DMG on the enemy's next hit, +%d EN), or RETREAT." % [
@@ -127,6 +127,9 @@ func _can_turn() -> bool:
 
 func _can_wait() -> bool:
 	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and not selected_mech.has_moved
+
+func _can_hold() -> bool:
+	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and selected_mech.has_moved and not selected_mech.has_attacked
 
 func _can_next_mech() -> bool:
 	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and selected_mech.has_moved
@@ -306,8 +309,8 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	CrtUI.frame(root_ctrl, port)
 	CrtUI.mech(root_ctrl, m.chassis_id, int(m.faction), Rect2(x, y + 4, w, cell.y), not is_player, _anim_time * 1000.0, _scale)
 	y += port.size.y + 4
-	var status_txt := "ENTRENCHED +15% DEF" if m.is_entrenched else ("ORDER COMPLETE" if m.has_moved else "SYSTEMS READY")
-	_t(status_txt, Vector2(x, y), CrtUI.C_LABEL if not m.has_moved else CrtUI.C_LABEL_DIM)
+	var status_txt := "ENTRENCHED +15% DEF" if m.is_entrenched else ("READY TO STRIKE" if (m.has_moved and not m.has_attacked) else ("ORDER COMPLETE" if m.is_order_complete() else "SYSTEMS READY"))
+	_t(status_txt, Vector2(x, y), CrtUI.C_LABEL if not m.is_order_complete() else CrtUI.C_LABEL_DIM)
 	_tr(m.get_facing_arrow(), x + w, y, CrtUI.C_CURSOR)
 	y += 12
 
@@ -475,7 +478,9 @@ func _draw_commands(rect: Rect2) -> void:
 		rows.append(["turn", "TURN / FACE", "T"])
 	if _can_wait():
 		rows.append(["wait", "WAIT / REFUEL +5F", "R"])
-	elif _can_next_mech():
+	elif _can_hold():
+		rows.append(["wait", "HOLD POSITION", "R"])
+	if _can_next_mech():
 		rows.append(["next_mech", "NEXT MECH", "SPACE"])
 	if _is_player_command_time():
 		rows.append(["end_turn", "END TURN", "E"])

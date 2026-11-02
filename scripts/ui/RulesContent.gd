@@ -96,7 +96,7 @@ static func _how_you_win() -> Dictionary:
 	for m: MapDefinition in GlobalState.maps:
 		rows.append(PackedStringArray([m.map_name, m.get_strategy_name(), str(m.turn_limit)]))
 	return {"title": "HOW YOU WIN", "blocks": [
-		{"p": "Each turn runs PLAYER COMMAND PHASE -> any clashes -> SYNDICATE PHASE. Every walker gets one order per turn: move, attack (move onto an enemy) or WAIT/REFUEL."},
+		{"p": "Each turn runs PLAYER COMMAND PHASE -> any clashes -> SYNDICATE PHASE. On its turn, each walker can face & WAIT/REFUEL, move and face or attack, or face and attack in place."},
 		{"key": "Wiping out the enemy wins any mission. Losing every walker loses it."},
 		{"p": "PITCHED BATTLE: hold every objective at the end of a turn, or the majority when the turn limit runs out (an even split goes to the side with more walkers left; you win an exact tie)."},
 		{"p": "FORTIFIED DEFENSE: keep at least one citadel node until the turn limit. If you hold none of them at the end of a turn, you lose."},
@@ -120,7 +120,7 @@ static func _movement() -> Dictionary:
 	var g := _chassis("goliath")
 	return {"title": "MOVEMENT & FUEL", "blocks": [
 		{"p": "Every step burns diesel: the terrain's fuel cost, plus the chassis adjustment off-road, plus 1 per elevation level climbed. Roads never take the surcharge."},
-		{"key": "Attacking = stepping onto the enemy's tile, so a strike pays THAT tile's fuel. Hover an enemy to see what a strike needs."},
+		{"key": "Attacking an adjacent enemy fires from your tile and pays the target tile's step fuel. Hover an enemy to see what a strike needs."},
 		{"table": fuel_rows},
 		{"table": ch_rows},
 		{"p": "Refuel: each chassis regains its refuel at the start of your turn. WAIT/REFUEL adds +%d now. A city adds +%d more each turn." % [MechData.WAIT_FUEL, MechData.CITY_FUEL]},
@@ -149,7 +149,7 @@ static func _terrain() -> Dictionary:
 static func _clash() -> Dictionary:
 	var S := SkirmishEngine
 	return {"title": "THE CLASH", "blocks": [
-		{"p": "Moving onto an enemy starts a turn-based battle. Turn order each round is by SPD. The attacker gets +%d SPD in round 1." % S.ROUND1_ATTACKER_SPD_BONUS},
+		{"p": "Attacking an adjacent enemy starts a turn-based battle. Turn order each round is by SPD. The attacker gets +%d SPD in round 1." % S.ROUND1_ATTACKER_SPD_BONUS},
 		{"key": "FACING: REAR attack grants +%d%% ATK, %+d%% DEF shred, +%d%% Hit/Crit, +%d SPD and BYPASSES entrenchment! FLANK attack grants +%d%% ATK, %+d%% DEF shred and halves entrenchment." % [
 			S.REAR_ATK_FP_PCT, S.REAR_DEF_ARMOR_PCT, S.REAR_ATK_ACC_PCT, S.REAR_ATK_SPD_BONUS, S.FLANK_ATK_FP_PCT, S.FLANK_DEF_ARMOR_PCT]},
 		{"p": "FORMATIONS: Each adjacent ally adds +%d%% ATK crossfire (opposite = +%d%% pincer). Each defender ally adds +%d%% DEF escort. Press T to turn in place." % [
@@ -158,18 +158,18 @@ static func _clash() -> Dictionary:
 			_pct(BalanceProbe.def_pct[0]), S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS, S.ENTRENCHED_SPD_BONUS, _pct(S.ENTRENCHED_EVA_BONUS), _pct(S.ENTRENCHED_ACC_BONUS)]},
 		{"key": "ATTACK: basic gun (0 EN). TECH: special systems (uses EN). DEFEND: next hit %d%% (+%d EN)." % [
 			int(round(S.GUARD_DAMAGE_MULT * 100.0)), S.DEFEND_EN_GAIN]},
-		{"key": "RETREAT: break off (%d%% %+d%%/SPD lead, between %d%%-%d%%). Defender must have an open tile behind." % [
+		{"key": "RETREAT: break off (%d%% %+d%%/SPD lead, between %d%%-%d%%) and end the clash on your current tile." % [
 			S.ESCAPE_BASE_PCT, S.ESCAPE_PER_SPD_PCT, S.ESCAPE_MIN_PCT, S.ESCAPE_MAX_PCT]},
 		{"p": "A battle lasts until a walker is wrecked, one retreats, or %d rounds pass." % S.MAX_BATTLE_ROUNDS},
 	]}
 
 static func _after_clash() -> Dictionary:
 	return {"title": "AFTER THE CLASH", "blocks": [
-		{"key": "ATTACKER WINS (enemy wrecked, retreated, or out-damaged at the round limit): the defender is pushed to an open tile and the attacker takes its sector."},
-		{"p": "If the beaten defender has no open tile to fall back to, it takes %d crush damage instead. If that wrecks it, the attacker takes the tile. Otherwise the attacker steps back to its approach tile." % Battlefield.CRUSH_DAMAGE},
-		{"key": "ATTACKER REPELLED (it retreated, or took at least as much damage as it dealt by the round limit): it falls back to the tile it attacked from. A wrecked attacker is lost."},
-		{"p": "A defender keeps its entrenchment unless the attacker won the clash."},
-		{"p": "Every walker that attacked has used its order for the turn, win or lose."},
+		{"key": "BOTH WALKERS HOLD THEIR TILES: attacking never moves your walker onto the defender's sector, during or after the clash, no matter the outcome."},
+		{"p": "WRECKED WALKERS ARE REMOVED: if a defender is destroyed, its sector is cleared so another walker (or your next turn's move) can advance onto it."},
+		{"key": "SURVIVING WALKERS STAY IN PLACE: if either walker retreats or the round limit is reached, both surviving walkers remain on their own tiles."},
+		{"p": "A defender keeps its entrenchment unless the attacker won the clash, and never auto-rotates when attacked."},
+		{"p": "Once a walker attacks (or entrenches), its order for the turn is complete."},
 	]}
 
 static func _chassis_roles() -> Dictionary:
