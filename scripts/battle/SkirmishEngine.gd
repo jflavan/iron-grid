@@ -42,6 +42,33 @@ const ESCAPE_PER_SPD_PCT: int = 2
 const ESCAPE_MIN_PCT: int = 25
 const ESCAPE_MAX_PCT: int = 92
 
+# Directional Facing Modifiers (Back attack & Flank)
+const FLANK_ATK_FP_PCT: int = 15
+const FLANK_ATK_ACC_PCT: int = 8
+const FLANK_ATK_CRIT_PCT: int = 8
+const FLANK_DEF_ARMOR_PCT: int = -10
+
+const REAR_ATK_FP_PCT: int = 30
+const REAR_ATK_ACC_PCT: int = 16
+const REAR_ATK_CRIT_PCT: int = 15
+const REAR_ATK_SPD_BONUS: int = 12
+const REAR_DEF_ARMOR_PCT: int = -25
+const REAR_DEF_EVA_PCT: int = -10
+
+# Adjacency Formation Modifiers
+const ADJ_CROSSFIRE_FP_PER_ALLY: int = 8
+const ADJ_CROSSFIRE_ACC_PER_ALLY: int = 5
+const ADJ_CROSSFIRE_CRIT_PER_ALLY: int = 3
+const ADJ_CROSSFIRE_DEF_EVA_PCT: int = -4
+const PINCER_CROSSFIRE_FP_BONUS: int = 6
+const PINCER_CROSSFIRE_CRIT_BONUS: int = 5
+
+const ADJ_ESCORT_DEF_PER_ALLY: int = 10
+const ADJ_ESCORT_EVA_PER_ALLY: int = 4
+const ADJ_ESCORT_RETURN_FP_PER_ALLY: int = 5
+
+const ADJ_SUPPRESSION_FP_PER_ENEMY: int = -6
+
 class TurnStep extends RefCounted:
 	var step_index: int = 0
 	var round_number: int = 1
@@ -114,6 +141,14 @@ class SkirmishResult extends RefCounted:
 	var defender_pushed_back: bool = false
 	var summary_headline: String = ""
 	var approach_summary: String = ""
+	var approach_angle: String = "FRONT" # FRONT, FLANK, REAR
+	var atk_directional_mod_pct: int = 0
+	var def_directional_mod_pct: int = 0
+	var atk_acc_bonus: int = 0
+	var atk_crit_bonus: int = 0
+	var atk_spd_bonus: int = 0
+	var def_eva_bonus: int = 0
+	var tactical_tags: Array[String] = []
 
 class CombatantState extends RefCounted:
 	var side: String = "atk"
@@ -203,7 +238,8 @@ class BattleSession extends RefCounted:
 		target_tile: GridTileData,
 		p_can_def_retreat: bool = true,
 		p_seed: int = -1,
-		p_deterministic: bool = false
+		p_deterministic: bool = false,
+		p_formation: Dictionary = {}
 	) -> void:
 		deterministic_mode = p_deterministic
 		can_defender_retreat = p_can_def_retreat
@@ -212,7 +248,7 @@ class BattleSession extends RefCounted:
 		else:
 			rng.randomize()
 
-		result = SkirmishEngine._init_result_modifiers(attacker, defender, from_tile, target_tile)
+		result = SkirmishEngine._init_result_modifiers(attacker, defender, from_tile, target_tile, p_formation)
 		atk_state = _make_combatant("atk", attacker, result.atk_effective_firepower, result.atk_effective_armor, from_tile, result.elev_diff)
 		def_state = _make_combatant("def", defender, result.def_effective_firepower, result.def_effective_armor, target_tile, -result.elev_diff)
 		_advance_round_queue_if_needed()
@@ -243,10 +279,23 @@ class BattleSession extends RefCounted:
 		st.base_eva = clampi(m.evasion + tile.get_evasion_modifier_pct() + maxi(0, my_elev_adv) * ELEV_EVA_PER_LEVEL, 0, 55)
 		st.base_crit = clampi(m.crit_chance + maxi(0, my_elev_adv) * ELEV_CRIT_PER_LEVEL, 4, 50)
 		st.base_acc = 94 + my_elev_adv * ELEV_ACC_PER_LEVEL
-		if side == "def" and m.is_entrenched:
-			st.base_spd += ENTRENCHED_SPD_BONUS
-			st.base_eva += ENTRENCHED_EVA_BONUS
-			st.base_acc += ENTRENCHED_ACC_BONUS
+		if side == "atk":
+			st.base_acc += result.atk_acc_bonus
+			st.base_crit += result.atk_crit_bonus
+			st.base_spd += result.atk_spd_bonus
+		else:
+			st.base_eva += result.def_eva_bonus
+			if m.is_entrenched:
+				if result.approach_angle == "REAR":
+					pass # Rear attack completely bypasses entrenchment bonuses
+				elif result.approach_angle == "FLANK":
+					st.base_spd += int(round(ENTRENCHED_SPD_BONUS * 0.5))
+					st.base_eva += int(round(ENTRENCHED_EVA_BONUS * 0.5))
+					st.base_acc += int(round(ENTRENCHED_ACC_BONUS * 0.5))
+				else:
+					st.base_spd += ENTRENCHED_SPD_BONUS
+					st.base_eva += ENTRENCHED_EVA_BONUS
+					st.base_acc += ENTRENCHED_ACC_BONUS
 		return st
 
 	func get_combatant(side: String) -> CombatantState:
@@ -281,7 +330,10 @@ class BattleSession extends RefCounted:
 	## +8 SPD assault bonus; an Entrenched Defender answers with +6 SPD on top of its +4 base (= +10).
 	func _round_initiative_speeds() -> Array[int]:
 		var atk_spd := atk_state.get_effective_speed() + (ROUND1_ATTACKER_SPD_BONUS if round_number == 1 else 0)
-		var def_spd := def_state.get_effective_speed() + (ROUND1_ENTRENCHED_SPD_BONUS if round_number == 1 and result.defender.is_entrenched else 0)
+		if round_number == 1 and result.approach_angle == "REAR":
+			atk_spd += REAR_ATK_SPD_BONUS
+		var def_round1_ent := (round_number == 1 and result.defender.is_entrenched and result.approach_angle != "REAR")
+		var def_spd := def_state.get_effective_speed() + (ROUND1_ENTRENCHED_SPD_BONUS if def_round1_ent else 0)
 		var speeds: Array[int] = [atk_spd, def_spd]
 		return speeds
 
@@ -681,12 +733,13 @@ class BattleSession extends RefCounted:
 		if result.attacker_won_clash:
 			result.defender.is_entrenched = false
 
-## Computes terrain, elevation, and stat modifiers and initializes a SkirmishResult header.
+## Computes terrain, elevation, directional facing, and adjacency formation modifiers.
 static func _init_result_modifiers(
 	attacker: MechData,
 	defender: MechData,
 	from_tile: GridTileData,
-	target_tile: GridTileData
+	target_tile: GridTileData,
+	formation_context: Dictionary = {}
 ) -> SkirmishResult:
 	var res := SkirmishResult.new()
 	res.attacker = attacker
@@ -703,9 +756,31 @@ static func _init_result_modifiers(
 	var target_exposure_bonus: int = maxi(0, -target_tile.get_defense_modifier_pct())
 	res.atk_terrain_mod_pct = from_tile.get_attack_modifier_pct() + target_exposure_bonus
 
-	var entrench_bonus: int = BalanceProbe.def_pct[int(defender.faction)] if defender.is_entrenched else 0
+	# Determine Directional Facing (Frontal, Flanking, or Rear/Back Attack)
+	var approach_step: Vector2i = target_tile.coords - from_tile.coords
+	if approach_step != Vector2i.ZERO and defender.facing != Vector2i.ZERO:
+		var dot: int = approach_step.x * defender.facing.x + approach_step.y * defender.facing.y
+		if dot == 1:
+			res.approach_angle = "REAR"
+		elif dot == 0:
+			res.approach_angle = "FLANK"
+		else:
+			res.approach_angle = "FRONT"
+	else:
+		res.approach_angle = "FRONT"
+
+	# Entrenchment defense calculation (Rear completely bypasses, Flank halves)
+	var raw_entrench: int = BalanceProbe.def_pct[int(defender.faction)] if defender.is_entrenched else 0
+	var entrench_bonus: int = raw_entrench
+	if defender.is_entrenched:
+		if res.approach_angle == "REAR":
+			entrench_bonus = 0
+		elif res.approach_angle == "FLANK":
+			entrench_bonus = int(round(float(raw_entrench) * 0.5))
+
 	res.def_terrain_mod_pct = target_tile.get_defense_modifier_pct() + entrench_bonus
 
+	# Elevation modifiers
 	if res.elev_diff > 0:
 		res.atk_elev_mod_pct = res.elev_diff * ELEV_HIGH_FP_PCT
 		res.def_elev_mod_pct = -res.elev_diff * ELEV_HIGH_ENEMY_FP_PCT
@@ -717,26 +792,83 @@ static func _init_result_modifiers(
 		res.atk_elev_mod_pct = 0
 		res.def_elev_mod_pct = 0
 
-	res.atk_total_mod_pct = res.atk_terrain_mod_pct + res.atk_elev_mod_pct
-	res.def_total_mod_pct = res.def_terrain_mod_pct + res.def_elev_mod_pct
+	# Directional angle bonuses
+	var atk_dir_fp: int = 0
+	var def_dir_armor: int = 0
+	if res.approach_angle == "REAR":
+		atk_dir_fp = REAR_ATK_FP_PCT
+		def_dir_armor = REAR_DEF_ARMOR_PCT
+		res.atk_acc_bonus += REAR_ATK_ACC_PCT
+		res.atk_crit_bonus += REAR_ATK_CRIT_PCT
+		res.atk_spd_bonus += REAR_ATK_SPD_BONUS
+		res.def_eva_bonus += REAR_DEF_EVA_PCT
+		res.tactical_tags.append("REAR AMBUSH (+%d%% FP, %+d%% DEF)" % [REAR_ATK_FP_PCT, REAR_DEF_ARMOR_PCT])
+		if defender.is_entrenched:
+			res.tactical_tags.append("ENTRENCHMENT BYPASSED")
+	elif res.approach_angle == "FLANK":
+		atk_dir_fp = FLANK_ATK_FP_PCT
+		def_dir_armor = FLANK_DEF_ARMOR_PCT
+		res.atk_acc_bonus += FLANK_ATK_ACC_PCT
+		res.atk_crit_bonus += FLANK_ATK_CRIT_PCT
+		res.tactical_tags.append("FLANKING (+%d%% FP, %+d%% DEF)" % [FLANK_ATK_FP_PCT, FLANK_DEF_ARMOR_PCT])
+		if defender.is_entrenched:
+			res.tactical_tags.append("ENTRENCHMENT HALVED")
+
+	# Adjacent Unit Formation Modifiers (Crossfire vs Escort vs Suppression)
+	var atk_allies: int = int(formation_context.get("atk_allies_adj", 0))
+	var def_allies: int = int(formation_context.get("def_allies_adj", 0))
+	var is_pincer: bool = bool(formation_context.get("is_pincer", false))
+	var suppression: int = int(formation_context.get("atk_suppression", 0))
+
+	var atk_adj_fp: int = (atk_allies * ADJ_CROSSFIRE_FP_PER_ALLY) + (PINCER_CROSSFIRE_FP_BONUS if is_pincer else 0) + (suppression * ADJ_SUPPRESSION_FP_PER_ENEMY)
+	res.atk_acc_bonus += (atk_allies * ADJ_CROSSFIRE_ACC_PER_ALLY)
+	res.atk_crit_bonus += (atk_allies * ADJ_CROSSFIRE_CRIT_PER_ALLY) + (PINCER_CROSSFIRE_CRIT_BONUS if is_pincer else 0)
+	res.def_eva_bonus += (atk_allies * ADJ_CROSSFIRE_DEF_EVA_PCT)
+
+	var def_adj_armor: int = def_allies * ADJ_ESCORT_DEF_PER_ALLY
+	res.def_eva_bonus += (def_allies * ADJ_ESCORT_EVA_PER_ALLY)
+	var def_adj_return_fp: int = def_allies * ADJ_ESCORT_RETURN_FP_PER_ALLY
+
+	if is_pincer:
+		res.tactical_tags.append("PINCER CROSSFIRE (+%d%% FP)" % (ADJ_CROSSFIRE_FP_PER_ALLY * atk_allies + PINCER_CROSSFIRE_FP_BONUS))
+	elif atk_allies > 0:
+		res.tactical_tags.append("CROSSFIRE x%d (+%d%% FP)" % [atk_allies, ADJ_CROSSFIRE_FP_PER_ALLY * atk_allies])
+
+	if def_allies > 0:
+		res.tactical_tags.append("ESCORT SCREEN x%d (+%d%% DEF)" % [def_allies, def_adj_armor])
+	if suppression > 0:
+		res.tactical_tags.append("PINNED AT LAUNCH (%d%% FP)" % (suppression * ADJ_SUPPRESSION_FP_PER_ENEMY))
+
+	res.atk_directional_mod_pct = atk_dir_fp + atk_adj_fp
+	res.def_directional_mod_pct = def_dir_armor + def_adj_armor
+
+	res.atk_total_mod_pct = res.atk_terrain_mod_pct + res.atk_elev_mod_pct + res.atk_directional_mod_pct
+	res.def_total_mod_pct = res.def_terrain_mod_pct + res.def_elev_mod_pct + res.def_directional_mod_pct
 
 	res.atk_effective_firepower = maxi(10, int(round(float(attacker.firepower) * (1.0 + float(res.atk_total_mod_pct) / 100.0))))
 	var atk_elev_armor_pct: int = maxi(0, res.elev_diff) * ELEV_HIGH_ARMOR_PCT
 	res.atk_effective_armor = maxi(8, int(round(float(attacker.armor_rating) * (1.0 + float(from_tile.get_defense_modifier_pct() + atk_elev_armor_pct) / 100.0))))
 
-	res.def_effective_firepower = maxi(10, int(round(float(defender.firepower) * (1.0 + float(target_tile.get_attack_modifier_pct() + res.def_elev_mod_pct) / 100.0))))
+	res.def_effective_firepower = maxi(10, int(round(float(defender.firepower) * (1.0 + float(target_tile.get_attack_modifier_pct() + res.def_elev_mod_pct + def_adj_return_fp) / 100.0))))
 	res.def_effective_armor = maxi(8, int(round(float(defender.armor_rating) * (1.0 + float(res.def_total_mod_pct) / 100.0))))
-	# Initiative (atk/def_effective_speed, first_striker) is filled in by BattleSession from its round-1 queue.
 
 	var elev_label := "LEVEL GROUND"
 	if res.elev_diff > 0:
 		elev_label = "HIGH GROUND +%dm (%+d%%)" % [res.elev_diff * 100, res.atk_elev_mod_pct]
 	elif res.elev_diff < 0:
 		elev_label = "UPHILL ASSAULT %dm (%+d%%)" % [res.elev_diff * 100, res.atk_elev_mod_pct]
-	res.approach_summary = "%s [%dm] -> %s [%dm] | %s" % [
+
+	var angle_label := "FRONTAL CLASH"
+	if res.approach_angle == "REAR":
+		angle_label = "REAR AMBUSH"
+	elif res.approach_angle == "FLANK":
+		angle_label = "FLANKING ATTACK"
+
+	var form_str := (" | " + ", ".join(res.tactical_tags)) if not res.tactical_tags.is_empty() else ""
+	res.approach_summary = "%s [%dm] -> %s [%dm] | %s | %s%s" % [
 		from_tile.get_terrain_name(), from_tile.get_elevation_meters(),
 		target_tile.get_terrain_name(), target_tile.get_elevation_meters(),
-		elev_label
+		elev_label, angle_label, form_str
 	]
 	return res
 
@@ -749,18 +881,20 @@ static func create_session(
 	from_tile: GridTileData,
 	target_tile: GridTileData,
 	can_defender_retreat: bool = true,
-	p_seed: int = -1
+	p_seed: int = -1,
+	formation_context: Dictionary = {}
 ) -> BattleSession:
-	return BattleSession.new(attacker, defender, from_tile, target_tile, can_defender_retreat, p_seed)
+	return BattleSession.new(attacker, defender, from_tile, target_tile, can_defender_retreat, p_seed, false, formation_context)
 
 ## Deterministic session (no dice: every shot hits, no crits, no variance) for forecasts and tests.
 static func create_deterministic_session(
 	attacker: MechData,
 	defender: MechData,
 	from_tile: GridTileData,
-	target_tile: GridTileData
+	target_tile: GridTileData,
+	formation_context: Dictionary = {}
 ) -> BattleSession:
-	return BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, true)
+	return BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, true, formation_context)
 
 ## Forecasts are deterministic, so identical inputs are served from this cache. The HUD asks on
 ## every hover and the AI once per reachable tile x adjacent enemy, each a full simulated battle.
@@ -782,21 +916,33 @@ static func _mech_key(m: MechData) -> Array:
 		m.firepower, m.armor_rating, m.speed, m.evasion, m.crit_chance, ability_ids,
 	]
 
-static func _forecast_key(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData) -> Array:
+static func _forecast_key(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}) -> Array:
+	var approach: Vector2i = target_tile.coords - from_tile.coords
 	return [
 		_mech_key(attacker), _mech_key(defender),
 		int(from_tile.terrain_type), from_tile.elevation, int(target_tile.terrain_type), target_tile.elevation, target_tile.is_objective,
 		BalanceProbe.def_pct[int(defender.faction)],
+		approach, defender.facing,
+		int(formation_context.get("atk_allies_adj", 0)),
+		int(formation_context.get("def_allies_adj", 0)),
+		bool(formation_context.get("is_pincer", false)),
+		int(formation_context.get("atk_suppression", 0)),
 	]
 
 ## Computes a fast, deterministic tactical forecast before committing to an engagement.
-static func compute_forecast(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData) -> Dictionary:
-	var key := _forecast_key(attacker, defender, from_tile, target_tile)
+static func compute_forecast(
+	attacker: MechData,
+	defender: MechData,
+	from_tile: GridTileData,
+	target_tile: GridTileData,
+	formation_context: Dictionary = {}
+) -> Dictionary:
+	var key := _forecast_key(attacker, defender, from_tile, target_tile, formation_context)
 	if _forecast_cache.has(key):
 		return (_forecast_cache[key] as Dictionary).duplicate()
 	var sim_atk := attacker.duplicate_mech()
 	var sim_def := defender.duplicate_mech()
-	var res := resolve_skirmish(sim_atk, sim_def, from_tile, target_tile, false, true)
+	var res := resolve_skirmish(sim_atk, sim_def, from_tile, target_tile, false, true, formation_context)
 	var favor := "EVEN ENCOUNTER"
 	if res.defender_destroyed and not res.attacker_destroyed:
 		favor = "DECISIVE KILL PROJECTION"
@@ -823,7 +969,9 @@ static func compute_forecast(attacker: MechData, defender: MechData, from_tile: 
 		"rounds_fought": res.rounds_fought,
 		"attacker_won": res.attacker_won_clash,
 		"win_favor": favor,
-		"approach_summary": res.approach_summary
+		"approach_summary": res.approach_summary,
+		"approach_angle": res.approach_angle,
+		"tactical_tags": res.tactical_tags.duplicate(),
 	}
 	_forecast_cache[key] = forecast
 	return forecast.duplicate()
@@ -836,9 +984,10 @@ static func resolve_skirmish(
 	from_tile: GridTileData,
 	target_tile: GridTileData,
 	apply_to_units: bool = true,
-	deterministic: bool = true
+	deterministic: bool = true,
+	formation_context: Dictionary = {}
 ) -> SkirmishResult:
-	var session := BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, deterministic)
+	var session := BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, deterministic, formation_context)
 	session.auto_resolve()
 	if apply_to_units:
 		session.apply_to_units()

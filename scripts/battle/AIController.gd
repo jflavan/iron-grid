@@ -49,9 +49,10 @@ static func choose_best_action(
 				continue
 			var from_pos: Vector2i = path[path.size() - 2] if path.size() >= 2 else start_pos
 			var from_tile: GridTileData = grid_map.get_tile(from_pos)
+			var form_ctx := unit_container.get_formation_context(dest_pos, from_pos, int(m_data.faction))
 
 			var forecast: Dictionary = SkirmishEngine.compute_forecast(
-				m_data, target_unit.mech_data, from_tile, dest_tile
+				m_data, target_unit.mech_data, from_tile, dest_tile, form_ctx
 			)
 			var est_dmg_def: int = forecast["est_dmg_to_def"]
 			var est_dmg_atk: int = forecast["est_dmg_to_atk"]
@@ -61,6 +62,13 @@ static func choose_best_action(
 			atk_score += float(est_dmg_def - est_dmg_atk) * 1.35
 			atk_score += 24.0 if atk_won else -20.0
 			atk_score += float(forecast["atk_mod_pct"] - forecast["def_mod_pct"]) * 0.45
+
+			# Bonus for flanking and rear attack angles
+			var approach_ang := str(forecast.get("approach_angle", "FRONT"))
+			if approach_ang == "REAR":
+				atk_score += 45.0
+			elif approach_ang == "FLANK":
+				atk_score += 20.0
 
 			# Huge bonus for finishing off an enemy walker cleanly (scaled if mutual destruction)
 			if est_dmg_def >= target_unit.mech_data.current_armor:
@@ -109,8 +117,28 @@ static func choose_best_action(
 					"score": pos_score
 				}
 
+	if not best_action.has("facing"):
+		best_action["facing"] = choose_best_facing(best_action.get("target_pos", start_pos), player_units)
+
 	grid_map.clear_highlights()
 	return best_action
+
+## Chooses cardinal facing direction towards the closest threatening player unit
+static func choose_best_facing(pos: Vector2i, enemy_units: Array[MechUnit]) -> Vector2i:
+	var closest_dist: int = 99999
+	var closest_pos: Vector2i = pos + Vector2i(-1, 0)
+	for u in enemy_units:
+		if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive():
+			var d: int = absi(u.mech_data.grid_pos.x - pos.x) + absi(u.mech_data.grid_pos.y - pos.y)
+			if d < closest_dist:
+				closest_dist = d
+				closest_pos = u.mech_data.grid_pos
+	var diff: Vector2i = closest_pos - pos
+	if diff == Vector2i.ZERO:
+		return Vector2i(-1, 0)
+	if absi(diff.x) >= absi(diff.y):
+		return Vector2i(1 if diff.x > 0 else -1, 0)
+	return Vector2i(0, 1 if diff.y > 0 else -1)
 
 ## Player-held objective tiles that would hand the Coalition an objective victory at turn end
 ## (every bridgehead on Pitched maps, any Syndicate HQ on Offense maps). Empty if no such threat.

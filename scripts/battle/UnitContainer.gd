@@ -27,6 +27,7 @@ func spawn_units_for_map(map_def: MapDefinition, grid_map: IsoGridMap) -> void:
 		var fac: MechData.Faction = MechData.Faction.PLAYER if fac_int == 0 else MechData.Faction.AI
 
 		var m_data := GlobalState.create_mech_instance(chassis_id, fac, callsign, pos, str(idx))
+		m_data.facing = Vector2i(1, 0) if fac == MechData.Faction.PLAYER else Vector2i(-1, 0)
 		var m_node := MechUnit.new()
 		add_child(m_node)
 		m_node.setup(m_data, grid_map.grid_to_screen(pos, true))
@@ -121,3 +122,44 @@ func find_retreat_tile(defender_pos: Vector2i, attacker_from: Vector2i, grid_map
 		if get_unit_at(cand) == null:
 			return cand
 	return Vector2i(-1, -1)
+
+## Calculates adjacent tactical formation (crossfire, pincer, escort screen, suppression)
+## for an engagement where attacker launches from `from_pos` into `target_pos`.
+func get_formation_context(target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int) -> Dictionary:
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var atk_allies: int = 0
+	var def_allies: int = 0
+	var is_pincer: bool = false
+	var pincer_opposite_pos: Vector2i = target_pos + (target_pos - from_pos)
+
+	for d in dirs:
+		var adj_pos: Vector2i = target_pos + d
+		if adj_pos == from_pos:
+			continue # Attacker launches from from_pos, not a separate supporting ally
+		var u := get_unit_at(adj_pos)
+		if u != null and is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive():
+			if int(u.mech_data.faction) == attacker_faction:
+				atk_allies += 1
+				if adj_pos == pincer_opposite_pos:
+					is_pincer = true
+			else:
+				def_allies += 1
+
+	# Check suppression: defender allies adjacent to attacker's launch tile (from_pos)
+	var suppression: int = 0
+	if from_pos != target_pos:
+		for d in dirs:
+			var adj_launch: Vector2i = from_pos + d
+			if adj_launch == target_pos:
+				continue # Target is the defender
+			var u_launch := get_unit_at(adj_launch)
+			if u_launch != null and is_instance_valid(u_launch) and u_launch.mech_data != null and u_launch.mech_data.is_alive():
+				if int(u_launch.mech_data.faction) != attacker_faction:
+					suppression += 1
+
+	return {
+		"atk_allies_adj": atk_allies,
+		"def_allies_adj": def_allies,
+		"is_pincer": is_pincer,
+		"atk_suppression": suppression,
+	}

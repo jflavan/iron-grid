@@ -27,6 +27,7 @@ var faction: Faction = Faction.PLAYER
 
 var grid_pos: Vector2i = Vector2i.ZERO
 var prev_grid_pos: Vector2i = Vector2i.ZERO
+var facing: Vector2i = Vector2i(1, 0) # Cardinal isometric facing: (1,0)=SE, (0,1)=SW, (-1,0)=NW, (0,-1)=NE
 
 # Core RPG Combat & Engineering Ratings
 var max_armor: int = 100       # Total hull structural points (HP)
@@ -79,7 +80,8 @@ func _init(
 	p_crit: int = 10,
 	p_max_energy: int = 14,
 	p_energy_regen: int = 3,
-	p_basic_weapon: String = "kwk_88"
+	p_basic_weapon: String = "kwk_88",
+	p_facing: Vector2i = Vector2i(1, 0)
 ) -> void:
 	unit_id = p_id
 	unit_name = p_name
@@ -105,6 +107,7 @@ func _init(
 	current_energy = p_max_energy
 	passive_energy_regen = p_energy_regen
 	basic_weapon_id = p_basic_weapon
+	facing = p_facing
 
 ## Calculates exact fuel needed for this mech to step from `from_tile` to `to_tile`.
 ## Hot path (every Dijkstra edge): plain ints, no Dictionary.
@@ -189,6 +192,31 @@ func duplicate_mech() -> MechData:
 	copy.mountain_gear = mountain_gear
 	copy.has_moved = has_moved
 	copy.is_entrenched = is_entrenched
+	copy.facing = facing
 	for a in abilities:
 		copy.abilities.append(a.duplicate_ability())
 	return copy
+
+func get_facing_name() -> String:
+	match facing:
+		Vector2i(1, 0): return "SE"
+		Vector2i(0, 1): return "SW"
+		Vector2i(-1, 0): return "NW"
+		Vector2i(0, -1): return "NE"
+	return "SE"
+
+func get_facing_arrow() -> String:
+	match facing:
+		Vector2i(1, 0): return "SE >"
+		Vector2i(0, 1): return "SW v"
+		Vector2i(-1, 0): return "NW <"
+		Vector2i(0, -1): return "NE ^"
+	return "SE >"
+
+func set_facing(dir: Vector2i) -> void:
+	if dir == Vector2i.ZERO:
+		return
+	if absi(dir.x) >= absi(dir.y):
+		facing = Vector2i(1 if dir.x > 0 else -1, 0)
+	else:
+		facing = Vector2i(0, 1 if dir.y > 0 else -1)

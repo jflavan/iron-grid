@@ -65,9 +65,29 @@ func _draw() -> void:
 		])
 		draw_polyline(ring_pts, Color(1.0, 0.86, 0.25, 0.95), 2.5)
 
+	# Tactical Directional Facing Chevron on the tile surface
+	var f_screen := Vector2(float(mech_data.facing.x - mech_data.facing.y) * 2.0, float(mech_data.facing.x + mech_data.facing.y)).normalized()
+	var chev_dist: float = 23.0
+	var tip: Vector2 = Vector2(0, 6) + f_screen * chev_dist
+	var perp: Vector2 = Vector2(-f_screen.y, f_screen.x)
+	var left_pt: Vector2 = tip - f_screen * 7.5 + perp * 5.0
+	var right_pt: Vector2 = tip - f_screen * 7.5 - perp * 5.0
+	var notch_pt: Vector2 = tip - f_screen * 4.5
+	var chev_pts := PackedVector2Array([tip, left_pt, notch_pt, right_pt])
+	var chev_col: Color = Color(1.0, 0.82, 0.22, 0.95) if mech_data.faction == MechData.Faction.PLAYER else Color(0.95, 0.32, 0.25, 0.95)
+	if mech_data.has_moved and mech_data.faction == MechData.Faction.PLAYER:
+		chev_col = chev_col.darkened(0.35)
+	draw_colored_polygon(chev_pts, chev_col)
+	draw_polyline(PackedVector2Array([left_pt, tip, right_pt]), Color(0.1, 0.1, 0.1, 0.8), 1.2)
+
 	# Draw dieselpunk walker silhouette anchored inside the tile diamond
 	# Feet planted at y = +6, torso centered at y = -8, top at y = -20 (strictly inside [-29.5, +29.5])
+	var flip_h: bool = ((mech_data.facing.x - mech_data.facing.y) < 0)
+	if flip_h:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2(-1.0, 1.0))
 	draw_mech_silhouette(self, Vector2(0, 6), mech_data.chassis_id, mech_data.faction, 0.78, _anim_time, dim_factor, _hit_flash > 0.0)
+	if flip_h:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, 1.0))
 
 	# Entrenched shield chevron next to hull
 	if mech_data.is_entrenched:
@@ -85,10 +105,11 @@ func _draw() -> void:
 	var faction_border := Color(0.45, 0.88, 0.45, 0.95) if mech_data.faction == MechData.Faction.PLAYER else Color(0.95, 0.32, 0.26, 0.95)
 	draw_rect(Rect2(bar_x - 2, bar_y - 10, bar_w + 4, 19), faction_border, false, 1.2)
 
-	# Short callsign + Ready dot
+	# Short callsign + Facing + Ready dot
 	var font: Font = ThemeDB.fallback_font
 	var short_name: String = mech_data.callsign.split(" ")[0]
-	draw_string(font, Vector2(bar_x, bar_y - 1), short_name, HORIZONTAL_ALIGNMENT_LEFT, int(bar_w - 6), 8, Color(0.95, 0.93, 0.85))
+	var label_text: String = "%s %s" % [short_name, mech_data.get_facing_name()]
+	draw_string(font, Vector2(bar_x, bar_y - 1), label_text, HORIZONTAL_ALIGNMENT_LEFT, int(bar_w - 6), 8, Color(0.95, 0.93, 0.85))
 
 	# Ready status pip
 	var pip_col := Color(0.35, 0.95, 0.45) if not mech_data.has_moved else Color(0.45, 0.45, 0.42)
