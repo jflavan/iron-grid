@@ -19,6 +19,9 @@ const DURATIONS := {
 	"retreat": 0.75,
 }
 const SLAB_DROP := 0.35
+const C_LOCK := Color("#ffe080")
+const C_HQ_GREEN := Color("#3ad06a")
+const ATTACH_NAMES := ["slab", "rangefinder", "mast"]
 
 static func has_anim(ability_id: String) -> bool:
 	return DURATIONS.has(ability_id)
@@ -126,7 +129,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 				var locked := k >= 1.0
 				stage.fx(func(ci):
 					var r := 14.0 - (4.0 if locked else 0.0)
-					var col := BattleFX.CRT_BORDER if not locked else Color("#ffe080")
+					var col := BattleFX.CRT_BORDER if not locked else C_LOCK
 					for sx in [-1, 1]:
 						for sy in [-1, 1]:
 							var c := p + Vector2(sx * r, sy * r)
@@ -146,7 +149,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 				for i in 2:
 					var c := box.position + Vector2(11 + i * 22, 13)
 					var ang := t * (9.0 + i * 5.0)
-					ci.draw_line(c, c + Vector2(cos(ang), sin(ang)) * 7.0, Color("#ffe080"), 1.0)
+					ci.draw_line(c, c + Vector2(cos(ang), sin(ang)) * 7.0, C_LOCK, 1.0)
 					ci.draw_rect(Rect2(c - Vector2(1, 1), Vector2(2, 2)), BattleFX.CRT_BORDER))
 			if t > 0.6:
 				draw_plot_arc(stage, a, d, clampf((t - 0.6) / 0.6, 0.0, 1.0))
@@ -172,7 +175,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 					var w := PixelFont.text_width(msg) + 12
 					var r := Rect2(roundf((BattleStage.W - w) / 2.0), 28, w, 14)
 					BattleFX.panel(ci, r)
-					PixelFont.draw_text(ci, msg, r.position + Vector2(6, 4), Color("#3ad06a")))
+					PixelFont.draw_text(ci, msg, r.position + Vector2(6, 4), C_HQ_GREEN))
 		"defend":
 			a["pose"] = "brace"
 			a["glow"] = Color(0.4, 0.85, 1.0, 0.35 * sin(clampf(t / dur, 0.0, 1.0) * PI))
@@ -200,7 +203,7 @@ static func draw_plot_arc(stage: BattleStage, a: Dictionary, d: Dictionary, k: f
 			var u := float(i) / 24.0
 			var p := m.lerp(tgt, u) + Vector2(0, -sin(u * PI) * arc)
 			if i % 2 == 0:
-				ci.draw_rect(Rect2(p.round(), Vector2(1, 1)), Color("#ffe080")))
+				ci.draw_rect(Rect2(p.round(), Vector2(1, 1)), C_LOCK))
 
 ## The soften visual on the impact of the opponent's next hit.
 static func soften(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: String, dt: float) -> void:
@@ -240,13 +243,24 @@ static func draw_slab(stage: BattleStage, ci: CanvasItem, a: Dictionary) -> void
 
 ## Cached: draw commands only hold the texture RID, so a texture loaded inside _draw and dropped
 ## right after would be freed before the frame renders (it shows as a white box).
-static var _attach_cache: Dictionary = {}
+static var _attach_cache: Dictionary = {}   # name -> [coalition tex, syndikat tex] (null until loaded)
 
 static func _attach_tex(name: String, a: Dictionary) -> Texture2D:
-	var path := "res://assets/battle/fx/%s_%s.png" % [name, MechSpriteBank.FACTION_NAMES[clampi(int(a["faction"]), 0, 1)]]
-	if not _attach_cache.has(path):
-		_attach_cache[path] = load(path) as Texture2D
-	return _attach_cache[path]
+	return _attach_tex_for(name, clampi(int(a["faction"]), 0, 1))
+
+static func _attach_tex_for(name: String, faction: int) -> Texture2D:
+	var pair: Array = _attach_cache.get(name, [])
+	if pair.is_empty():
+		pair = [null, null]
+		_attach_cache[name] = pair
+	if pair[faction] == null:
+		pair[faction] = load("res://assets/battle/fx/%s_%s.png" % [name, MechSpriteBank.FACTION_NAMES[faction]]) as Texture2D
+	return pair[faction]
+
+## Loads every attachment texture for a faction up front so no load() happens mid-animation.
+static func warm(faction: int) -> void:
+	for n in ATTACH_NAMES:
+		_attach_tex_for(n, clampi(faction, 0, 1))
 
 static func _draw_attach(ci: CanvasItem, tex: Texture2D, pos: Vector2, mirrored: bool) -> void:
 	if tex == null:

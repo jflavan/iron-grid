@@ -10,12 +10,14 @@ const ADVANCE := 6
 const HEIGHT := 8
 
 static var _tex: Texture2D = null
+static var _attempted: bool = false
 static var _index: Dictionary = {}
 static var _ascii_table: PackedInt32Array = PackedInt32Array()
 
 static func _ensure() -> void:
-	if _tex != null:
+	if _attempted:
 		return
+	_attempted = true
 	_tex = load(FONT_PNG) as Texture2D
 	var meta = JSON.parse_string(FileAccess.get_file_as_string(FONT_JSON))
 	var chars: String = meta["chars"] if meta != null else ""

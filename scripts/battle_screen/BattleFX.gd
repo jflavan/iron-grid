@@ -13,6 +13,14 @@ const SMOKE_DARK := Color("#3a3530")
 const SMOKE_MID := Color("#5a5048")
 const SMOKE_LIGHT := Color("#8a857c")
 const SHELL := Color("#c0c4c8")
+const SMOKE_PUFF := Color("#6c675f")
+const EXHAUST_DARK := Color("#6a665e")
+const EXHAUST_LIGHT := Color("#857f74")
+const MISS_GREY := Color("#a8c0b0")
+const FLASH_LEN := [14, 10, 5]
+const FLASH_HALF_H := [5, 4, 2]
+const FLASH_SPARK_OFFSETS := [Vector2(4, -9), Vector2(9, -7), Vector2(4, 8), Vector2(10, 6), Vector2(16, -3), Vector2(17, 3)]
+const OUTLINE_OFFSETS := [Vector2(-0.5, 0), Vector2(0.5, 0), Vector2(0, -0.5), Vector2(0, 0.5)]
 
 const CRT_FILL := CrtUI.C_FILL
 const CRT_SCAN := CrtUI.C_SCAN
@@ -60,8 +68,8 @@ static func panel(ci: CanvasItem, r: Rect2) -> void:
 ## frame 0..2 (big -> small); dir = +1 fires to the right, -1 to the left; scale enlarges heavy guns.
 static func muzzle_flash(ci: CanvasItem, p: Vector2, frame: int, dir: int, scale: float = 1.0) -> void:
 	frame = clampi(frame, 0, 2)
-	var l := int([14, 10, 5][frame] * scale)
-	var hh := int([5, 4, 2][frame] * scale)
+	var l := int(FLASH_LEN[frame] * scale)
+	var hh := int(FLASH_HALF_H[frame] * scale)
 	var x0 := p.x if dir > 0 else p.x - l
 	ci.draw_rect(Rect2(x0, p.y - hh, l, hh * 2), FLASH_ORANGE)
 	ci.draw_rect(Rect2(p.x - 2, p.y - hh - 3, 4, hh * 2 + 6), FLASH_ORANGE)
@@ -70,7 +78,7 @@ static func muzzle_flash(ci: CanvasItem, p: Vector2, frame: int, dir: int, scale
 	var core := maxi(2, l - 6)
 	ci.draw_rect(Rect2(p.x if dir > 0 else p.x - core, p.y - 1, core, 2), Color.WHITE)
 	if frame == 0:
-		for o in [Vector2(4, -9), Vector2(9, -7), Vector2(4, 8), Vector2(10, 6), Vector2(16, -3), Vector2(17, 3)]:
+		for o in FLASH_SPARK_OFFSETS:
 			ci.draw_rect(Rect2(p.x + o.x * dir * scale, p.y + o.y * scale, 2, 2), SPARK)
 
 ## k: 0..1 lifetime. size scales the fireball.
@@ -111,14 +119,14 @@ static func sparks(ci: CanvasItem, c: Vector2, k: float, count: int = 8, spread:
 static func smoke_trail(ci: CanvasItem, p: Vector2, k: float, dir: int) -> void:
 	for i in 3:
 		var kk := maxf(0.0, k - i * 0.12)
-		blob(ci, p + Vector2((4 + kk * 14 + i * 3) * dir, -kk * 16 - i * 2), int(2 + kk * 5), SMOKE_LIGHT if kk < 0.4 else Color("#6c675f"))
+		blob(ci, p + Vector2((4 + kk * 14 + i * 3) * dir, -kk * 16 - i * 2), int(2 + kk * 5), SMOKE_LIGHT if kk < 0.4 else SMOKE_PUFF)
 
 static func exhaust(ci: CanvasItem, p: Vector2, t: float, seed: float, dir: int) -> void:
 	for k in 4:
 		var life := fmod(t / 0.9 + k / 4.0 + seed, 1.0)
 		var px := p.x + roundf(life * -6.0 * dir + sin(life * 6.0 + k) * 2.0)
 		var py := p.y - roundf(life * 18.0)
-		var col := Color("#6a665e") if life < 0.5 else Color("#857f74")
+		var col := EXHAUST_DARK if life < 0.5 else EXHAUST_LIGHT
 		col.a = 1.0 - life * 0.8
 		blob(ci, Vector2(px, py), 1 + int(round(life * 3.0)), col)
 
@@ -134,10 +142,10 @@ static func damage_number(ci: CanvasItem, value: int, p: Vector2, age: float, la
 	elif k < 0.5:
 		bounce = absf(sin((k - 0.35) / 0.15 * PI)) * 4.0
 	var text := label if label != "" else str(value)
-	var col := FLASH_YELLOW if is_crit else (Color("#a8c0b0") if label == "MISS" else Color.WHITE)
+	var col := FLASH_YELLOW if is_crit else (MISS_GREY if label == "MISS" else Color.WHITE)
 	var pos := Vector2(roundf(p.x - PixelFont.text_width(text)), roundf(p.y - 30.0 - bounce))
 	ci.draw_set_transform(pos, 0.0, Vector2(2, 2))
-	for o in [Vector2(-0.5, 0), Vector2(0.5, 0), Vector2(0, -0.5), Vector2(0, 0.5)]:
+	for o in OUTLINE_OFFSETS:
 		PixelFont.draw_text(ci, text, o, OUTLINE)
 	PixelFont.draw_text(ci, text, Vector2.ZERO, col)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

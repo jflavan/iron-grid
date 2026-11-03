@@ -63,7 +63,6 @@ static func choose_best_action(
 			}
 
 	# Evaluate decoupled attacks against each living player unit from all reachable adjacent launch tiles (including start_pos)
-	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 	for target_unit in player_units:
 		if not is_instance_valid(target_unit) or target_unit.mech_data == null or not target_unit.mech_data.is_alive():
 			continue
@@ -72,7 +71,7 @@ static func choose_best_action(
 		if dest_tile == null:
 			continue
 
-		for d in dirs:
+		for d in UnitContainer._DIRS:
 			var from_pos: Vector2i = dest_pos + d
 			if not grid_map.is_valid_coords(from_pos):
 				continue
@@ -90,7 +89,9 @@ static func choose_best_action(
 			if total_fuel > m_data.current_fuel:
 				continue
 
-			var form_ctx := unit_container.get_formation_context(dest_pos, from_pos, int(m_data.faction))
+			# occ_map excludes ai_unit: it is still on start_pos during the forecast, and must not
+			# count as its own adjacent ally when it launches from another tile.
+			var form_ctx := UnitContainer.formation_context(occ_map, dest_pos, from_pos, int(m_data.faction))
 			var forecast: Dictionary = SkirmishEngine.compute_forecast(
 				m_data, target_unit.mech_data, from_tile, dest_tile, form_ctx
 			)
@@ -149,7 +150,6 @@ static func choose_best_action(
 	if not best_action.has("facing"):
 		best_action["facing"] = choose_best_facing(best_action.get("target_pos", start_pos), player_units)
 
-	grid_map.clear_highlights()
 	return best_action
 
 ## Chooses cardinal facing direction towards the closest threatening player unit

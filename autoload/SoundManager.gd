@@ -7,8 +7,11 @@ const SAMPLE_RATE: int = 22050
 var _players: Array[AudioStreamPlayer] = []
 var _samples: Dictionary = {}
 var muted: bool = false
+var _headless: bool = false
+var _steal_idx: int = 0   # voice to cut when all players are busy (round-robin: the oldest-started)
 
 func _ready() -> void:
+	_headless = DisplayServer.get_name() == "headless"
 	for i in range(8):
 		var p := AudioStreamPlayer.new()
 		p.volume_db = -8.0
@@ -29,7 +32,7 @@ func _generate_all_samples() -> void:
 	_samples["phase_shift"] = _make_dual_beep(330.0, 495.0, 0.22, 0.3)
 
 func play(sfx_name: String, pitch_scale: float = 1.0) -> void:
-	if muted or DisplayServer.get_name() == "headless":
+	if muted or _headless:
 		return
 	if not _samples.has(sfx_name):
 		return
@@ -39,10 +42,12 @@ func play(sfx_name: String, pitch_scale: float = 1.0) -> void:
 			p.pitch_scale = pitch_scale
 			p.play()
 			return
-	# Fallback to first player
-	_players[0].stream = _samples[sfx_name]
-	_players[0].pitch_scale = pitch_scale
-	_players[0].play()
+	# Every voice busy: steal them in turn rather than always cutting voice 0.
+	var p := _players[_steal_idx]
+	_steal_idx = (_steal_idx + 1) % _players.size()
+	p.stream = _samples[sfx_name]
+	p.pitch_scale = pitch_scale
+	p.play()
 
 func _make_tone_burst(start_freq: float, end_freq: float, duration: float, amp: float, wave: String) -> AudioStreamWAV:
 	var count := int(SAMPLE_RATE * duration)

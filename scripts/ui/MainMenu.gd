@@ -26,6 +26,10 @@ var show_rules: bool = false
 var rules_chapter: int = 0
 var _rules: Array[Dictionary] = []
 var _rules_cache: Dictionary = {}   # "chapter:width" -> laid-out blocks (content is fixed while the menu lives)
+# Drawn on change, not every frame: input and selection set _dirty; the hangar's idle sprites and the
+# launch blink redraw when their frame actually steps (_anim_key).
+var _dirty: bool = true
+var _anim_key := Vector3i(-1, -1, -1)
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -43,10 +47,17 @@ func _ready() -> void:
 	_rules = RulesContent.chapters()
 
 func _process(delta: float) -> void:
-	if show_rules:
-		return
-	_anim_time += delta
-	queue_redraw()
+	if not show_rules:
+		_anim_time += delta
+		var chassis: String = _chassis_keys[selected_chassis_idx]
+		var t_ms := _anim_time * 1000.0
+		var key := Vector3i(MechSpriteBank.idle_frame(chassis, t_ms), MechSpriteBank.idle_frame(chassis, t_ms + 420.0), int(_anim_time / 0.5) % 2)
+		if key != _anim_key:
+			_anim_key = key
+			_dirty = true
+	if _dirty:
+		_dirty = false
+		queue_redraw()
 
 # ---------------------------------------------------------------- input
 func _unhandled_input(event: InputEvent) -> void:
@@ -90,7 +101,10 @@ func _key_action(keycode: int) -> String:
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
-		_hot.hovered = _hot.hit(CrtUI.to_virtual(event.position, _scale))
+		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
+		if id != _hot.hovered:
+			_dirty = true
+		_hot.hovered = id
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if _hot.hovered != "" else Control.CURSOR_ARROW
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
@@ -99,6 +113,7 @@ func _gui_input(event: InputEvent) -> void:
 			accept_event()
 
 func _activate(id: String) -> void:
+	_dirty = true
 	if id.begins_with("map:"):
 		_select_map(int(id.substr(4)))
 	elif id.begins_with("chassis:"):
