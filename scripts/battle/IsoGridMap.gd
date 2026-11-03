@@ -427,7 +427,6 @@ func handle_click(local_mouse_pos: Vector2) -> void:
 		tile_clicked.emit(clicked, get_tile(clicked))
 
 func _on_terrain_draw() -> void:
-	var font: Font = ThemeDB.fallback_font
 	var max_sum: int = (grid_width - 1) + (grid_height - 1)
 	for s in range(0, max_sum + 1):
 		for x in range(grid_width):
@@ -438,10 +437,9 @@ func _on_terrain_draw() -> void:
 			var td: GridTileData = tiles.get(coords, null)
 			if td == null:
 				continue
-			_draw_static_tile(_terrain_canvas, coords, td, font)
+			_draw_static_tile(_terrain_canvas, coords, td)
 
 func _draw() -> void:
-	var font: Font = ThemeDB.fallback_font
 	var pulse: float = 0.5 + 0.5 * sin(_anim_time * 4.5)
 
 	# Render dynamic overlay elements in isometric back-to-front order (x + y ascending)
@@ -455,7 +453,7 @@ func _draw() -> void:
 			var td: GridTileData = tiles.get(coords, null)
 			if td == null:
 				continue
-			_draw_dynamic_tile(coords, td, font, pulse)
+			_draw_dynamic_tile(coords, td, pulse)
 
 	# Draw movement path preview arrow & fuel waypoints on top
 	if current_path_preview.size() > 1:
@@ -469,14 +467,18 @@ func _draw() -> void:
 		for i in range(1, pts.size()):
 			draw_circle(pts[i], 4.5, line_col)
 		# Fuel cost tag at destination
-		var dest_pos: Vector2 = pts[-1] + Vector2(-28, -28)
 		var spent: int = reachable_info.get(current_path_preview[-1], {}).get("fuel_spent", 0)
 		var tag_str: String = "ENGAGE (-%dF)" % spent if is_atk else "-%d FUEL" % spent
-		draw_rect(Rect2(dest_pos - Vector2(4, 14), Vector2(84, 18)), Color(0.08, 0.09, 0.08, 0.92), true)
-		draw_rect(Rect2(dest_pos - Vector2(4, 14), Vector2(84, 18)), line_col, false, 1.5)
-		draw_string(font, dest_pos, tag_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, line_col)
+		var clean_tag := CrtUI.sanitize(tag_str)
+		var tag_w: float = float(PixelFont.text_width(clean_tag)) + 12.0
+		var tag_h: float = 14.0
+		var dest_pos: Vector2 = pts[-1] + Vector2(-roundf(tag_w * 0.5), -32.0)
+		var tag_rect := Rect2(dest_pos, Vector2(tag_w, tag_h))
+		draw_rect(tag_rect, CrtUI.C_FILL, true)
+		draw_rect(tag_rect, line_col, false, 1.2)
+		PixelFont.draw_text(self, clean_tag, (dest_pos + Vector2(6, 3)).round(), line_col)
 
-func _draw_static_tile(ci: CanvasItem, coords: Vector2i, td: GridTileData, font: Font) -> void:
+func _draw_static_tile(ci: CanvasItem, coords: Vector2i, td: GridTileData) -> void:
 	var geo: Dictionary = _tile_geo.get(coords, {})
 	if geo.is_empty():
 		return
@@ -519,9 +521,11 @@ func _draw_static_tile(ci: CanvasItem, coords: Vector2i, td: GridTileData, font:
 
 	# 5. Static Elevation Labels
 	if show_elev_labels and td.elevation >= 2 and not td.is_objective:
-		ci.draw_string(font, top_center + Vector2(-8, 22), "%dm" % (td.elevation * 100), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.85, 0.86, 0.78, 0.55))
+		var elev_str := "%dm" % (td.elevation * 100)
+		var ew: int = PixelFont.text_width(elev_str)
+		PixelFont.draw_text(ci, elev_str, (top_center + Vector2(-roundf(float(ew) * 0.5), 18)).round(), Color(0.85, 0.86, 0.78, 0.65))
 
-func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, _font: Font, pulse: float) -> void:
+func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, pulse: float) -> void:
 	var top_center := grid_to_screen(coords, true)
 
 	# River animated ripples & city pulsating bunker slits

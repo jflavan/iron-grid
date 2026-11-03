@@ -71,19 +71,39 @@ func _draw() -> void:
 		draw_polyline(ring_pts, Color(1.0, 0.86, 0.25, 0.95), 2.5)
 
 	# Tactical Directional Facing Chevron on the tile surface
+	# Double Chevron (Tactical Echelon): Outer lead chevron + Inner trailing chevron
 	var f_screen := Vector2(float(mech_data.facing.x - mech_data.facing.y) * 2.0, float(mech_data.facing.x + mech_data.facing.y)).normalized()
-	var chev_dist: float = 23.0
-	var tip: Vector2 = Vector2(0, 6) + f_screen * chev_dist
-	var perp: Vector2 = Vector2(-f_screen.y, f_screen.x)
-	var left_pt: Vector2 = tip - f_screen * 7.5 + perp * 5.0
-	var right_pt: Vector2 = tip - f_screen * 7.5 - perp * 5.0
-	var notch_pt: Vector2 = tip - f_screen * 4.5
-	var chev_pts := PackedVector2Array([tip, left_pt, notch_pt, right_pt])
-	var chev_col: Color = Color(1.0, 0.82, 0.22, 0.95) if mech_data.faction == MechData.Faction.PLAYER else Color(0.95, 0.32, 0.25, 0.95)
+	var perp := Vector2(-f_screen.y, f_screen.x)
+	var chev_dist: float = 34.0
+	var tip1: Vector2 = Vector2(0, 6) + f_screen * chev_dist
+
+	# Lead chevron (scaled ~14x16px)
+	var l_pt1: Vector2 = tip1 - f_screen * 13.0 + perp * 8.0
+	var r_pt1: Vector2 = tip1 - f_screen * 13.0 - perp * 8.0
+	var n_pt1: Vector2 = tip1 - f_screen * 7.5
+	var chev1_pts := PackedVector2Array([tip1, l_pt1, n_pt1, r_pt1])
+
+	# Trailing echelon chevron (scaled ~9x11px)
+	var tip2: Vector2 = tip1 - f_screen * 7.0
+	var l_pt2: Vector2 = tip2 - f_screen * 8.5 + perp * 5.5
+	var r_pt2: Vector2 = tip2 - f_screen * 8.5 - perp * 5.5
+	var n_pt2: Vector2 = tip2 - f_screen * 4.5
+	var chev2_pts := PackedVector2Array([tip2, l_pt2, n_pt2, r_pt2])
+
+	var chev1_col: Color = CrtUI.C_CURSOR if mech_data.faction == MechData.Faction.PLAYER else CrtUI.C_HOSTILE
+	var chev2_col: Color = CrtUI.C_NAME if mech_data.faction == MechData.Faction.PLAYER else Color(0.85, 0.25, 0.2, 0.9)
+	if is_selected and mech_data.faction == MechData.Faction.PLAYER:
+		var sel_pulse: float = 0.8 + 0.2 * sin(_anim_time * 5.0)
+		chev1_col = Color(chev1_col.r, chev1_col.g, chev1_col.b, sel_pulse)
 	if order_done and mech_data.faction == MechData.Faction.PLAYER:
-		chev_col = chev_col.darkened(0.35)
-	draw_colored_polygon(chev_pts, chev_col)
-	draw_polyline(PackedVector2Array([left_pt, tip, right_pt]), Color(0.1, 0.1, 0.1, 0.8), 1.2)
+		chev1_col = chev1_col.darkened(0.35)
+		chev2_col = chev2_col.darkened(0.35)
+
+	# Draw trailing then lead chevron
+	draw_colored_polygon(chev2_pts, chev2_col)
+	draw_polyline(PackedVector2Array([l_pt2, tip2, r_pt2]), Color(0.05, 0.08, 0.05, 0.9), 1.2)
+	draw_colored_polygon(chev1_pts, chev1_col)
+	draw_polyline(PackedVector2Array([l_pt1, tip1, r_pt1]), Color(0.05, 0.08, 0.05, 0.9), 1.4)
 
 	# Draw dieselpunk walker silhouette anchored inside the tile diamond
 	# Feet planted at y = +6, torso centered at y = -8, top at y = -20 (strictly inside [-29.5, +29.5])
@@ -100,38 +120,47 @@ func _draw() -> void:
 		draw_circle(sh_pos, 6.0, Color(0.1, 0.14, 0.1, 0.9))
 		draw_arc(sh_pos, 6.0, 0, TAU, 16, Color(0.45, 0.95, 0.65), 1.6)
 
-	# Base Plinth Telemetry Plate (Callsign + Armor Bar + Fuel Bar) tucked at the walker's feet inside its own tile
-	var bar_w: float = 46.0
-	var bar_x: float = -bar_w * 0.5
-	var bar_y: float = 17.0
-
-	# Backing plate
-	draw_rect(Rect2(bar_x - 2, bar_y - 10, bar_w + 4, 19), Color(0.05, 0.06, 0.05, 0.90), true)
-	var faction_border := Color(0.45, 0.88, 0.45, 0.95) if mech_data.faction == MechData.Faction.PLAYER else Color(0.95, 0.32, 0.26, 0.95)
-	draw_rect(Rect2(bar_x - 2, bar_y - 10, bar_w + 4, 19), faction_border, false, 1.2)
-
-	# Short callsign + Facing + Ready dot
-	var font: Font = ThemeDB.fallback_font
+	# Overhead Floating Tactical Tag (Callsign + Status Pip + Hull/Fuel Gauges)
 	var short_name: String = mech_data.callsign.split(" ")[0]
-	var label_text: String = "%s %s" % [short_name, mech_data.get_facing_name()]
-	draw_string(font, Vector2(bar_x, bar_y - 1), label_text, HORIZONTAL_ALIGNMENT_LEFT, int(bar_w - 6), 8, Color(0.95, 0.93, 0.85))
+	var clean_name: String = CrtUI.sanitize(short_name)
+	var name_w: int = PixelFont.text_width(clean_name)
+	var plate_w: float = maxf(48.0, float(name_w + 14))
+	var plate_h: float = 17.0
+	var plate_x: float = -roundf(plate_w * 0.5)
+	var plate_y: float = -38.0
+	var plate_rect := Rect2(plate_x, plate_y, plate_w, plate_h)
 
-	# Ready status pip
+	# CRT Backing Frame
+	var faction_border := CrtUI.C_BORDER if mech_data.faction == MechData.Faction.PLAYER else CrtUI.C_HOSTILE
+	draw_rect(plate_rect, CrtUI.C_FILL, true)
+	draw_rect(plate_rect, faction_border, false, 1.0)
+	draw_line(Vector2(plate_x + 1, plate_y + 9), Vector2(plate_x + plate_w - 1, plate_y + 9), CrtUI.C_RULE, 1.0)
+
+	# Row 1: Short Callsign in PixelFont + Ready status pip
+	var name_col := CrtUI.C_NAME if mech_data.faction == MechData.Faction.PLAYER else CrtUI.C_HOSTILE
+	if order_done and mech_data.faction == MechData.Faction.PLAYER:
+		name_col = name_col.darkened(0.3)
+	PixelFont.draw_text(self, clean_name, Vector2(plate_x + 3, plate_y + 1), name_col)
+
 	var pip_col := Color(0.35, 0.95, 0.45) if not order_done else Color(0.45, 0.45, 0.42)
 	if mech_data.faction == MechData.Faction.AI:
-		pip_col = Color(0.95, 0.35, 0.3)
-	draw_circle(Vector2(bar_x + bar_w - 3, bar_y - 5), 2.2, pip_col)
+		pip_col = CrtUI.C_HOSTILE
+	draw_circle(Vector2(plate_x + plate_w - 5, plate_y + 5), 2.0, pip_col)
 
-	# Armor Bar (3px tall)
+	# Row 2: Micro-Gauges (Armor / Hull + Fuel)
+	var gw: float = plate_w - 6.0
+	var gx: float = plate_x + 3.0
+
+	# Armor Bar (2px tall)
 	var armor_ratio: float = mech_data.get_armor_ratio()
-	var armor_col := Color(0.35, 0.88, 0.42) if armor_ratio > 0.5 else (Color(0.95, 0.72, 0.22) if armor_ratio > 0.25 else Color(0.95, 0.25, 0.2))
-	draw_rect(Rect2(bar_x, bar_y + 1, bar_w, 3), Color(0.18, 0.18, 0.18), true)
-	draw_rect(Rect2(bar_x, bar_y + 1, bar_w * armor_ratio, 3), armor_col, true)
+	var armor_col := CrtUI.C_LABEL if armor_ratio > 0.5 else (CrtUI.C_NAME if armor_ratio > 0.25 else CrtUI.C_HULL)
+	draw_rect(Rect2(gx, plate_y + 11, gw, 2), CrtUI.C_GAUGE_BG, true)
+	draw_rect(Rect2(gx, plate_y + 11, roundf(gw * armor_ratio), 2), armor_col, true)
 
-	# Fuel Bar (2.5px tall)
+	# Fuel Bar (2px tall)
 	var fuel_ratio: float = mech_data.get_fuel_ratio()
-	draw_rect(Rect2(bar_x, bar_y + 5, bar_w, 2.5), Color(0.15, 0.15, 0.15), true)
-	draw_rect(Rect2(bar_x, bar_y + 5, bar_w * fuel_ratio, 2.5), Color(0.32, 0.78, 0.92), true)
+	draw_rect(Rect2(gx, plate_y + 14, gw, 2), CrtUI.C_GAUGE_BG, true)
+	draw_rect(Rect2(gx, plate_y + 14, roundf(gw * fuel_ratio), 2), CrtUI.C_FUEL, true)
 
 ## Static procedural renderer used on the battlefield, HUD portrait, Skirmish Showdown, and Mech Hangar.
 static func draw_mech_silhouette(
@@ -293,4 +322,3 @@ static func draw_mech_silhouette(
 			canvas.draw_line(torso_c + Vector2(-10, -12) * scale_f, torso_c + Vector2(-12, -22) * scale_f, dark_metal, 3.0 * scale_f)
 			# Glowing optical visor
 			canvas.draw_rect(Rect2(torso_c + Vector2(-7, -7) * scale_f, Vector2(14, 3.5) * scale_f), visor_col, true)
-
