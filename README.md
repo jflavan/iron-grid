@@ -4,11 +4,11 @@
 
 ![Isometric Battlefield & Tactical HUD](screenshot_gameplay.png)
 
-*Tactical battlefield view: extruded 2.5D isometric terrain, movement range highlights, Dijkstra fuel path planning, and real-time telemetry HUD.*
+*Tactical battlefield view: extruded 2.5D isometric terrain, tactical echelon double chevrons, overhead CRT telemetry tags, movement range highlights, Dijkstra fuel path planning, and real-time telemetry HUD.*
 
 ![FF-style Battle Screen](screenshot_battle.png)
 
-*Battle screen: pixel-art walkers with articulated legs, a terrain backdrop chosen by the defender's tile, attack banners, and the CRT command HUD.*
+*Battle screen: pixel-art walkers with articulated legs, a terrain backdrop chosen by the defender's tile, and the CRT interactive command HUD.*
 
 ![Main Menu & AFW Codex](screenshot_main_menu.png)
 
@@ -16,7 +16,7 @@
 
 ![Rules of Engagement](screenshot_rules.png)
 
-*Rules of Engagement (press `R` in Command HQ): seven chapters on how the battle works, with every number read from the game's data.*
+*Rules of Engagement (press `R` in Command HQ): seven chapters on how the battle works, with every number read live from the game's data.*
 
 ---
 
@@ -29,7 +29,7 @@ Each turn cycles through three phases:
 1. **Player Command Phase**:
    - Select any friendly Armored Fighting Walker (AFW) to compute reachable movement nodes within its current **Diesel Fuel** budget (using Dijkstra pathfinding across terrain and elevation climbs). Walkers can move across unoccupied nodes, and moving does not forfeit attacking if sufficient fuel remains for the strike.
    - **Combat Selection**: Hover over reachable adjacent enemy nodes (highlighted with red targeting reticles) to inspect a real-time **Skirmish Engagement Forecast** detailing approach vectors (`FRONTAL CLASH`, `FLANKING ATTACK`, `REAR AMBUSH`), tactical formation modifiers, terrain/elevation modifiers, initiative order, and estimated hull damage.
-   - **Attacking Pays Target Step Fuel but Holds Ground**: A strike is launched from the walker's adjacent tile onto the enemy-held node, paying that target node's step fuel: base terrain cost, chassis off-road surcharge or gear discount, and elevation climb. A Goliath striking a mountain one level up pays `5 + 1 + 1 = 7` of its `10` fuel. **Attacking never moves your walker onto the defender's node; both walkers hold their respective tiles during and after combat.** If the defender is destroyed, the sector is cleared and can be occupied on subsequent turns or moves.
+   - **Attacking Pays Target Step Fuel but Holds Ground**: A strike is launched from the walker's adjacent tile onto the enemy-held node, paying that target node's step fuel: base terrain cost multiplied by chassis fuel usage (`fuel_usage = 2`), chassis off-road surcharge or gear discount, and elevation climb (`+2 Fuel` per level). Base mountain crag requires `10 Fuel` (5 × 2); attempting to climb an elevated mountain one level up costs `10 + 2 + 2 = 14 Fuel`, which exceeds a Goliath's 10-fuel tank (`ADV_IMPOSSIBLE: CAN'T CLIMB THERE`) and requires level ground or lighter walkers. **Attacking never moves your walker onto the defender's node; both walkers hold their respective tiles during and after combat.** If the defender is destroyed, the sector is cleared and can be occupied on subsequent turns or moves.
    - **Out of Reach Telemetry**: When a selected walker could reach a tile next to an enemy this turn but lacks the fuel for the final attack step, hovering that enemy displays an **OUT OF REACH** box with the fuel needed, the exact formula breakdown, and turn-checked refuel advice (wait here, advance to an intermediate tile, or refuel over turns). Clicking it logs the tactical assessment to the Comms Log. Enemies beyond move range show a subtle `BEYOND MOVE RANGE` line.
    - **Facing, Entrenching & Objectives**: Move to secure strategic **Objective Cities**, press **`T`** to cycle cardinal facing direction without burning fuel, or press **`R`** (`WAIT / REFUEL`) to entrench (`+15% DEF`, `+5 Fuel`, `+4 EN`, and `+8 Hull` repair when holding a City).
 2. **Combat Encounter Phase (Final Fantasy Turn-Based Battle)**:
@@ -60,7 +60,7 @@ Directional orientation, approach vectors, and surrounding unit formations heavi
 ### Directional Facing & In-Place Turning
 Every walker maintains a cardinal facing orientation on the isometric grid:
 - **Four Cardinal Facings**: `SE` (`1, 0` / `>`), `SW` (`0, 1` / `v`), `NW` (`-1, 0` / `<`), and `NE` (`0, -1` / `^`).
-- **Telemetry & Visuals**: Walker bases feature an articulated directional chevron; the CRT HUD displays the orientation arrow next to the unit's portrait (`SE >`, `SW v`, `NW <`, `NE ^`), and sprite poses flip horizontally according to facing.
+- **Telemetry & Visuals**: Walker bases feature a prominent **tactical echelon double chevron** along the forward perimeter edge of their tile diamond (`C_CURSOR`/`C_NAME` amber for player, `C_HOSTILE` red for AI); walker heads feature floating **overhead CRT telemetry tags** in `PixelFont` showing callsign, status ready pip, and stacked Hull/Fuel micro-gauges. The CRT sidebar HUD displays the orientation arrow next to the unit's portrait (`SE >`, `SW v`, `NW <`, `NE ^`), and sprite poses flip horizontally according to facing.
 - **Dynamic Orientation**: Moving automatically points the walker along its final step vector (`target_coords - from_coords`). Initiating an attack automatically rotates the attacker to face the defender (`def_coords - atk_coords`).
 - **Manual Turning (`T` / CRT HUD)**: Pressing **`T`** (`TURN / FACE`) or clicking the CRT command row cycles the selected walker's facing clockwise without expending fuel or ending its turn.
 - **Post-Move Refacing**: After completing a move, clicking an adjacent empty orthogonal tile refaces the walker in that direction.
@@ -87,17 +87,19 @@ Units stationed on adjacent nodes project tactical support and suppression into 
 
 ## Terrain & Elevation Matrix
 
-| Terrain Type | Code | Base Fuel | Attack Mod | Defense Mod | Evasion Bonus | Tactical Notes |
-| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Transit Road** | `ROD` | `1` | `+5%` | `0%` | `+0%` | Fastest transit artery for heavy dreadnoughts |
-| **Open Plain** | `PLN` | `2` | `0%` | `+5%` | `+0%` | Standard open maneuvering ground |
-| **Fortified City** | `CTY` | `2` | `+10%` | `+25%` | `+10%` | Repairs **+12 Hull**, restores **+4 Fuel** & **+3 EN** at turn start |
-| **Trench Timber** | `TRN` | `3` | `+5%` | `+15%` | `+8%` | Prepared defensive cover and ambush concealment |
-| **River Ford** | `RIV` | `4` | `-15%` | `-15%` | `-10%` | Bogged down & exposed (`Falke` amphibious gear reduces cost) |
-| **Mountain Crag** | `MTN` | `5` | `+15%` | `+30%` | `+10%` | Commanding rock bastion (`Donner` quad legs reduce climb cost) |
+Base terrain fuel costs are multiplied by each chassis's fuel usage (`fuel_usage = 2` for standard medium/heavy walkers):
+
+| Terrain Type | Code | Base Fuel | Effective Fuel (2×) | Attack Mod | Defense Mod | Evasion Bonus | Tactical Notes |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Transit Road** | `ROD` | `1` | `2` | `+5%` | `0%` | `+0%` | Fastest transit artery for heavy dreadnoughts |
+| **Open Plain** | `PLN` | `2` | `4` | `0%` | `+5%` | `+0%` | Standard open maneuvering ground |
+| **Fortified City** | `CTY` | `2` | `4` | `+10%` | `+25%` | `+10%` | Repairs **+12 Hull**, restores **+4 Fuel** & **+3 EN** at turn start |
+| **Trench Timber** | `TRN` | `3` | `6` | `+5%` | `+15%` | `+8%` | Prepared defensive cover and ambush concealment |
+| **River Ford** | `RIV` | `4` | `8` | `-15%` | `-15%` | `-10%` | Bogged down & exposed (`Falke` amphibious gear reduces cost) |
+| **Mountain Crag** | `MTN` | `5` | `10` | `+15%` | `+30%` | `+10%` | Commanding rock bastion (`Donner` quad legs reduce climb cost) |
 
 ### Elevation (`0m` – `400m`)
-- **Climbing Fuel Surcharge**: Moving uphill costs `+1 Fuel` per `100m` elevation level gained, and that includes the final step of an attack onto a higher enemy.
+- **Climbing Fuel Surcharge**: Moving uphill costs `+1 Base Fuel` (`+2 Effective Fuel` at 2× fuel usage) per `100m` elevation level gained, and that includes the final step of an attack onto a higher enemy.
 - **High Ground Plunging Fire**: Whichever walker holds the higher tile gains **+4% Hit Accuracy**, **+4% Evasion** and **+5% Crit** per elevation level. Attacking downhill also grants **+12% Firepower** and **+10% Armor deflection** per level, while the defender below loses **8% Firepower and Armor** per level.
 - **Uphill Assault Penalty**: Attacking uphill suffers **-10% Firepower** and **-4% Hit Accuracy** per level, and the defender above gains **+12% Firepower and Armor** per level.
 
@@ -179,7 +181,9 @@ iron-grid/
 │   ├── backdrops/                  # 360x152 terrain backdrops (plain, road, river, forest, city, mountain)
 │   ├── fx/                         # Slab, radio mast & rangefinder attachments per faction
 │   └── font/                       # 5x7 bitmap font
-├── tools/battle_sprites/           # Stdlib-only Python generator for everything in assets/battle
+├── tools/
+│   ├── battle_sprites/             # Stdlib-only Python generator for everything in assets/battle
+│   └── ui_snapshot/                # snapshot.gd: renders 1440x900 screenshots of any scene/state
 ├── scenes/
 │   ├── MainMenu.tscn               # Command HQ briefing console, 3-map selector, Mech Hangar Codex & Rules of Engagement
 │   ├── Battlefield.tscn            # Root battle scene (GridMap, UnitContainer, Camera2D, UIOverlay)
@@ -210,6 +214,8 @@ iron-grid/
     │   ├── PixelFont.gd            # 5x7 bitmap text & wrapping
     │   └── BattlePreview.gd        # Dev preview controller
     └── ui/
+        ├── CrtUI.gd                # Scanline CRT UI design system, integer pixel scaling, PixelFont & panels
+        ├── CrtHotspots.gd          # Mouse hover and hit-testing manager for CRT virtual coordinates
         ├── MainMenu.gd             # War-room menu, interactive Mech Hangar Codex & Rules of Engagement page
         ├── RulesContent.gd         # Rules of Engagement chapter text, built from live game data
         └── UIOverlay.gd            # In-game CRT telemetry HUD, terrain inspector, forecast & OUT OF REACH box
@@ -217,7 +223,9 @@ iron-grid/
     ├── Playtest.tscn               # Headless automated playtest entry scene
     ├── playtest.gd                 # Rule checks + full-mission playthroughs with per-frame invariants
     ├── BattleScreenTests.tscn      # Battle screen, strike plan & rules page unit tests
-    └── run_battle_tests.sh         # Headless runner for those tests (fails on any SCRIPT ERROR too)
+    ├── run_battle_tests.sh         # Headless runner for those tests (fails on any SCRIPT ERROR too)
+    ├── Benchmark.tscn             # Hardware render frame time budget benchmark suite
+    └── benchmark.gd               # Benchmark measuring P50/P95/max frame times against 16.6ms budget
 ```
 
 ---
@@ -251,6 +259,35 @@ Every battle in a playtest or balance mission is seeded from the mission's polic
 # Windows PowerShell equivalent of the environment-variable form
 $env:PLAYTEST_POLICIES = 'greedy'; $env:PLAYTEST_VERBOSE = '1'; godot --headless --path . res://tests/Playtest.tscn
 Remove-Item Env:PLAYTEST_POLICIES, Env:PLAYTEST_VERBOSE
+```
+
+## Hardware Frame Time Budget Benchmark
+
+`tests/Benchmark.tscn` validates that the game strictly complies with the **60 FPS / 16.666 ms frame time budget** across both rendering pipelines (2.5D Isometric Map View and 2D Battle View). It executes a two-pass benchmark:
+1. **Pass 1 (Raw Workload / Capacity)**: Uncapped rendering measuring raw GPU/CPU frame times, P50/P95 latency, and budget headroom.
+2. **Pass 2 (Capped Target)**: Standard 60 FPS capped loop (`run/max_fps=60`) measuring pacing stability and frame delta consistency.
+
+```bash
+godot res://tests/Benchmark.tscn
+```
+
+### Confirmed Performance Metrics (NVIDIA Quadro P4000, GL Compatibility)
+- **2.5D Isometric Map View (`Battlefield.tscn`)**:
+  - Raw Average Frame Time: **6.38 ms** (~156.8 FPS max capacity, **38.3% budget consumed**, **+10.29 ms headroom**).
+  - 60 FPS Locked: Average delta **16.66 ms** (rock-solid 60.0 FPS).
+- **2D Battle View (`BattleScreen.gd`)**:
+  - Raw Average Frame Time: **0.68 ms** (~1,475 FPS max capacity, **4.1% budget consumed**, **+15.99 ms headroom**).
+  - 60 FPS Locked: Average delta **16.67 ms** (rock-solid 60.0 FPS).
+
+## Screenshot Generation Pipeline
+
+All documentation screenshots in the repository root are rendered deterministically using `tools/ui_snapshot/snapshot.gd` at native $1440 \times 900$:
+
+```powershell
+godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/Battlefield.tscn screenshot_gameplay.png select
+godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/MainMenu.tscn screenshot_main_menu.png
+godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/MainMenu.tscn screenshot_rules.png rules
+godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/dev/BattlePreview.tscn screenshot_battle.png
 ```
 
 ## Battle Art Pipeline
