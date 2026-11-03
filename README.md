@@ -225,11 +225,14 @@ iron-grid/
 ## Running the Game
 
 1. Open **Godot Engine 4.x** (tested with Godot `4.7-stable`).
-2. Import `project.godot` and press **F5** (or run from the command line):
+2. Import `project.godot` and press **F5**, or run it from the command line with the launch script:
 
-```powershell
-godot --path .
+```bash
+./run.sh            # Linux / macOS
+.\run.ps1           # Windows PowerShell
 ```
+
+The script refreshes Godot's import cache (`godot --headless --path . --import`) before launching. Don't launch with a bare `godot --path .` on a fresh clone or after pulling new scripts. The `.godot/` cache is not in git, so Godot won't know about new `class_name` scripts, the autoloads fail to parse, and the window stays blank. Opening the project in the editor also refreshes the cache.
 
 ---
 
