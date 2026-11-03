@@ -251,9 +251,10 @@ static func _attach_tex(name: String, a: Dictionary) -> Texture2D:
 static func _attach_tex_for(name: String, faction: int) -> Texture2D:
 	var pair: Array = _attach_cache.get(name, [])
 	if pair.is_empty():
-		pair = [null, null]
+		pair = [null, null, false, false]   # textures per faction, then "load attempted" flags
 		_attach_cache[name] = pair
-	if pair[faction] == null:
+	if not pair[2 + faction]:
+		pair[2 + faction] = true
 		pair[faction] = load("res://assets/battle/fx/%s_%s.png" % [name, MechSpriteBank.FACTION_NAMES[faction]]) as Texture2D
 	return pair[faction]
 

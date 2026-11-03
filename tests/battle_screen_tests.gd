@@ -1630,26 +1630,63 @@ func test_rules_page_draws_on_open() -> void:
 	await get_tree().process_frame
 
 ## The AI scores launches while still standing on its start tile; that tile must not count it as its
-## own adjacent ally (the context has to match the one the real fight uses after the move).
+## own adjacent ally. Checked through AIController itself: the forecast cache records the formation
+## context each launch was scored with.
 func test_ai_launch_context_excludes_mover() -> void:
 	var bf := await _spawn_iron_bridge()
 	var uc := bf.unit_container
 	var rote := _unit_by_callsign(bf, "ROTE-1")
 	var iron := _unit_by_callsign(bf, "IRON-1")
-	# Park every other walker far away so only these two matter.
+	# Park every other walker on the far row so only these two matter.
 	var spot := 0
 	for u in uc.units:
 		if u != rote and u != iron:
 			u.mech_data.grid_pos = Vector2i(spot, 7)
 			spot += 1
-	iron.mech_data.grid_pos = Vector2i(5, 4)
-	rote.mech_data.grid_pos = Vector2i(4, 4)   # adjacent to the target...
-	var launch := Vector2i(5, 3)               # ...but launching from another adjacent tile
-	var planned := UnitContainer.formation_context(uc.build_occupied_map(rote), iron.mech_data.grid_pos, launch, int(rote.mech_data.faction))
+	rote.mech_data.has_moved = false
+	rote.mech_data.has_attacked = false
+	rote.mech_data.current_fuel = rote.mech_data.max_fuel
+	var faction := int(rote.mech_data.faction)
+	var gm0 := bf.grid_map
+	# Find a target / start / launch triple: start and launch both next to the target, launch reachable.
+	var target := Vector2i(-1, -1)
+	var start := Vector2i(-1, -1)
+	var launch := Vector2i(-1, -1)
+	for y in range(1, 6):
+		for x in range(1, 9):
+			if launch != Vector2i(-1, -1):
+				break
+			var t := Vector2i(x, y)
+			for sd in UnitContainer._DIRS:
+				var st: Vector2i = t + sd
+				if not gm0.is_valid_coords(st) or st.y >= 7 or launch != Vector2i(-1, -1):
+					continue
+				iron.mech_data.grid_pos = t
+				rote.mech_data.grid_pos = st
+				var reach := gm0.find_reachable_tiles(rote.mech_data, uc.build_occupied_map(rote))
+				for ld in UnitContainer._DIRS:
+					var l: Vector2i = t + ld
+					if l != st and l.y < 7 and reach.has(l) and not reach[l]["is_attack"]:
+						target = t
+						start = st
+						launch = l
+						break
+	_check(launch != Vector2i(-1, -1), "setup: found a launch tile next to the target other than the start tile")
+	iron.mech_data.grid_pos = target
+	rote.mech_data.grid_pos = start
+	var self_counted := uc.get_formation_context(target, launch, faction)   # rote still on its start tile
 	rote.mech_data.grid_pos = launch
-	var actual := uc.get_formation_context(iron.mech_data.grid_pos, launch, int(rote.mech_data.faction))
-	_check(planned["atk_allies_adj"] == 0, "mover is not its own crossfire ally (got %d)" % planned["atk_allies_adj"])
-	_check(planned == actual, "pre-move context matches the post-move fight context (%s vs %s)" % [planned, actual])
+	var after_move := uc.get_formation_context(target, launch, faction)
+	rote.mech_data.grid_pos = start
+	_check(self_counted["atk_allies_adj"] == after_move["atk_allies_adj"] + 1, "setup: standing on the start tile would count as a crossfire ally")
+
+	SkirmishEngine.clear_forecast_cache()
+	AIController.choose_best_action(rote, bf.grid_map, uc, bf.current_map_def)
+	var gm := bf.grid_map
+	var key_ok := SkirmishEngine._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), after_move)
+	var key_bad := SkirmishEngine._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), self_counted)
+	_check(SkirmishEngine._forecast_cache.has(key_ok), "AI scored the launch with the post-move formation context")
+	_check(not SkirmishEngine._forecast_cache.has(key_bad), "AI did not count itself as its own adjacent ally")
 	bf.queue_free()
 	await get_tree().process_frame
 
@@ -1720,17 +1757,41 @@ func test_dijkstra_matches_bellman_ford_on_large_map() -> void:
 		if sum != best[c]:
 			bad += 1
 	_check(bad == 0 and reach.size() > 100, "heap Dijkstra matches brute force on 32x28 (%d mismatches, %d tiles, %d us)" % [bad, reach.size(), dt])
+	# Same paths (so the same final step and facing) as the original linear-scan search.
+	var ref_from := _linear_scan_came_from(gm, m, occ, m.current_fuel)
+	var path_bad := 0
+	for c: Vector2i in reach.keys():
+		if reach[c]["is_attack"]:
+			continue # [start, enemy]: a strike, not a search path
+		var path: Array[Vector2i] = reach[c]["path"]
+		var cur: Vector2i = c
+		var ref_path: Array[Vector2i] = [c]
+		while cur != m.grid_pos:
+			cur = ref_from[cur]
+			ref_path.push_front(cur)
+		if path != ref_path:
+			path_bad += 1
+	_check(path_bad == 0, "heap Dijkstra reproduces the linear-scan paths exactly (%d differ)" % path_bad)
 	gm.queue_free()
 	await get_tree().process_frame
 
-## Static terrain (labels included) is baked into one mesh per vertex-buffer cap, not one canvas
-## command per polygon / glyph.
+## Static terrain (labels included) is baked into one textured mesh, not one canvas command per
+## polygon / label, and the labels really are in it.
 func test_terrain_is_baked_into_few_draws() -> void:
 	var bf := await _spawn_iron_bridge()
 	var gm := bf.grid_map
-	var ops: int = gm._terrain_mesh.op_count()
-	var verts: int = gm._terrain_mesh.vertex_count()
-	_check(ops >= 1 and ops <= 1 + verts / CanvasMeshBuilder.MAX_VERTS_PER_MESH, "terrain replays %d draw call(s) for %d tiles (%d vertices)" % [ops, gm.tiles.size(), verts])
+	var labels := 0
+	for c: Vector2i in gm.tiles.keys():
+		var td: GridTileData = gm.tiles[c]
+		if td.elevation >= 2 and not td.is_objective:
+			labels += 1
+	var with_labels: int = gm._terrain_mesh.vertex_count()
+	_check(gm._terrain_mesh.op_count() == 1, "a 10x8 map's terrain is one draw call (got %d)" % gm._terrain_mesh.op_count())
+	gm.show_elev_labels = false
+	var without: int = gm._terrain_mesh.vertex_count()
+	gm.show_elev_labels = true
+	_check(labels > 0 and with_labels - without >= labels * 6, "elevation labels are baked into the mesh (%d labels, %d vertices)" % [labels, with_labels - without])
+	_check(PixelFont.mesh_atlas() != null and PixelFont.mesh_atlas().get_height() == PixelFont.HEIGHT + 6, "terrain mesh samples the font mesh atlas")
 	bf.queue_free()
 	await get_tree().process_frame
 
@@ -1739,7 +1800,8 @@ func test_hud_state_changes_queue_redraw() -> void:
 	var bf := await _spawn_iron_bridge()
 	var ui := bf.ui_overlay
 	for prop in ["selected_mech", "hovered_mech", "hovered_tile", "hovered_reach_info", "current_forecast",
-			"strike_plan", "step_cost_mech", "player_unit_count", "show_manual_modal", "show_game_over_modal"]:
+			"strike_plan", "step_cost_mech", "map_def", "player_unit_count", "ai_unit_count", "player_obj_count",
+			"total_obj_count", "show_manual_modal", "show_game_over_modal"]:
 		ui._dirty = false
 		ui.set(prop, ui.get(prop))
 		_check(ui._dirty, "assigning UIOverlay.%s marks the HUD dirty" % prop)
@@ -1748,3 +1810,30 @@ func test_hud_state_changes_queue_redraw() -> void:
 	_check(ui._dirty, "a new log line marks the HUD dirty")
 	bf.queue_free()
 	await get_tree().process_frame
+
+## Reference: the pre-heap Dijkstra (linear min scan, ties to the earliest-queued node), came_from only.
+func _linear_scan_came_from(gm: IsoGridMap, unit: MechData, occ: Dictionary, budget: int) -> Dictionary:
+	var start: Vector2i = unit.grid_pos
+	var best := {start: 0}
+	var from := {start: start}
+	var queue: Array[Vector2i] = [start]
+	while not queue.is_empty():
+		var bi := 0
+		for i in range(1, queue.size()):
+			if best[queue[i]] < best[queue[bi]]:
+				bi = i
+		var cur: Vector2i = queue[bi]
+		queue.remove_at(bi)
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = cur + d
+			if not gm.is_valid_coords(n) or (occ.has(n) and occ[n].faction != unit.faction):
+				continue
+			var nc: int = best[cur] + unit.get_step_fuel_cost(gm.get_tile(cur), gm.get_tile(n))
+			if nc > budget:
+				continue
+			if not best.has(n) or nc < best[n]:
+				best[n] = nc
+				from[n] = cur
+				if not queue.has(n):
+					queue.append(n)
+	return from
