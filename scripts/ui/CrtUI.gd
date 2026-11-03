@@ -50,21 +50,30 @@ static func to_virtual(screen_pos: Vector2, scale: int) -> Vector2:
 	return screen_pos / float(scale)
 
 # ---------------------------------------------------------------- text
+static var _sanitize_cache: Dictionary = {}
+
 static func sanitize(s: String) -> String:
+	if _sanitize_cache.has(s):
+		return _sanitize_cache[s]
 	var up := s.to_upper()
 	var out := ""
 	for ch in up:
 		out += _SUBSTITUTES.get(ch, ch)
+	if _sanitize_cache.size() >= 512:
+		_sanitize_cache.clear()
+	_sanitize_cache[s] = out
 	return out
 
 static func text(ci: CanvasItem, s: String, pos: Vector2, col: Color) -> void:
 	PixelFont.draw_text(ci, sanitize(s), pos.round(), col)
 
 static func text_right(ci: CanvasItem, s: String, right_x: float, y: float, col: Color) -> void:
-	text(ci, s, Vector2(right_x - PixelFont.text_width(s), y), col)
+	var clean := sanitize(s)
+	PixelFont.draw_text(ci, clean, Vector2(right_x - PixelFont.text_width(clean), y).round(), col)
 
 static func text_centered(ci: CanvasItem, s: String, center_x: float, y: float, col: Color) -> void:
-	text(ci, s, Vector2(roundf(center_x - PixelFont.text_width(s) / 2.0), y), col)
+	var clean := sanitize(s)
+	PixelFont.draw_text(ci, clean, Vector2(roundf(center_x - PixelFont.text_width(clean) / 2.0), y).round(), col)
 
 static func wrap_lines(s: String, max_px: float) -> PackedStringArray:
 	return PixelFont.wrap(sanitize(s), int(max_px))
@@ -87,15 +96,24 @@ static func paragraph(ci: CanvasItem, s: String, pos: Vector2, max_px: float, co
 	return y
 
 # ---------------------------------------------------------------- shapes
+static var _scan_tex: ImageTexture = null
+
+static func _get_scan_texture() -> ImageTexture:
+	if _scan_tex == null:
+		var img := Image.create(1, 2, false, Image.FORMAT_RGBA8)
+		img.set_pixel(0, 0, C_FILL)
+		img.set_pixel(0, 1, C_SCAN)
+		_scan_tex = ImageTexture.create_from_image(img)
+	return _scan_tex
 ## The battle screen's CRT panel. alpha fades the whole panel (phase banners).
 static func panel(ci: CanvasItem, r: Rect2, border: Color = C_BORDER, alpha: float = 1.0) -> void:
 	r = Rect2(r.position.round(), r.size.round())
-	ci.draw_rect(r, _a(C_FILL, alpha))
-	var scan := _a(C_SCAN, alpha)
-	var y := 1
-	while y < int(r.size.y):
-		ci.draw_rect(Rect2(r.position.x, r.position.y + y, r.size.x, 1), scan)
-		y += 2
+	ci.draw_texture_rect(_get_scan_texture(), r, true, _a(Color.WHITE, alpha))
+
+
+
+
+
 	var b := _a(border, alpha)
 	ci.draw_rect(Rect2(r.position, Vector2(r.size.x, 1)), b)
 	ci.draw_rect(Rect2(r.position + Vector2(0, r.size.y - 1), Vector2(r.size.x, 1)), b)

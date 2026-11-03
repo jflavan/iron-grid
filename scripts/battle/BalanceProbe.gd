@@ -25,7 +25,7 @@ static func reset() -> void:
 ## filled in by record_outcome() when the battle ends; fc_* is the deterministic forecast of the
 ## same fight and cf_* the forecast without the entrenchment bonus, so the two forecasts compare
 ## like with like.
-static func record_skirmish(atk: MechData, dfn: MechData, from_tile: GridTileData, target_tile: GridTileData) -> void:
+static func record_skirmish(atk: MechData, dfn: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}) -> void:
 	if not enabled:
 		return
 	var rec := {
@@ -34,13 +34,13 @@ static func record_skirmish(atk: MechData, dfn: MechData, from_tile: GridTileDat
 		"dmg_def": 0, "dmg_atk": 0, "atk_won": false, "def_dead": false, "atk_dead": false, "resolved": false,
 	}
 	var a1 := atk.duplicate_mech(); var d1 := dfn.duplicate_mech()
-	var fc := SkirmishEngine.resolve_skirmish(a1, d1, from_tile, target_tile, false)
+	var fc := SkirmishEngine.resolve_skirmish(a1, d1, from_tile, target_tile, false, true, formation_context)
 	rec["fc_dmg_def"] = fc.total_dmg_to_defender; rec["fc_dmg_atk"] = fc.total_dmg_to_attacker
 	rec["fc_atk_won"] = fc.attacker_won_clash; rec["fc_def_dead"] = fc.defender_destroyed; rec["fc_atk_dead"] = fc.attacker_destroyed
 	if dfn.is_entrenched:
 		var a2 := atk.duplicate_mech(); var d2 := dfn.duplicate_mech()
 		d2.is_entrenched = false
-		var cf := SkirmishEngine.resolve_skirmish(a2, d2, from_tile, target_tile, false)
+		var cf := SkirmishEngine.resolve_skirmish(a2, d2, from_tile, target_tile, false, true, formation_context)
 		rec["cf_dmg_def"] = cf.total_dmg_to_defender; rec["cf_dmg_atk"] = cf.total_dmg_to_attacker
 		rec["cf_atk_won"] = cf.attacker_won_clash; rec["cf_def_dead"] = cf.defender_destroyed; rec["cf_atk_dead"] = cf.attacker_destroyed
 	skirmishes.append(rec)

@@ -17,7 +17,11 @@ func setup(data: MechData, screen_pos: Vector2) -> void:
 	_anim_time = randf() * 10.0
 	queue_redraw()
 
+static var suppress_redraw: bool = false
+
 func _process(delta: float) -> void:
+	if suppress_redraw:
+		return
 	_anim_time += delta * (3.5 if _is_walking else 1.0)
 	if _hit_flash > 0.0:
 		_hit_flash = maxf(0.0, _hit_flash - delta * 3.0)

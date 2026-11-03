@@ -13,7 +13,7 @@ static func choose_best_action(
 ) -> Dictionary:
 	var m_data: MechData = ai_unit.mech_data
 	var occ_map: Dictionary = unit_container.build_occupied_map(ai_unit)
-	var reachable: Dictionary = grid_map.compute_reachable_tiles(m_data, occ_map)
+	var reachable: Dictionary = grid_map.find_reachable_tiles(m_data, occ_map)
 
 	var player_units: Array[MechUnit] = unit_container.get_faction_units(MechData.Faction.PLAYER)
 	var start_pos: Vector2i = m_data.grid_pos

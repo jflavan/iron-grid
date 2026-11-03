@@ -1073,7 +1073,7 @@ func test_rules_numbers_come_from_data() -> void:
 	var g: MechData = GlobalState.chassis_catalog["goliath"]
 	var mtn := GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.MOUNTAIN, 3)
 	_check(("%d+%d" % [g.max_fuel, g.passive_refuel]) in fuel_text, "movement chapter quotes the goliath's tank and refuel from the catalog")
-	_check(str(mtn.get_base_fuel_cost()) in fuel_text, "movement chapter quotes the mountain fuel cost")
+	_check(str(mtn.get_base_fuel_cost() * g.fuel_usage) in fuel_text, "movement chapter quotes the mountain fuel cost")
 	var need := g.get_step_fuel_cost(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 2), mtn)
 	_check(RulesContent.worked_example_needs() == need, "worked example needs == goliath plain(L2)->mountain(L3) step (%d vs %d)" % [RulesContent.worked_example_needs(), need])
 	_check(("= %d" % need) in fuel_text, "the worked example shows its total")
@@ -1531,7 +1531,8 @@ func test_decoupled_movement_and_combat() -> void:
 	rote.mech_data.grid_pos = Vector2i(5, 4)
 	# ROTE-1 faces SE (1, 0), so IRON-1 at (4, 4) attacks from the rear!
 	rote.mech_data.facing = Vector2i(1, 0)
-	rote.mech_data.current_armor = rote.mech_data.max_armor
+	rote.mech_data.max_armor = 1000
+	rote.mech_data.current_armor = 1000
 
 	bf._select_unit(iron)
 	_check(bf.grid_map.reachable_info.has(Vector2i(5, 4)) and bool(bf.grid_map.reachable_info[Vector2i(5, 4)]["is_attack"]), "adjacent enemy is highlighted as an attack target")
@@ -1549,7 +1550,8 @@ func test_decoupled_movement_and_combat() -> void:
 	_check(iron.mech_data.facing == Vector2i(1, 0), "attacker automatically turns to face the target it attacks")
 	_check(iron.mech_data.current_fuel == 10 - expected_atk_fuel, "stationary attack spends only the target tile step cost")
 	_check(iron.mech_data.is_order_complete(), "attacking completes the unit's order")
-	if is_instance_valid(rote) and not rote.mech_data.is_destroyed():
+	_check(is_instance_valid(rote) and rote.mech_data.is_alive(), "defender survived the skirmish")
+	if is_instance_valid(rote) and rote.mech_data.is_alive():
 		_check(rote.mech_data.grid_pos == Vector2i(5, 4), "surviving defender stays on its own tile (5, 4)")
 		_check(rote.mech_data.facing == Vector2i(1, 0), "defender does NOT auto-face the attacker (preserves rear/flank orientation)")
 

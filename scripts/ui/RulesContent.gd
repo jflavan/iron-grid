@@ -106,25 +106,26 @@ static func _how_you_win() -> Dictionary:
 	]}
 
 static func _movement() -> Dictionary:
+	var dummy := _chassis("vanguard")
 	var fuel_rows: Array = [PackedStringArray(["TERRAIN", "FUEL"])]
 	for t in TERRAIN_ORDER:
 		var td := _tile(t)
-		fuel_rows.append(PackedStringArray([td.get_terrain_name(), str(td.get_base_fuel_cost())]))
+		fuel_rows.append(PackedStringArray([td.get_terrain_name(), str(td.get_base_fuel_cost() * dummy.fuel_usage)]))
 	var ch_rows: Array = [PackedStringArray(["CHASSIS", "TANK+REFUEL", "OFF-ROAD", "GEAR"])]
 	for id in CHASSIS_ORDER:
 		var m := _chassis(id)
-		var gear := "AMPHIB: RIVER -2" if m.amphibious_gear else ("CLIMB GEAR: MTN -2, CLIMB -1" if m.mountain_gear else "-")
-		var off := "%+d" % m.fuel_efficiency_mod if m.fuel_efficiency_mod != 0 else "0"
+		var gear := "AMPHIB: RIVER -%d" % (2 * m.fuel_usage) if m.amphibious_gear else ("CLIMB GEAR: MTN -%d, CLIMB -%d" % [2 * m.fuel_usage, 1 * m.fuel_usage] if m.mountain_gear else "-")
+		var off := "%+d" % (m.fuel_efficiency_mod * m.fuel_usage) if m.fuel_efficiency_mod != 0 else "0"
 		ch_rows.append(PackedStringArray([m.callsign, "%d+%d" % [m.max_fuel, m.passive_refuel], off, gear]))
 	var ex := _worked_example()
 	var g := _chassis("goliath")
 	return {"title": "MOVEMENT & FUEL", "blocks": [
-		{"p": "Every step burns diesel: the terrain's fuel cost, plus the chassis adjustment off-road, plus 1 per elevation level climbed. Roads never take the surcharge."},
+		{"p": "Every step burns diesel: the terrain's fuel cost, plus the chassis adjustment off-road, plus %d per elevation level climbed. Roads never take the surcharge." % (1 * dummy.fuel_usage)},
 		{"key": "Attacking an adjacent enemy fires from your tile and pays the target tile's step fuel. Hover an enemy to see what a strike needs."},
 		{"table": fuel_rows},
 		{"table": ch_rows},
 		{"p": "Refuel: each chassis regains its refuel at the start of your turn. WAIT/REFUEL adds +%d now. A city adds +%d more each turn." % [MechData.WAIT_FUEL, MechData.CITY_FUEL]},
-		{"key": "EXAMPLE: %s on a plain, enemy on a mountain one level up: %s = %d of its %d fuel. Move next to it, then strike on a fuller tank." % [
+		{"key": "EXAMPLE: %s on a plain, enemy on a mountain one level up: %s = %d of its %d fuel (exceeds tank: CAN'T CLIMB THERE). Strike with lighter walkers or on level ground." % [
 			g.callsign, " + ".join(StrikePlan.step_terms(ex)), int(ex["total"]), g.max_fuel]},
 	]}
 

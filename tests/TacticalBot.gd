@@ -14,7 +14,7 @@ static var rng := RandomNumberGenerator.new()
 
 static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitContainer, map_def: MapDefinition) -> Dictionary:
 	var m: MechData = unit.mech_data
-	var reachable: Dictionary = grid_map.compute_reachable_tiles(m, uc.build_occupied_map(unit))
+	var reachable: Dictionary = grid_map.find_reachable_tiles(m, uc.build_occupied_map(unit))
 	var foes: Array[MechUnit] = uc.get_faction_units(FOE)
 	var start_tile: GridTileData = grid_map.get_tile(m.grid_pos)
 	var targets := _objective_targets(grid_map, map_def)
@@ -61,7 +61,8 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 			var move_fuel: int = 0 if from_pos == m.grid_pos else int(reachable[from_pos]["fuel_spent"])
 			var from_tile: GridTileData = grid_map.get_tile(from_pos)
 			var atk_fuel: int = m.get_step_fuel_cost(from_tile, dest_tile)
-			if move_fuel + atk_fuel > m.current_fuel:
+			var total_fuel: int = move_fuel + atk_fuel
+			if total_fuel > m.current_fuel:
 				continue
 			var form_ctx: Dictionary = uc.get_formation_context(dest_pos, from_pos, int(ME))
 			var fc: Dictionary = SkirmishEngine.compute_forecast(m, tgt.mech_data, from_tile, dest_tile, form_ctx)
@@ -69,6 +70,7 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 			var atk_won: bool = bool(fc.get("attacker_won", dd >= da))
 			var score: float = 45.0 + float(dd - da) * 1.35 + (24.0 if atk_won else -20.0)
 			score += float(fc["atk_mod_pct"] - fc["def_mod_pct"]) * 0.45
+			score -= float(total_fuel) * 0.25
 			var angle := str(fc.get("approach_angle", "FRONT"))
 			if angle == "REAR": score += 45.0
 			elif angle == "FLANK": score += 20.0
@@ -86,7 +88,6 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 			cands.append(act)
 			if score > best["score"]:
 				best = act
-	grid_map.clear_highlights()
 	if jitter > 0.0:
 		var near: Array[Dictionary] = cands.filter(func(c): return c["score"] >= best["score"] - jitter)
 		return near[rng.randi_range(0, near.size() - 1)]

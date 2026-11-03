@@ -28,7 +28,7 @@ static func manual_lines() -> Array[String]:
 	var lines: Array[String] = [
 		"1. TURN FLOW & FUEL MOBILITY:",
 		"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
-		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+1 Fuel per 100m climbed).",
+		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+2 Fuel per 100m climbed).",
 		"   - On its turn, a walker can face & entrench, move and then face or attack, or face and attack in place. Attacking an adjacent enemy costs its tile's step fuel (terrain + chassis surcharge + climb) and never moves onto its tile.",
 		"   - [WAIT / REFUEL] entrenches (%+d%% DEF, %+d%% EVA, %+d%% Hit, +%d SPD) & restores +%d Fuel / +%d EN (+%d Hull in a City). Cities repair +%d Hull, +%d Fuel, +%d EN each turn." % [
 			BalanceProbe.def_pct[0], S.ENTRENCHED_EVA_BONUS, S.ENTRENCHED_ACC_BONUS, S.ENTRENCHED_SPD_BONUS,
@@ -37,10 +37,11 @@ static func manual_lines() -> Array[String]:
 		"",
 		"2. TERRAIN CHART (FUEL COST / ATTACK / DEFENSE / EVASION MOD):",
 	]
+	var fuel_mult: int = GlobalState.chassis_catalog["vanguard"].fuel_usage if GlobalState.chassis_catalog.has("vanguard") else 2
 	for t in RulesContent.TERRAIN_ORDER:
 		var td := GridTileData.new(Vector2i.ZERO, t, 1)
 		lines.append("   - %s (%s): %d Fuel / %+d%% ATK / %+d%% DEF / %+d%% EVA" % [
-			td.get_terrain_name().to_upper(), td.get_terrain_short_code(), td.get_base_fuel_cost(), td.get_attack_modifier_pct(), td.get_defense_modifier_pct(), td.get_evasion_modifier_pct()])
+			td.get_terrain_name().to_upper(), td.get_terrain_short_code(), td.get_base_fuel_cost() * fuel_mult, td.get_attack_modifier_pct(), td.get_defense_modifier_pct(), td.get_evasion_modifier_pct()])
 	lines.append_array([
 		"",
 		"3. ELEVATION & HIGH GROUND ADVANTAGE:",
@@ -101,6 +102,8 @@ func _ready() -> void:
 	add_child(skirmish_modal)
 
 func _process(delta: float) -> void:
+	if skirmish_modal != null and skirmish_modal.visible:
+		return
 	_anim_time += delta
 	if _banner_timer > 0.0:
 		_banner_timer = maxf(0.0, _banner_timer - delta)

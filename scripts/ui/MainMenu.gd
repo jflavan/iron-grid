@@ -43,6 +43,8 @@ func _ready() -> void:
 	_rules = RulesContent.chapters()
 
 func _process(delta: float) -> void:
+	if show_rules:
+		return
 	_anim_time += delta
 	queue_redraw()
 

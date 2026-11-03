@@ -41,19 +41,6 @@ func get_unit_at(coords: Vector2i, exclude_unit: MechUnit = null) -> MechUnit:
 			return u
 	return null
 
-## Collision check: returns the opposing MechUnit if `moving_unit` now occupies the same node as an enemy.
-func check_opposing_collision(moving_unit: MechUnit) -> MechUnit:
-	if moving_unit == null or moving_unit.mech_data == null:
-		return null
-	var node_pos: Vector2i = moving_unit.mech_data.grid_pos
-	for u in units:
-		if not is_instance_valid(u) or u == moving_unit:
-			continue
-		if u.mech_data != null and u.mech_data.is_alive():
-			if u.mech_data.grid_pos == node_pos and u.mech_data.faction != moving_unit.mech_data.faction:
-				return u
-	return null
-
 func build_occupied_map(exclude_unit: MechUnit = null) -> Dictionary:
 	var occ: Dictionary = {}
 	for u in units:
@@ -102,26 +89,6 @@ func _spawn_explosion_effect(screen_pos: Vector2) -> void:
 		if is_instance_valid(fx):
 			fx.queue_free()
 	)
-
-## Finds a valid empty adjacent tile for a dislodged defender to retreat into.
-## Prefers tiles pushed away from `attacker_from`. Returns `Vector2i(-1, -1)` if completely surrounded.
-func find_retreat_tile(defender_pos: Vector2i, attacker_from: Vector2i, grid_map: IsoGridMap) -> Vector2i:
-	var push_dir: Vector2i = defender_pos - attacker_from
-	var candidates: Array[Vector2i] = []
-	if push_dir != Vector2i.ZERO:
-		candidates.append(defender_pos + push_dir)
-	var all_dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	for d in all_dirs:
-		var cand: Vector2i = defender_pos + d
-		if not candidates.has(cand) and cand != attacker_from:
-			candidates.append(cand)
-
-	for cand in candidates:
-		if not grid_map.is_valid_coords(cand):
-			continue
-		if get_unit_at(cand) == null:
-			return cand
-	return Vector2i(-1, -1)
 
 ## Calculates adjacent tactical formation (crossfire, pincer, escort screen, suppression)
 ## for an engagement where attacker launches from `from_pos` into `target_pos`.

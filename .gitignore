@@ -21,3 +21,6 @@ mono_crash.*.json
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Editor files
+.vscode/

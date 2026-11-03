@@ -30,5 +30,13 @@ static func elevation_offsets(elev_diff: int) -> Vector2i:
 		return Vector2i(0, -lift)
 	return Vector2i.ZERO
 
+static var _backdrop_cache: Dictionary = {}
+
 static func backdrop_path(terrain: int) -> String:
 	return "res://assets/battle/backdrops/%s.png" % BACKDROP_BY_TERRAIN.get(terrain, "plain")
+
+static func get_backdrop(terrain: int) -> Texture2D:
+	if not _backdrop_cache.has(terrain):
+		_backdrop_cache[terrain] = load(backdrop_path(terrain)) as Texture2D
+	return _backdrop_cache[terrain]
+

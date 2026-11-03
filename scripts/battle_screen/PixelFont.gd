@@ -11,6 +11,7 @@ const HEIGHT := 8
 
 static var _tex: Texture2D = null
 static var _index: Dictionary = {}
+static var _ascii_table: PackedInt32Array = PackedInt32Array()
 
 static func _ensure() -> void:
 	if _tex != null:
@@ -21,12 +22,27 @@ static func _ensure() -> void:
 	for i in chars.length():
 		_index[chars[i]] = i
 
+	var q_idx: int = _index.get("?", 0)
+	_ascii_table.resize(256)
+	_ascii_table.fill(q_idx)
+	_ascii_table[32] = -1
+
+	for i in chars.length():
+		var code: int = chars.unicode_at(i)
+		if code < 256:
+			_ascii_table[code] = i
+			if code >= 65 and code <= 90:
+				_ascii_table[code + 32] = i
+
 static func _glyph_index(ch: String) -> int:
 	_ensure()
+	if ch.is_empty():
+		return 0
+	var code: int = ch.unicode_at(0)
+	if code < 256:
+		return _ascii_table[code]
 	var up := ch.to_upper()
-	if _index.has(up):
-		return _index[up]
-	return _index.get("?", 0)
+	return _index.get(up, _index.get("?", 0))
 
 static func has_glyph(ch: String) -> bool:
 	_ensure()
@@ -39,11 +55,12 @@ static func draw_text(ci: CanvasItem, text: String, pos: Vector2, color: Color) 
 	_ensure()
 	if _tex == null:
 		return
-	for i in text.length():
-		var ch := text[i]
-		if ch == " ":
+	var text_len: int = text.length()
+	for i in range(text_len):
+		var code: int = text.unicode_at(i)
+		if code == 32:
 			continue
-		var gi := _glyph_index(ch)
+		var gi: int = _ascii_table[code] if code < 256 else _index.get(text[i].to_upper(), 0)
 		ci.draw_texture_rect_region(_tex, Rect2(pos + Vector2(i * ADVANCE, 0), Vector2(ADVANCE, HEIGHT)),
 			Rect2(Vector2(gi * ADVANCE, 0), Vector2(ADVANCE, HEIGHT)), color)
 

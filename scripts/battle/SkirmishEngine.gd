@@ -911,7 +911,7 @@ static func _mech_key(m: MechData) -> Array:
 	for ab in m.abilities:
 		ability_ids.append(ab.ability_id)
 	return [
-		m.chassis_id, int(m.faction), m.is_entrenched,
+		m.chassis_id, m.basic_weapon_id, int(m.faction), m.is_entrenched,
 		m.current_armor, m.max_armor, m.current_energy, m.max_energy,
 		m.firepower, m.armor_rating, m.speed, m.evasion, m.crit_chance, ability_ids,
 	]
@@ -937,7 +937,7 @@ static func compute_forecast(
 	target_tile: GridTileData,
 	formation_context: Dictionary = {}
 ) -> Dictionary:
-	var key := _forecast_key(attacker, defender, from_tile, target_tile, formation_context)
+	var key: Array = _forecast_key(attacker, defender, from_tile, target_tile, formation_context)
 	if _forecast_cache.has(key):
 		return (_forecast_cache[key] as Dictionary).duplicate()
 	var sim_atk := attacker.duplicate_mech()

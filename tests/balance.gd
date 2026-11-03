@@ -54,10 +54,11 @@ func _run_one(map_idx: int, policy: String, variant: String) -> void:
 	var stats := { "moves": 0, "waits": 0, "skirmishes": 0, "max_turn": 1 }
 	_rng.seed = hash(policy) + map_idx
 	GlobalState.set_battle_seed(hash(policy) + map_idx)  # every battle roll in this mission replays exactly
-	TacticalBot.jitter = 30.0
 	if policy.begins_with("tactical:"):
 		TacticalBot.jitter = 30.0
 		TacticalBot.rng.seed = int(policy.split(":")[1]) * 7919 + map_idx
+	else:
+		TacticalBot.jitter = 0.0
 	for frame in MAX_FRAMES_PER_MISSION:
 		await get_tree().process_frame
 		_check_invariants(bf, map_def)

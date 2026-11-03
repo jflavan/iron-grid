@@ -19,15 +19,40 @@ const CRT_SCAN := CrtUI.C_SCAN
 const CRT_BORDER := CrtUI.C_BORDER
 const CRT_RULE := CrtUI.C_RULE
 
+static var _circle_tex: ImageTexture = null
+
+static func _get_circle_texture() -> ImageTexture:
+	if _circle_tex == null:
+		var size := 32
+		var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+		var center := Vector2(size * 0.5 - 0.5, size * 0.5 - 0.5)
+		var r_f := size * 0.5
+		for y in range(size):
+			for x in range(size):
+				var d := (Vector2(x, y) - center).length()
+				if d <= r_f:
+					img.set_pixel(x, y, Color.WHITE)
+				else:
+					img.set_pixel(x, y, Color(1, 1, 1, 0))
+		_circle_tex = ImageTexture.create_from_image(img)
+	return _circle_tex
+
 static func blob(ci: CanvasItem, c: Vector2, r: int, col: Color) -> void:
-	for dy in range(-r, r + 1):
-		var w := int(round(sqrt(maxf(0.0, r * r - dy * dy))))
-		ci.draw_rect(Rect2(roundf(c.x) - w, roundf(c.y) + dy, w * 2, 1), col)
+	var sz := r * 2
+	ci.draw_texture_rect(_get_circle_texture(), Rect2(roundf(c.x - r), roundf(c.y - r), sz, sz), false, col)
+
+
+
+
+
 
 static func ellipse(ci: CanvasItem, c: Vector2, rw: int, rh: int, col: Color) -> void:
-	for dy in range(-rh, rh + 1):
-		var w := int(round(rw * sqrt(maxf(0.0, 1.0 - float(dy * dy) / float(rh * rh)))))
-		ci.draw_rect(Rect2(roundf(c.x) - w, roundf(c.y) + dy, w * 2, 1), col)
+	ci.draw_texture_rect(_get_circle_texture(), Rect2(roundf(c.x - rw), roundf(c.y - rh), rw * 2, rh * 2), false, col)
+
+
+
+
+
 
 static func panel(ci: CanvasItem, r: Rect2) -> void:
 	CrtUI.panel(ci, r)

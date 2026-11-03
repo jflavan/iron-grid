@@ -95,7 +95,7 @@ func setup(
 	hull_display = timeline.start_hull.duplicate()
 	true_hull = timeline.start_hull.duplicate()
 	energy_display = timeline.start_energy.duplicate()
-	_backdrop = load(BattleLayout.backdrop_path(result.target_tile.terrain_type)) as Texture2D
+	_backdrop = BattleLayout.get_backdrop(result.target_tile.terrain_type)
 	var atk_left := BattleLayout.attacker_on_left(result.from_tile.coords, result.target_tile.coords)
 	var lift := BattleLayout.elevation_offsets(result.elev_diff)
 	mechs = {

@@ -26,10 +26,24 @@ var current_path_preview: Array[Vector2i] = []
 
 var _anim_time: float = 0.0
 var show_elev_labels: bool = true
+var _terrain_canvas: Node2D = null
+var suppress_redraw: bool = false
+var _tile_geo: Dictionary = {} # Vector2i -> Dictionary of precomputed geometry
+
+func _ready() -> void:
+	_terrain_canvas = Node2D.new()
+	_terrain_canvas.name = "TerrainCanvas"
+	_terrain_canvas.show_behind_parent = true
+	add_child(_terrain_canvas)
+	move_child(_terrain_canvas, 0)
+	_terrain_canvas.draw.connect(_on_terrain_draw)
 
 func _process(delta: float) -> void:
+	if suppress_redraw:
+		return
 	_anim_time += delta
-	queue_redraw()
+	if not reachable_info.is_empty() or not current_path_preview.is_empty() or hovered_coords != Vector2i(-1, -1) or selected_coords != Vector2i(-1, -1):
+		queue_redraw()
 
 func load_from_definition(map_def: MapDefinition) -> void:
 	grid_width = map_def.width
@@ -58,6 +72,56 @@ func load_from_definition(map_def: MapDefinition) -> void:
 			td.objective_label = str(obj.get("label", "Objective"))
 			td.controlled_by = int(obj.get("owner", -1))
 
+	_tile_geo.clear()
+	for c: Vector2i in tiles.keys():
+		var td: GridTileData = tiles[c]
+		var top_center := grid_to_screen(c, true)
+		var base_center := grid_to_screen(c, false)
+		var extrude_h: float = (top_center.y - base_center.y)
+		var total_drop: float = BASE_THICKNESS - extrude_h
+
+		var diamond := get_diamond_points(top_center, 0.0)
+		var p_top := diamond[0]
+		var p_right := diamond[1]
+		var p_bottom := diamond[2]
+		var p_left := diamond[3]
+
+		var left_face := PackedVector2Array([
+			p_left,
+			p_bottom,
+			p_bottom + Vector2(0, total_drop),
+			p_left + Vector2(0, total_drop)
+		])
+		var right_face := PackedVector2Array([
+			p_bottom,
+			p_right,
+			p_right + Vector2(0, total_drop),
+			p_bottom + Vector2(0, total_drop)
+		])
+		var outline := PackedVector2Array([
+			p_left,
+			p_left + Vector2(0, total_drop),
+			p_bottom + Vector2(0, total_drop),
+			p_right + Vector2(0, total_drop),
+			p_right
+		])
+		var grid_outline := PackedVector2Array([p_top, p_right, p_bottom, p_left, p_top])
+
+		_tile_geo[c] = {
+			"top_center": top_center,
+			"diamond": diamond,
+			"p_top": p_top,
+			"p_left": p_left,
+			"p_right": p_right,
+			"p_bottom": p_bottom,
+			"left_face": left_face,
+			"right_face": right_face,
+			"outline": outline,
+			"grid_outline": grid_outline,
+		}
+
+	if _terrain_canvas != null:
+		_terrain_canvas.queue_redraw()
 	queue_redraw()
 
 func _parse_terrain_code(code: String) -> GridTileData.TerrainType:
@@ -106,29 +170,40 @@ func get_diamond_points(center: Vector2, inset: float = 0.0) -> PackedVector2Arr
 
 ## Converts local 2D screen position to grid coordinates, accurately accounting for 3D tile elevation.
 func screen_to_grid(local_pos: Vector2) -> Vector2i:
-	# Iterate from front-most depth to back-most so elevated foreground tiles take priority
-	var max_sum: int = (grid_width - 1) + (grid_height - 1)
-	for s in range(max_sum, -1, -1):
-		for x in range(grid_width):
-			var y: int = s - x
-			if y < 0 or y >= grid_height:
-				continue
-			var c := Vector2i(x, y)
-			var center := grid_to_screen(c, true)
-			var poly := get_diamond_points(center, 0.0)
-			if Geometry2D.is_point_in_polygon(local_pos, poly):
-				return c
-	return Vector2i(-1, -1)
+	var hw: float = TILE_W * 0.5
+	var hh: float = TILE_H * 0.5
+	var u: float = local_pos.x / hw
+	var best_c := Vector2i(-1, -1)
+	var best_depth: int = -1
 
-## Computes all reachable tiles for `unit` given `occupied_units` (Dictionary: Vector2i -> MechData).
-## Movement tiles are unoccupied tiles within fuel budget (when not unit.has_moved).
-## Attack tiles are orthogonally adjacent enemy tiles within step fuel budget (when not unit.has_attacked).
-func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dictionary:
-	reachable_info.clear()
-	current_path_preview.clear()
+	# Check elevations 0..4 (max supported elevation is 400m = level 4)
+	for elev in range(0, 5):
+		var v: float = (local_pos.y + float(elev) * ELEV_STEP) / hh
+		var cx_f: float = (u + v) * 0.5
+		var cy_f: float = (v - u) * 0.5
+		var x: int = int(floor(cx_f + 0.5))
+		var y: int = int(floor(cy_f + 0.5))
+		if x < 0 or x >= grid_width or y < 0 or y >= grid_height:
+			continue
+		var c := Vector2i(x, y)
+		var td: GridTileData = tiles.get(c, null)
+		if td == null or td.elevation != elev:
+			continue
+		var dx: float = absf(local_pos.x - float(x - y) * hw) / hw
+		var dy: float = absf(local_pos.y - (float(x + y) * hh - float(elev) * ELEV_STEP)) / hh
+		if dx + dy <= 1.0001:
+			var depth: int = x + y
+			if depth > best_depth:
+				best_depth = depth
+				best_c = c
+
+	return best_c
+
+## Pure data query: computes all reachable tiles for `unit` given `occupied_units` without modifying UI state.
+func find_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dictionary:
+	var reachable := {}
 	if unit == null or unit.is_order_complete():
-		queue_redraw()
-		return reachable_info
+		return reachable
 
 	var start: Vector2i = unit.grid_pos
 	var max_budget: int = unit.current_fuel
@@ -138,22 +213,23 @@ func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dict
 		var best_cost: Dictionary = search[0]
 		var came_from: Dictionary = search[1]
 
-		# Build reachable_info dictionary for unoccupied tiles only
+		# Build reachable dictionary for unoccupied tiles only
 		for pos_key in best_cost.keys():
 			var pos: Vector2i = pos_key
 			if pos != start and occupied_units.has(pos):
 				continue # Cannot end move on any occupied tile (friendly or enemy)
 
-			# Reconstruct path
+			# Reconstruct path in O(N) using append + reverse
 			var path: Array[Vector2i] = []
 			var curr: Vector2i = pos
 			while curr != start:
-				path.push_front(curr)
+				path.append(curr)
 				curr = came_from[curr]
-			path.push_front(start)
+			path.append(start)
+			path.reverse()
 
 			var spent: int = best_cost[pos]
-			reachable_info[pos] = {
+			reachable[pos] = {
 				"fuel_spent": spent,
 				"fuel_left": max_budget - spent,
 				"path": path,
@@ -172,13 +248,21 @@ func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dict
 					var strike_fuel: int = unit.get_step_fuel_cost(start_tile, get_tile(adj))
 					if strike_fuel <= max_budget:
 						var atk_path: Array[Vector2i] = [start, adj]
-						reachable_info[adj] = {
+						reachable[adj] = {
 							"fuel_spent": strike_fuel,
 							"fuel_left": max_budget - strike_fuel,
 							"path": atk_path,
 							"is_attack": true
 						}
+	return reachable
 
+## Computes all reachable tiles for `unit` given `occupied_units` (Dictionary: Vector2i -> MechData).
+## Movement tiles are unoccupied tiles within fuel budget (when not unit.has_moved).
+## Attack tiles are orthogonally adjacent enemy tiles within step fuel budget (when not unit.has_attacked).
+func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dictionary:
+	reachable_info.clear()
+	current_path_preview.clear()
+	reachable_info = find_reachable_tiles(unit, occupied_units)
 	queue_redraw()
 	return reachable_info
 
@@ -342,11 +426,8 @@ func handle_click(local_mouse_pos: Vector2) -> void:
 	if is_valid_coords(clicked):
 		tile_clicked.emit(clicked, get_tile(clicked))
 
-func _draw() -> void:
+func _on_terrain_draw() -> void:
 	var font: Font = ThemeDB.fallback_font
-	var pulse: float = 0.5 + 0.5 * sin(_anim_time * 4.5)
-
-	# Render tiles in isometric back-to-front order (x + y ascending)
 	var max_sum: int = (grid_width - 1) + (grid_height - 1)
 	for s in range(0, max_sum + 1):
 		for x in range(grid_width):
@@ -357,7 +438,24 @@ func _draw() -> void:
 			var td: GridTileData = tiles.get(coords, null)
 			if td == null:
 				continue
-			_draw_single_tile(coords, td, font, pulse)
+			_draw_static_tile(_terrain_canvas, coords, td, font)
+
+func _draw() -> void:
+	var font: Font = ThemeDB.fallback_font
+	var pulse: float = 0.5 + 0.5 * sin(_anim_time * 4.5)
+
+	# Render dynamic overlay elements in isometric back-to-front order (x + y ascending)
+	var max_sum: int = (grid_width - 1) + (grid_height - 1)
+	for s in range(0, max_sum + 1):
+		for x in range(grid_width):
+			var y: int = s - x
+			if y < 0 or y >= grid_height:
+				continue
+			var coords := Vector2i(x, y)
+			var td: GridTileData = tiles.get(coords, null)
+			if td == null:
+				continue
+			_draw_dynamic_tile(coords, td, font, pulse)
 
 	# Draw movement path preview arrow & fuel waypoints on top
 	if current_path_preview.size() > 1:
@@ -378,57 +476,66 @@ func _draw() -> void:
 		draw_rect(Rect2(dest_pos - Vector2(4, 14), Vector2(84, 18)), line_col, false, 1.5)
 		draw_string(font, dest_pos, tag_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, line_col)
 
-func _draw_single_tile(coords: Vector2i, td: GridTileData, font: Font, pulse: float) -> void:
-	var top_center := grid_to_screen(coords, true)
-	var base_center := grid_to_screen(coords, false)
-	var extrude_h: float = (top_center.y - base_center.y) # Negative or 0
-	var total_drop: float = BASE_THICKNESS - extrude_h
-
-	var diamond := get_diamond_points(top_center, 0.0)
-	var p_top := diamond[0]
-	var p_right := diamond[1]
-	var p_bottom := diamond[2]
-	var p_left := diamond[3]
+func _draw_static_tile(ci: CanvasItem, coords: Vector2i, td: GridTileData, font: Font) -> void:
+	var geo: Dictionary = _tile_geo.get(coords, {})
+	if geo.is_empty():
+		return
+	var top_center: Vector2 = geo["top_center"]
+	var diamond: PackedVector2Array = geo["diamond"]
+	var p_top: Vector2 = geo["p_top"]
+	var p_left: Vector2 = geo["p_left"]
+	var p_right: Vector2 = geo["p_right"]
+	var p_bottom: Vector2 = geo["p_bottom"]
+	var left_face: PackedVector2Array = geo["left_face"]
+	var right_face: PackedVector2Array = geo["right_face"]
+	var outline: PackedVector2Array = geo["outline"]
+	var grid_outline: PackedVector2Array = geo["grid_outline"]
 
 	var top_color := _get_terrain_top_color(td.terrain_type, td.elevation)
 	var left_wall_color := top_color.darkened(0.34)
 	var right_wall_color := top_color.darkened(0.48)
 
 	# 1. Left & Right 3D Extruded Cliff Faces
-	var left_face := PackedVector2Array([
-		p_left,
-		p_bottom,
-		p_bottom + Vector2(0, total_drop),
-		p_left + Vector2(0, total_drop)
-	])
-	var right_face := PackedVector2Array([
-		p_bottom,
-		p_right,
-		p_right + Vector2(0, total_drop),
-		p_bottom + Vector2(0, total_drop)
-	])
-	draw_colored_polygon(left_face, left_wall_color)
-	draw_colored_polygon(right_face, right_wall_color)
+	ci.draw_colored_polygon(left_face, left_wall_color)
+	ci.draw_colored_polygon(right_face, right_wall_color)
 
 	# Stratified elevation contour lines on cliff sides
 	for e_lvl in range(1, td.elevation + 1):
 		var dy: float = float(e_lvl) * ELEV_STEP
-		draw_line(p_left + Vector2(0, dy), p_bottom + Vector2(0, dy), Color(0.12, 0.14, 0.11, 0.55), 1.2)
-		draw_line(p_bottom + Vector2(0, dy), p_right + Vector2(0, dy), Color(0.08, 0.10, 0.08, 0.65), 1.2)
+		ci.draw_line(p_left + Vector2(0, dy), p_bottom + Vector2(0, dy), Color(0.12, 0.14, 0.11, 0.55), 1.2)
+		ci.draw_line(p_bottom + Vector2(0, dy), p_right + Vector2(0, dy), Color(0.08, 0.10, 0.08, 0.65), 1.2)
 
-	draw_polyline(PackedVector2Array([p_left, p_left + Vector2(0, total_drop), p_bottom + Vector2(0, total_drop), p_right + Vector2(0, total_drop), p_right]), Color(0.1, 0.11, 0.09, 0.8), 1.2)
+	ci.draw_polyline(outline, Color(0.1, 0.11, 0.09, 0.8), 1.2)
 
 	# 2. Top Diamond Surface
-	draw_colored_polygon(diamond, top_color)
+	ci.draw_colored_polygon(diamond, top_color)
 
-	# 3. Procedural Terrain Surface Details
-	_draw_terrain_details(top_center, td, pulse)
+	# 3. Procedural Static Terrain Surface Details
+	_draw_static_terrain_details(ci, top_center, td)
 
 	# 4. Grid Bevel Outline
 	var border_col := Color(0.16, 0.19, 0.15, 0.65)
-	draw_polyline(PackedVector2Array([p_top, p_right, p_bottom, p_left, p_top]), border_col, 1.3)
+	ci.draw_polyline(grid_outline, border_col, 1.3)
 
-	# 5. Reachable Fuel / Attack Target Highlights
+	# 5. Static Elevation Labels
+	if show_elev_labels and td.elevation >= 2 and not td.is_objective:
+		ci.draw_string(font, top_center + Vector2(-8, 22), "%dm" % (td.elevation * 100), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.85, 0.86, 0.78, 0.55))
+
+func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, _font: Font, pulse: float) -> void:
+	var top_center := grid_to_screen(coords, true)
+
+	# River animated ripples & city pulsating bunker slits
+	if td.terrain_type == GridTileData.TerrainType.RIVER:
+		var wave_offset: float = sin(_anim_time * 2.5 + float(td.coords.x + td.coords.y)) * 4.0
+		draw_line(top_center + Vector2(-18 + wave_offset, -4), top_center + Vector2(6 + wave_offset, -4), Color(0.38, 0.65, 0.72, 0.55), 2.0)
+		draw_line(top_center + Vector2(-8 - wave_offset, 5), top_center + Vector2(18 - wave_offset, 5), Color(0.38, 0.65, 0.72, 0.55), 2.0)
+	elif td.terrain_type == GridTileData.TerrainType.CITY:
+		var win_col := Color(0.95, 0.72, 0.22, 0.7 + 0.3 * pulse)
+		draw_rect(Rect2(top_center + Vector2(-13, -10), Vector2(4, 2)), win_col, true)
+		draw_rect(Rect2(top_center + Vector2(-6, -10), Vector2(4, 2)), win_col, true)
+		draw_rect(Rect2(top_center + Vector2(5, -7), Vector2(5, 2)), win_col, true)
+
+	# Reachable Fuel / Attack Target Highlights
 	if reachable_info.has(coords) and coords != selected_coords:
 		var info: Dictionary = reachable_info[coords]
 		var inner_poly := get_diamond_points(top_center, 4.0)
@@ -444,25 +551,23 @@ func _draw_single_tile(coords: Vector2i, td: GridTileData, font: Font, pulse: fl
 			draw_colored_polygon(inner_poly, mov_fill)
 			draw_polyline(inner_loop, mov_edge, 1.8)
 
-	# 6. Selected Unit Tile Highlight
+	# Selected Unit Tile Highlight
 	if coords == selected_coords:
 		var sel_poly := get_diamond_points(top_center, 3.0)
 		var sel_loop := PackedVector2Array([sel_poly[0], sel_poly[1], sel_poly[2], sel_poly[3], sel_poly[0]])
 		draw_polyline(sel_loop, Color(1.0, 0.84, 0.32, 0.95), 2.8)
 
-	# 7. Hovered Tile Cursor Outline
+	# Hovered Tile Cursor Outline
 	if coords == hovered_coords:
 		var hov_poly := get_diamond_points(top_center, 2.0)
 		var hov_loop := PackedVector2Array([hov_poly[0], hov_poly[1], hov_poly[2], hov_poly[3], hov_poly[0]])
 		draw_polyline(hov_loop, Color(1.0, 0.95, 0.75, 0.95), 2.5)
 
-	# 8. Subtle Elevation & Objective Badges
+	# Objective Badges
 	if td.is_objective:
 		var flag_col := Color(0.35, 0.85, 0.45) if td.controlled_by == 0 else (Color(0.95, 0.3, 0.25) if td.controlled_by == 1 else Color(0.85, 0.8, 0.5))
 		draw_circle(top_center + Vector2(0, -18), 5.5, Color(0.1, 0.1, 0.1, 0.9))
 		draw_circle(top_center + Vector2(0, -18), 4.0, flag_col)
-	elif show_elev_labels and td.elevation >= 2:
-		draw_string(font, top_center + Vector2(-8, 22), "%dm" % (td.elevation * 100), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.85, 0.86, 0.78, 0.55))
 
 func _get_terrain_top_color(t_type: GridTileData.TerrainType, elev: int) -> Color:
 	var elev_tint: float = float(elev - 1) * 0.045
@@ -481,13 +586,10 @@ func _get_terrain_top_color(t_type: GridTileData.TerrainType, elev: int) -> Colo
 			return Color(0.45 + elev_tint, 0.43 + elev_tint, 0.39 + elev_tint)
 	return Color(0.3, 0.35, 0.25)
 
-func _draw_terrain_details(center: Vector2, td: GridTileData, pulse: float) -> void:
+func _draw_static_terrain_details(ci: CanvasItem, center: Vector2, td: GridTileData) -> void:
 	match td.terrain_type:
 		GridTileData.TerrainType.RIVER:
-			# Animated water ripples
-			var wave_offset: float = sin(_anim_time * 2.5 + float(td.coords.x + td.coords.y)) * 4.0
-			draw_line(center + Vector2(-18 + wave_offset, -4), center + Vector2(6 + wave_offset, -4), Color(0.38, 0.65, 0.72, 0.55), 2.0)
-			draw_line(center + Vector2(-8 - wave_offset, 5), center + Vector2(18 - wave_offset, 5), Color(0.38, 0.65, 0.72, 0.55), 2.0)
+			pass # ripples drawn in dynamic pass
 		GridTileData.TerrainType.ROAD:
 			# Industrial transit roadbed & yellow convoy center-stripes
 			var road_strip := PackedVector2Array([
@@ -496,42 +598,37 @@ func _draw_terrain_details(center: Vector2, td: GridTileData, pulse: float) -> v
 				center + Vector2(28, 4),
 				center + Vector2(18, 9)
 			])
-			draw_colored_polygon(road_strip, Color(0.25, 0.25, 0.23))
-			draw_line(center + Vector2(-16, -10), center + Vector2(-4, -4), Color(0.85, 0.68, 0.24, 0.8), 2.0)
-			draw_line(center + Vector2(4, 0), center + Vector2(16, 6), Color(0.85, 0.68, 0.24, 0.8), 2.0)
+			ci.draw_colored_polygon(road_strip, Color(0.25, 0.25, 0.23))
+			ci.draw_line(center + Vector2(-16, -10), center + Vector2(-4, -4), Color(0.85, 0.68, 0.24, 0.8), 2.0)
+			ci.draw_line(center + Vector2(4, 0), center + Vector2(16, 6), Color(0.85, 0.68, 0.24, 0.8), 2.0)
 		GridTileData.TerrainType.FOREST:
 			# Trench revetment & stylized dark pines
-			draw_line(center + Vector2(-14, 4), center + Vector2(10, -6), Color(0.28, 0.22, 0.15), 3.0)
+			ci.draw_line(center + Vector2(-14, 4), center + Vector2(10, -6), Color(0.28, 0.22, 0.15), 3.0)
 			var tree_offsets := [Vector2(-12, -4), Vector2(10, -2), Vector2(-2, 6)]
 			for to in tree_offsets:
 				var tp: Vector2 = center + to
 				var foliage := PackedVector2Array([tp + Vector2(0, -13), tp + Vector2(7, 1), tp + Vector2(-7, 1)])
-				draw_colored_polygon(foliage, Color(0.14, 0.24, 0.13))
-				draw_polyline(PackedVector2Array([foliage[0], foliage[1], foliage[2], foliage[0]]), Color(0.28, 0.40, 0.24), 1.0)
+				ci.draw_colored_polygon(foliage, Color(0.14, 0.24, 0.13))
+				ci.draw_polyline(PackedVector2Array([foliage[0], foliage[1], foliage[2], foliage[0]]), Color(0.28, 0.40, 0.24), 1.0)
 		GridTileData.TerrainType.CITY:
 			# Isometric ferro-concrete bunkers & industrial structures
 			var b1 := Rect2(center + Vector2(-16, -14), Vector2(14, 12))
 			var b2 := Rect2(center + Vector2(2, -10), Vector2(13, 10))
-			draw_rect(b1, Color(0.28, 0.27, 0.25), true)
-			draw_rect(b1, Color(0.58, 0.55, 0.48), false, 1.4)
-			draw_rect(b2, Color(0.24, 0.23, 0.22), true)
-			draw_rect(b2, Color(0.52, 0.50, 0.44), false, 1.4)
-			# Glowing bunker slits
-			var win_col := Color(0.95, 0.72, 0.22, 0.7 + 0.3 * pulse)
-			draw_rect(Rect2(center + Vector2(-13, -10), Vector2(4, 2)), win_col, true)
-			draw_rect(Rect2(center + Vector2(-6, -10), Vector2(4, 2)), win_col, true)
-			draw_rect(Rect2(center + Vector2(5, -7), Vector2(5, 2)), win_col, true)
+			ci.draw_rect(b1, Color(0.28, 0.27, 0.25), true)
+			ci.draw_rect(b1, Color(0.58, 0.55, 0.48), false, 1.4)
+			ci.draw_rect(b2, Color(0.24, 0.23, 0.22), true)
+			ci.draw_rect(b2, Color(0.52, 0.50, 0.44), false, 1.4)
 		GridTileData.TerrainType.MOUNTAIN:
 			# 3D Craggy peak facets rising from the tile
 			var peak := center + Vector2(0, -20)
 			var left_slope := PackedVector2Array([peak, center + Vector2(-22, 4), center + Vector2(2, 8)])
 			var right_slope := PackedVector2Array([peak, center + Vector2(2, 8), center + Vector2(22, 2)])
-			draw_colored_polygon(left_slope, Color(0.52, 0.50, 0.46))
-			draw_colored_polygon(right_slope, Color(0.35, 0.34, 0.31))
+			ci.draw_colored_polygon(left_slope, Color(0.52, 0.50, 0.46))
+			ci.draw_colored_polygon(right_slope, Color(0.35, 0.34, 0.31))
 			# Snow/Ash ridge cap
 			var snow := PackedVector2Array([peak, center + Vector2(-8, -10), center + Vector2(1, -8), center + Vector2(8, -11)])
-			draw_colored_polygon(snow, Color(0.78, 0.80, 0.76, 0.85))
+			ci.draw_colored_polygon(snow, Color(0.78, 0.80, 0.76, 0.85))
 		GridTileData.TerrainType.PLAIN:
 			# Subtle earthen tufts
-			draw_line(center + Vector2(-8, -2), center + Vector2(-3, -2), Color(0.24, 0.30, 0.18, 0.6), 1.5)
-			draw_line(center + Vector2(6, 4), center + Vector2(12, 4), Color(0.24, 0.30, 0.18, 0.6), 1.5)
+			ci.draw_line(center + Vector2(-8, -2), center + Vector2(-3, -2), Color(0.24, 0.30, 0.18, 0.6), 1.5)
+			ci.draw_line(center + Vector2(6, 4), center + Vector2(12, 4), Color(0.24, 0.30, 0.18, 0.6), 1.5)
