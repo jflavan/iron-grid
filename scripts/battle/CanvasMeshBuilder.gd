@@ -8,13 +8,14 @@ extends RefCounted
 ## order (and alpha blending) is the same as issuing the commands one by one.
 ##
 ## The draw_* methods mirror CanvasItem's signatures (and Godot's non-antialiased stroke geometry),
-## so drawing code can target either a CanvasItem or a builder. Text cannot go into the mesh:
-## add_text() closes the current segment and records the label, so replay() draws it at the same
-## point in the order.
+## so drawing code can target either a CanvasItem or a builder. PixelFont labels are baked in as
+## one quad per run of lit font pixels (add_text), so they keep their place in the draw order and
+## a whole map stays one draw call however many labels it has.
 
 var _verts := PackedVector2Array()
 var _cols := PackedColorArray()
-var _ops: Array = []   # ArrayMesh, or [text: String, pos: Vector2, color: Color]
+var _ops: Array[ArrayMesh] = []
+var _label_cache: Dictionary = {}   # [text, colour] -> [vertices at the origin, colours]
 
 func draw_colored_polygon(points: PackedVector2Array, color: Color) -> void:
 	# Fan triangulation: every polygon the terrain draws is convex.
@@ -68,37 +69,64 @@ func draw_rect(rect: Rect2, color: Color, filled: bool = true, width: float = -1
 	draw_line(Vector2(x0, y0 + o), Vector2(x0, y1 - o), color, width)
 	draw_line(Vector2(x1, y0 + o), Vector2(x1, y1 - o), color, width)
 
-## Queues a PixelFont label between mesh segments, preserving draw order.
+## Bakes a PixelFont label (same placement as PixelFont.draw_text) into the mesh. Each distinct
+## text/colour is triangulated once; placing it is one native transform of the cached vertices.
 func add_text(text: String, pos: Vector2, color: Color) -> void:
-	_flush()
-	_ops.append([text, pos, color])
+	var key := [text, color]
+	var tpl: Array = _label_cache.get(key, [])
+	if tpl.is_empty():
+		var v := PackedVector2Array()
+		var c := PackedColorArray()
+		for run in PixelFont.text_pixel_runs(text):
+			var r: Rect2 = run[0]
+			var col: Color = color * (run[1] as Color)
+			var a: Vector2 = r.position
+			var b: Vector2 = a + Vector2(r.size.x, 0)
+			var d: Vector2 = a + r.size
+			var e: Vector2 = a + Vector2(0, r.size.y)
+			v.append_array(PackedVector2Array([a, b, d, a, d, e]))
+			for k in 6:
+				c.append(col)
+		tpl = [v, c]
+		_label_cache[key] = tpl
+	if _verts.size() >= MAX_VERTS_PER_MESH:
+		_flush()
+	_verts.append_array(Transform2D(0.0, pos) * (tpl[0] as PackedVector2Array))
+	_cols.append_array(tpl[1])
 
-## Finishes recording; call once before replay().
+## Vertices recorded so far (the whole bake once finish() has run).
+func vertex_count() -> int:
+	var n: int = _verts.size()
+	for m in _ops:
+		n += m.surface_get_array_len(0)
+	return n
+
+## Finishes recording; call once before replay(). Splits into several meshes only past
+## MAX_VERTS_PER_MESH, so huge maps don't build one enormous vertex buffer.
 func finish() -> void:
 	_flush()
 
-## Number of draw operations replay() issues (mesh segments plus labels).
+## Number of draw calls replay() issues (mesh segments).
 func op_count() -> int:
 	return _ops.size()
 
 func replay(ci: CanvasItem) -> void:
-	for op in _ops:
-		if op is ArrayMesh:
-			ci.draw_mesh(op, null)
-		else:
-			PixelFont.draw_text(ci, op[0], op[1], op[2])
+	for mesh in _ops:
+		ci.draw_mesh(mesh, null)
+
+const MAX_VERTS_PER_MESH := 196608
 
 func _tri(a: Vector2, b: Vector2, c: Vector2, color: Color) -> void:
-	_verts.append(a)
-	_verts.append(b)
-	_verts.append(c)
-	_cols.append(color)
-	_cols.append(color)
-	_cols.append(color)
+	if _verts.size() >= MAX_VERTS_PER_MESH:
+		_flush()
+	_verts.append_array(PackedVector2Array([a, b, c]))
+	_cols.append_array(PackedColorArray([color, color, color]))
 
 func _quad(a: Vector2, b: Vector2, c: Vector2, d: Vector2, color: Color) -> void:
-	_tri(a, b, c, color)
-	_tri(a, c, d, color)
+	if _verts.size() >= MAX_VERTS_PER_MESH:
+		_flush()
+	_verts.append_array(PackedVector2Array([a, b, c, a, c, d]))
+	_cols.append_array(PackedColorArray([color, color, color, color, color, color]))
 
 func _flush() -> void:
 	if _verts.is_empty():

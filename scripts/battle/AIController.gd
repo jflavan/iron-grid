@@ -92,7 +92,7 @@ static func choose_best_action(
 			# occ_map excludes ai_unit: it is still on start_pos during the forecast, and must not
 			# count as its own adjacent ally when it launches from another tile.
 			var form_ctx := UnitContainer.formation_context(occ_map, dest_pos, from_pos, int(m_data.faction))
-			var forecast: Dictionary = SkirmishEngine.compute_forecast(
+			var forecast: Dictionary = SkirmishEngine.forecast_shared(   # read-only below
 				m_data, target_unit.mech_data, from_tile, dest_tile, form_ctx
 			)
 			var est_dmg_def: int = forecast["est_dmg_to_def"]

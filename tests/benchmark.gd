@@ -5,6 +5,8 @@ extends Node
 #   1. 2.5D Isometric Map View (Battlefield.tscn with IsoGridMap, units, HUD)
 #   2. 2D Battle View (BattleScreen with BattleStage, weapon animations, CRT scanlines)
 
+var _draw_calls: Dictionary = {}   # view key -> average draw calls per frame (uncapped pass)
+
 func _ready() -> void:
 	print("\n========================================================")
 	print("OPERATION: IRON GRID - RENDER FRAME TIME BENCHMARK")
@@ -37,11 +39,11 @@ func _run_benchmark() -> void:
 	# Detailed Reporting
 	_print_summary(
 		"2.5D Isometric Map View (Battlefield.tscn)",
-		map_raw, map_60
+		map_raw, map_60, _draw_calls.get("map", 0.0)
 	)
 	_print_summary(
 		"2D Battle View (BattleScreen.gd)",
-		battle_raw, battle_60
+		battle_raw, battle_60, _draw_calls.get("battle", 0.0)
 	)
 	
 	print("========================================================")
@@ -66,6 +68,7 @@ func _benchmark_map_view(sample_frames: int) -> Array[float]:
 				break
 				
 	var deltas: Array[float] = []
+	var calls := 0.0
 	var last_tick := Time.get_ticks_usec()
 	
 	for f in sample_frames:
@@ -74,6 +77,7 @@ func _benchmark_map_view(sample_frames: int) -> Array[float]:
 		var d_ms := float(now - last_tick) / 1000.0
 		last_tick = now
 		deltas.append(d_ms)
+		calls += Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
 		
 		# Exercise hover and camera movement
 		if bf.grid_map != null:
@@ -83,6 +87,8 @@ func _benchmark_map_view(sample_frames: int) -> Array[float]:
 		if f % 2 == 0:
 			bf.camera.position += Vector2(sin(f * 0.1) * 2.5, cos(f * 0.1) * 2.5)
 
+	if not _draw_calls.has("map"):
+		_draw_calls["map"] = calls / float(sample_frames)
 	bf.queue_free()
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -104,6 +110,7 @@ func _benchmark_battle_view(sample_frames: int) -> Array[float]:
 		await get_tree().process_frame
 		
 	var deltas: Array[float] = []
+	var calls := 0.0
 	var last_tick := Time.get_ticks_usec()
 	
 	for f in sample_frames:
@@ -112,13 +119,16 @@ func _benchmark_battle_view(sample_frames: int) -> Array[float]:
 		var d_ms := float(now - last_tick) / 1000.0
 		last_tick = now
 		deltas.append(d_ms)
+		calls += Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
 		
+	if not _draw_calls.has("battle"):
+		_draw_calls["battle"] = calls / float(sample_frames)
 	bs.queue_free()
 	await get_tree().process_frame
 	await get_tree().process_frame
 	return deltas
 
-func _print_summary(title: String, raw_deltas: Array[float], capped_deltas: Array[float]) -> void:
+func _print_summary(title: String, raw_deltas: Array[float], capped_deltas: Array[float], draw_calls: float) -> void:
 	raw_deltas.sort()
 	capped_deltas.sort()
 	
@@ -149,6 +159,7 @@ func _print_summary(title: String, raw_deltas: Array[float], capped_deltas: Arra
 	print("      95th Percentile:        %.2f ms" % raw_p95)
 	print("      Peak Frame Time (Max):  %.2f ms" % raw_max)
 	print("      60 FPS Budget Consumed: %.1f%% (%.2f ms headroom out of 16.66ms)" % [budget_pct, headroom_ms])
+	print("      Draw Calls per Frame:   %.0f" % draw_calls)
 	print("  [2] STANDARD 60 FPS EXECUTION (max_fps = 60):")
 	print("      Average Frame Delta:    %.2f ms (~%.1f FPS)" % [cap_avg, cap_fps])
 	print("      95th Percentile Delta:  %.2f ms" % cap_p95)

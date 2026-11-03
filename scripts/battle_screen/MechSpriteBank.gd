@@ -30,9 +30,10 @@ static func get_sheet(chassis: String, faction: int) -> Texture2D:
 	var f := clampi(faction, 0, 1)
 	var pair: Array = _sheet_cache.get(chassis, [])
 	if pair.is_empty():
-		pair = [null, null]
+		pair = [null, null, false, false]   # sheets per faction, then "load attempted" flags
 		_sheet_cache[chassis] = pair
-	if pair[f] == null:
+	if not pair[2 + f]:
+		pair[2 + f] = true   # a missing sheet is reported once, not re-loaded every frame
 		pair[f] = load(MECH_DIR + chassis + "_" + FACTION_NAMES[f] + ".png") as Texture2D
 	return pair[f]
 

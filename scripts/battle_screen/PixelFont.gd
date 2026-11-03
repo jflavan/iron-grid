@@ -36,6 +36,54 @@ static func _ensure() -> void:
 			if code >= 65 and code <= 90:
 				_ascii_table[code + 32] = i
 
+static var _glyph_runs: Dictionary = {}   # glyph index -> Array of [Rect2, Color] in the 6x8 cell
+static var _text_runs: Dictionary = {}    # text -> text_pixel_runs result (labels repeat a lot)
+static var _atlas: Image = null           # CPU copy of the atlas, read once
+
+## The lit pixels of `text` as horizontal runs ([Rect2, texel Color], relative to the text origin),
+## so static labels can be baked into a vertex-coloured mesh (see CanvasMeshBuilder.add_text)
+## instead of being drawn glyph by glyph. Same layout as draw_text.
+static func text_pixel_runs(text: String) -> Array:
+	if _text_runs.has(text):
+		return _text_runs[text]
+	_ensure()
+	var out: Array = []
+	if _tex == null:
+		return out
+	for i in text.length():
+		var code: int = text.unicode_at(i)
+		if code == 32:
+			continue
+		var gi: int = _ascii_table[code] if code < 256 else _index.get(text[i].to_upper(), 0)
+		for run in _runs_for_glyph(gi):
+			var r: Rect2 = run[0]
+			out.append([Rect2(r.position + Vector2(i * ADVANCE, 0), r.size), run[1]])
+	_text_runs[text] = out
+	return out
+
+static func _runs_for_glyph(gi: int) -> Array:
+	if _glyph_runs.has(gi):
+		return _glyph_runs[gi]
+	if _atlas == null:
+		_atlas = _tex.get_image()
+		if _atlas.is_compressed():
+			_atlas.decompress()
+	var img := _atlas
+	var runs: Array = []
+	for y in HEIGHT:
+		var x := 0
+		while x < ADVANCE:
+			var c := img.get_pixel(gi * ADVANCE + x, y)
+			if c.a <= 0.0:
+				x += 1
+				continue
+			var x0 := x
+			while x < ADVANCE and img.get_pixel(gi * ADVANCE + x, y) == c:
+				x += 1
+			runs.append([Rect2(x0, y, x - x0, 1), c])
+	_glyph_runs[gi] = runs
+	return runs
+
 static func _glyph_index(ch: String) -> int:
 	_ensure()
 	if ch.is_empty():

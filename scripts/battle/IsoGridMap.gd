@@ -29,7 +29,8 @@ var selected_coords: Vector2i = Vector2i(-1, -1):
 			_overlay_dirty = true
 
 # Dijkstra output: Vector2i -> { "fuel_spent": int, "fuel_left": int, "path": Array[Vector2i], "is_attack": bool }
-# Replace it wholesale (never mutate it in place) so the overlay notices the change.
+# Replace it wholesale (never mutate it in place) so the overlay notices the change. Entries and
+# their paths are shared read-only (current_path_preview, the HUD): duplicate a path before editing.
 var reachable_info: Dictionary = {}:
 	set(v):
 		reachable_info = v
@@ -48,7 +49,7 @@ var show_elev_labels: bool = true:
 			_rebuild_terrain_mesh()
 var _terrain_canvas: Node2D = null
 var suppress_redraw: bool = false
-var _tile_geo: Dictionary = {} # Vector2i -> Dictionary of precomputed geometry
+var _tile_top: Dictionary = {} # Vector2i -> top-diamond centre (grid_to_screen with elevation)
 
 # Static terrain, baked once per map into a few vertex-coloured meshes (see CanvasMeshBuilder).
 var _terrain_mesh: CanvasMeshBuilder = null
@@ -118,53 +119,9 @@ func load_from_definition(map_def: MapDefinition) -> void:
 			td.objective_label = str(obj.get("label", "Objective"))
 			td.controlled_by = int(obj.get("owner", -1))
 
-	_tile_geo.clear()
+	_tile_top.clear()
 	for c: Vector2i in tiles.keys():
-		var td: GridTileData = tiles[c]
-		var top_center := grid_to_screen(c, true)
-		var base_center := grid_to_screen(c, false)
-		var extrude_h: float = (top_center.y - base_center.y)
-		var total_drop: float = BASE_THICKNESS - extrude_h
-
-		var diamond := get_diamond_points(top_center, 0.0)
-		var p_top := diamond[0]
-		var p_right := diamond[1]
-		var p_bottom := diamond[2]
-		var p_left := diamond[3]
-
-		var left_face := PackedVector2Array([
-			p_left,
-			p_bottom,
-			p_bottom + Vector2(0, total_drop),
-			p_left + Vector2(0, total_drop)
-		])
-		var right_face := PackedVector2Array([
-			p_bottom,
-			p_right,
-			p_right + Vector2(0, total_drop),
-			p_bottom + Vector2(0, total_drop)
-		])
-		var outline := PackedVector2Array([
-			p_left,
-			p_left + Vector2(0, total_drop),
-			p_bottom + Vector2(0, total_drop),
-			p_right + Vector2(0, total_drop),
-			p_right
-		])
-		var grid_outline := PackedVector2Array([p_top, p_right, p_bottom, p_left, p_top])
-
-		_tile_geo[c] = {
-			"top_center": top_center,
-			"diamond": diamond,
-			"p_top": p_top,
-			"p_left": p_left,
-			"p_right": p_right,
-			"p_bottom": p_bottom,
-			"left_face": left_face,
-			"right_face": right_face,
-			"outline": outline,
-			"grid_outline": grid_outline,
-		}
+		_tile_top[c] = grid_to_screen(c, true)
 
 	_ambient_keys = PackedInt32Array()
 	for c: Vector2i in tiles.keys():
@@ -447,12 +404,18 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 	var plan := StrikePlan.new()
 	plan.have = unit.current_fuel
 	var start: Vector2i = unit.grid_pos
+	# Only the usable launch tiles' costs matter (the filter below drops the rest): stop as soon as
+	# they are all final. An occupied neighbour is never entered, so waiting for it would flood
+	# the whole map.
 	var neighbours: Array[Vector2i] = []
 	for d in _DIRS:
-		if is_valid_coords(target + d):
-			neighbours.append(target + d)
-	# Only the launch tiles' costs matter: stop as soon as they are all final.
-	var costs: Dictionary = _shortest_costs(unit, occupied_units, _NO_FUEL_CAP, neighbours)[0]
+		var l: Vector2i = target + d
+		if not is_valid_coords(l) or (unit.has_moved and l != start) or (l != start and occupied_units.has(l)):
+			continue
+		neighbours.append(l)
+	var costs: Dictionary = {}
+	if not neighbours.is_empty():
+		costs = _shortest_costs(unit, occupied_units, _NO_FUEL_CAP, neighbours)[0]
 	var target_tile := get_tile(target)
 
 	# Launch tiles: enemy neighbours the search reached that the attacker may stand on and fire from.
@@ -610,19 +573,20 @@ func _rebuild_path_preview() -> void:
 	_path_tag = CrtUI.sanitize("ENGAGE (-%dF)" % spent if _path_is_atk else "-%d FUEL" % spent)
 
 func _draw_static_tile(ci: CanvasMeshBuilder, coords: Vector2i, td: GridTileData) -> void:
-	var geo: Dictionary = _tile_geo.get(coords, {})
-	if geo.is_empty():
-		return
-	var top_center: Vector2 = geo["top_center"]
-	var diamond: PackedVector2Array = geo["diamond"]
-	var p_top: Vector2 = geo["p_top"]
-	var p_left: Vector2 = geo["p_left"]
-	var p_right: Vector2 = geo["p_right"]
-	var p_bottom: Vector2 = geo["p_bottom"]
-	var left_face: PackedVector2Array = geo["left_face"]
-	var right_face: PackedVector2Array = geo["right_face"]
-	var outline: PackedVector2Array = geo["outline"]
-	var grid_outline: PackedVector2Array = geo["grid_outline"]
+	# Geometry is only needed while baking, so it is built here rather than kept per tile.
+	var top_center: Vector2 = _tile_top[coords]
+	var base_center := grid_to_screen(coords, false)
+	var total_drop: float = BASE_THICKNESS - (top_center.y - base_center.y)
+	var diamond := get_diamond_points(top_center, 0.0)
+	var p_top := diamond[0]
+	var p_right := diamond[1]
+	var p_bottom := diamond[2]
+	var p_left := diamond[3]
+	var drop := Vector2(0, total_drop)
+	var left_face := PackedVector2Array([p_left, p_bottom, p_bottom + drop, p_left + drop])
+	var right_face := PackedVector2Array([p_bottom, p_right, p_right + drop, p_bottom + drop])
+	var outline := PackedVector2Array([p_left, p_left + drop, p_bottom + drop, p_right + drop, p_right])
+	var grid_outline := PackedVector2Array([p_top, p_right, p_bottom, p_left, p_top])
 
 	var top_color := _get_terrain_top_color(td.terrain_type, td.elevation)
 	var left_wall_color := top_color.darkened(0.34)
@@ -657,7 +621,7 @@ func _draw_static_tile(ci: CanvasMeshBuilder, coords: Vector2i, td: GridTileData
 		ci.add_text(elev_str, (top_center + Vector2(-roundf(float(ew) * 0.5), 18)).round(), Color(0.85, 0.86, 0.78, 0.65))
 
 func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, pulse: float) -> void:
-	var top_center: Vector2 = _tile_geo[coords]["top_center"]
+	var top_center: Vector2 = _tile_top[coords]
 
 	# River animated ripples & city pulsating bunker slits
 	if td.terrain_type == GridTileData.TerrainType.RIVER:

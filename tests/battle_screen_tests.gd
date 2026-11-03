@@ -1723,17 +1723,14 @@ func test_dijkstra_matches_bellman_ford_on_large_map() -> void:
 	gm.queue_free()
 	await get_tree().process_frame
 
-## Static terrain is baked into a handful of mesh segments, not one canvas command per polygon.
+## Static terrain (labels included) is baked into one mesh per vertex-buffer cap, not one canvas
+## command per polygon / glyph.
 func test_terrain_is_baked_into_few_draws() -> void:
 	var bf := await _spawn_iron_bridge()
 	var gm := bf.grid_map
-	var labels := 0
-	for c: Vector2i in gm.tiles.keys():
-		var td: GridTileData = gm.tiles[c]
-		if td.elevation >= 2 and not td.is_objective:
-			labels += 1
 	var ops: int = gm._terrain_mesh.op_count()
-	_check(ops > 0 and ops <= 2 * labels + 1, "terrain replays %d draw ops for %d tiles (%d elevation labels)" % [ops, gm.tiles.size(), labels])
+	var verts: int = gm._terrain_mesh.vertex_count()
+	_check(ops >= 1 and ops <= 1 + verts / CanvasMeshBuilder.MAX_VERTS_PER_MESH, "terrain replays %d draw call(s) for %d tiles (%d vertices)" % [ops, gm.tiles.size(), verts])
 	bf.queue_free()
 	await get_tree().process_frame
 
