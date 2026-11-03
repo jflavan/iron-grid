@@ -196,7 +196,8 @@ iron-grid/
     │   └── MechData.gd             # Core walker struct (hull, energy, firepower, armor, speed, abilities)
     ├── battle/
     │   ├── Battlefield.gd          # Turn flow controller (Player -> Combat Encounter -> AI)
-    │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer, Dijkstra fuel pathfinder & strike plans
+    │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer, heap Dijkstra fuel pathfinder & strike plans
+    │   ├── CanvasMeshBuilder.gd    # Bakes static 2D drawing (terrain + labels) into vertex-coloured meshes
     │   ├── StrikePlan.gd           # Why an enemy can't be struck: fuel needed, breakdown & checked advice
     │   ├── UnitContainer.gd        # Y-sorted mech manager, collision checks & knockback logic
     │   ├── MechUnit.gd             # Procedural multi-part isometric mech renderer & animator
@@ -224,8 +225,10 @@ iron-grid/
     ├── playtest.gd                 # Rule checks + full-mission playthroughs with per-frame invariants
     ├── BattleScreenTests.tscn      # Battle screen, strike plan & rules page unit tests
     ├── run_battle_tests.sh         # Headless runner for those tests (fails on any SCRIPT ERROR too)
-    ├── Benchmark.tscn             # Hardware render frame time budget benchmark suite
-    └── benchmark.gd               # Benchmark measuring P50/P95/max frame times against 16.6ms budget
+    ├── Benchmark.tscn              # Hardware render frame time budget benchmark suite
+    ├── benchmark.gd                # Benchmark measuring P50/P95/max frame times & draw calls against 16.6ms budget
+    ├── ScaleBench.tscn             # Headless scalability benchmark (synthetic 10x10 .. 48x48 maps)
+    └── scale_bench.gd              # Times map load, movement range, strike plans & AI decisions vs map size
 ```
 
 ---
@@ -271,13 +274,36 @@ Remove-Item Env:PLAYTEST_POLICIES, Env:PLAYTEST_VERBOSE
 godot res://tests/Benchmark.tscn
 ```
 
-### Confirmed Performance Metrics (NVIDIA Quadro P4000, GL Compatibility)
-- **2.5D Isometric Map View (`Battlefield.tscn`)**:
-  - Raw Average Frame Time: **6.38 ms** (~156.8 FPS max capacity, **38.3% budget consumed**, **+10.29 ms headroom**).
-  - 60 FPS Locked: Average delta **16.66 ms** (rock-solid 60.0 FPS).
-- **2D Battle View (`BattleScreen.gd`)**:
-  - Raw Average Frame Time: **0.68 ms** (~1,475 FPS max capacity, **4.1% budget consumed**, **+15.99 ms headroom**).
-  - 60 FPS Locked: Average delta **16.67 ms** (rock-solid 60.0 FPS).
+### Confirmed Performance Metrics (NVIDIA GeForce RTX 5070, GL Compatibility)
+| View | Raw avg frame | P95 | Draw calls / frame | 60 FPS budget used |
+| :--- | :---: | :---: | :---: | :---: |
+| **2.5D Isometric Map View** (`Battlefield.tscn`) | **1.36 ms** (was 4.70 ms) | 2.04 ms (was 7.40 ms) | **237** (was 917) | 8.2% |
+| **2D Battle View** (`BattleScreen.gd`) | **0.43 ms** (was 0.54 ms) | 0.45 ms (was 0.68 ms) | 22 | 2.6% |
+
+"Was" figures are the v0.4.0-alpha.1 build measured on the same machine. Both views hold a locked 60.0 FPS (16.66 ms average delta) with `run/max_fps = 60`.
+
+### Scalability Benchmark
+
+`tests/ScaleBench.tscn` builds synthetic maps from 10×10 to 48×48 with a walker on roughly every 12th tile and times the CPU-side systems that grow with map and army size (medians, milliseconds):
+
+```bash
+godot --headless --path . res://tests/ScaleBench.tscn
+```
+
+| Map | Walkers | Map load (one-time, incl. terrain bake) | Movement range | Strike plan, farthest enemy | AI decision | Terrain draw calls |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| 10×10 | 8 | 3.7 | 0.16 | 0.7 | 0.11 | 1 |
+| 20×20 | 33 | 15 | 0.16 | 2.9 | 0.29 | 1 |
+| 32×32 | 85 | 39 | 0.18 | 7.7 | 0.69 | 1 |
+| 48×48 | 192 | 83 | 0.12 | 17 | 1.6 | 2 |
+
+The static terrain stays at one draw call per 196k vertices however large the map. Before the bake it cost one draw call per polygon, polyline and label, about 8–9 per tile (≈680 on a 10×8 map).
+
+### Rendering & Performance Conventions
+- **Static scenery is baked, not redrawn.** `IsoGridMap` records the terrain into `CanvasMeshBuilder` meshes once per map load. The meshes are textured with `PixelFont.mesh_atlas()`: solid geometry samples its white band, and the elevation labels sample their glyphs exactly as `PixelFont.draw_text` does. The GL Compatibility canvas renderer cannot batch polygons or polylines, so command-by-command drawing costs one draw call each. Anything static and solid-coloured should go through the builder.
+- **The tile overlay walks only active tiles.** Rivers, cities, objectives and the hovered, selected and reachable tiles are drawn in iso back-to-front order from a cached list. Replace `reachable_info` wholesale (never mutate it in place) so the overlay notices. Its entries and paths are shared read-only.
+- **UI draws on change.** `UIOverlay` and `MainMenu` redraw when their state setters, input or `GlobalState` signals mark them dirty, or when an idle portrait's frame steps. A 0.25 s heartbeat catches in-place `MechData` edits. New HUD state belongs in a setter that sets `_dirty`.
+- **Ambient motion runs at 30 Hz.** Walker bob and exhaust, and the overlay's pulse and ripples, re-record at `AMBIENT_FPS`. Off-screen walkers don't re-record. State changes call `queue_redraw()` and show at once.
 
 ## Screenshot Generation Pipeline
 
