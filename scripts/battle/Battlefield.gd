@@ -12,8 +12,10 @@ extends Node2D
 
 var current_map_def: MapDefinition
 
-var _strike_plan_key: Array = []
-var _strike_plan_cached: StrikePlan = null
+# Strike plans for the current selection, keyed by everything they depend on, so sweeping the
+# cursor back and forth across enemies runs each search once. Cleared with the selection.
+var _strike_plans: Dictionary = {}
+const STRIKE_PLAN_CACHE_MAX := 64
 var selected_unit: MechUnit = null
 var _is_animating_move: bool = false
 var _phase_before_resolution: GlobalState.TurnPhase = GlobalState.TurnPhase.PLAYER_PHASE
@@ -50,6 +52,7 @@ func _ready() -> void:
 
 func start_mission(map_idx: int) -> void:
 	_mission_token += 1
+	_auto_advance_token += 1   # a countdown from the previous run must not start this one's AI phase
 	GlobalState.reset_battle_state()
 	# Drop any transient turn state left over from a previous run of this battlefield (Redeploy)
 	selected_unit = null
@@ -259,8 +262,7 @@ func _deselect_unit() -> void:
 ## Drops the OUT OF REACH box and the YOUR STEP COST row: the selected walker has used its order
 ## (or there is no selection), so neither applies any more.
 func _clear_strike_readout() -> void:
-	_strike_plan_key.clear()
-	_strike_plan_cached = null
+	_strike_plans.clear()
 	ui_overlay.strike_plan = null
 	ui_overlay.step_cost_mech = null
 
@@ -277,7 +279,7 @@ func _refresh_hover_telemetry(coords: Vector2i) -> void:
 
 	if grid_map.reachable_info.has(coords):
 		var r_info: Dictionary = grid_map.reachable_info[coords]
-		ui_overlay.hovered_reach_info = r_info.duplicate(true)
+		ui_overlay.hovered_reach_info = r_info   # read-only for the HUD; reachable_info is replaced, not mutated
 		if r_info.get("is_attack", false) and selected_unit != null and u_at != null:
 			var path: Array[Vector2i] = r_info["path"]
 			var from_pos: Vector2i = path[path.size() - 2] if path.size() >= 2 else selected_unit.mech_data.grid_pos
@@ -315,12 +317,14 @@ func strike_plan_for(coords: Vector2i) -> StrikePlan:
 	if m.has_moved and absi(coords.x - m.grid_pos.x) + absi(coords.y - m.grid_pos.y) != 1:
 		return null
 	var key := [m, m.grid_pos, m.current_fuel, m.has_moved, coords, u_at, u_at.mech_data.grid_pos]
-	if _strike_plan_key == key:
-		return _strike_plan_cached
-	var occ := unit_container.build_occupied_map(selected_unit)
-	_strike_plan_key = key
-	_strike_plan_cached = grid_map.compute_strike_plan(m, coords, occ)
-	return _strike_plan_cached
+	var cached: StrikePlan = _strike_plans.get(key, null)
+	if cached != null:
+		return cached
+	if _strike_plans.size() >= STRIKE_PLAN_CACHE_MAX:
+		_strike_plans.clear()
+	var plan := grid_map.compute_strike_plan(m, coords, unit_container.build_occupied_map(selected_unit))
+	_strike_plans[key] = plan
+	return plan
 
 func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 	if GlobalState.current_phase != GlobalState.TurnPhase.PLAYER_PHASE or _is_animating_move:

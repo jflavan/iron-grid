@@ -10,11 +10,23 @@ var is_selected: bool = false
 var _anim_time: float = 0.0
 var _is_walking: bool = false
 var _hit_flash: float = 0.0
+var _since_redraw: float = 0.0
+# Name plate text and width, fixed per walker (the callsign never changes after setup).
+var _plate_name: String = ""
+var _plate_w: float = 48.0
+
+## Ambient animation (hull bob, exhaust puff, selection pulse) moves well under a pixel per frame, so
+## walkers re-record their drawing at this rate instead of every frame; walkers outside the view
+## don't re-record at all. State changes call queue_redraw() directly and show at once.
+const AMBIENT_FPS := 30.0
+const CULL_MARGIN := 96.0
 
 func setup(data: MechData, screen_pos: Vector2) -> void:
 	mech_data = data
 	position = screen_pos
 	_anim_time = randf() * 10.0
+	_plate_name = CrtUI.sanitize(mech_data.callsign.split(" ")[0])
+	_plate_w = maxf(48.0, float(PixelFont.text_width(_plate_name) + 14))
 	queue_redraw()
 
 static var suppress_redraw: bool = false
@@ -23,9 +35,17 @@ func _process(delta: float) -> void:
 	if suppress_redraw:
 		return
 	_anim_time += delta * (3.5 if _is_walking else 1.0)
+	_since_redraw += delta
 	if _hit_flash > 0.0:
 		_hit_flash = maxf(0.0, _hit_flash - delta * 3.0)
+	elif _since_redraw < 1.0 / AMBIENT_FPS or not _on_screen():
+		return
+	_since_redraw = 0.0
 	queue_redraw()
+
+func _on_screen() -> bool:
+	var p: Vector2 = get_global_transform_with_canvas().origin
+	return get_viewport_rect().grow(CULL_MARGIN).has_point(p)
 
 func trigger_hit_flash() -> void:
 	_hit_flash = 1.0
@@ -121,10 +141,8 @@ func _draw() -> void:
 		draw_arc(sh_pos, 6.0, 0, TAU, 16, Color(0.45, 0.95, 0.65), 1.6)
 
 	# Overhead Floating Tactical Tag (Callsign + Status Pip + Hull/Fuel Gauges)
-	var short_name: String = mech_data.callsign.split(" ")[0]
-	var clean_name: String = CrtUI.sanitize(short_name)
-	var name_w: int = PixelFont.text_width(clean_name)
-	var plate_w: float = maxf(48.0, float(name_w + 14))
+	var clean_name: String = _plate_name
+	var plate_w: float = _plate_w
 	var plate_h: float = 17.0
 	var plate_x: float = -roundf(plate_w * 0.5)
 	var plate_y: float = -38.0

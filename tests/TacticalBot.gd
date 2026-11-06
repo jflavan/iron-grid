@@ -14,7 +14,8 @@ static var rng := RandomNumberGenerator.new()
 
 static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitContainer, map_def: MapDefinition) -> Dictionary:
 	var m: MechData = unit.mech_data
-	var reachable: Dictionary = grid_map.find_reachable_tiles(m, uc.build_occupied_map(unit))
+	var occ: Dictionary = uc.build_occupied_map(unit)
+	var reachable: Dictionary = grid_map.find_reachable_tiles(m, occ)
 	var foes: Array[MechUnit] = uc.get_faction_units(FOE)
 	var start_tile: GridTileData = grid_map.get_tile(m.grid_pos)
 	var targets := _objective_targets(grid_map, map_def)
@@ -64,7 +65,7 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 			var total_fuel: int = move_fuel + atk_fuel
 			if total_fuel > m.current_fuel:
 				continue
-			var form_ctx: Dictionary = uc.get_formation_context(dest_pos, from_pos, int(ME))
+			var form_ctx: Dictionary = UnitContainer.formation_context(occ, dest_pos, from_pos, int(ME))
 			var fc: Dictionary = SkirmishEngine.compute_forecast(m, tgt.mech_data, from_tile, dest_tile, form_ctx)
 			var dd: int = fc["est_dmg_to_def"]; var da: int = fc["est_dmg_to_atk"]
 			var atk_won: bool = bool(fc.get("attacker_won", dd >= da))

@@ -937,9 +937,21 @@ static func compute_forecast(
 	target_tile: GridTileData,
 	formation_context: Dictionary = {}
 ) -> Dictionary:
+	return forecast_shared(attacker, defender, from_tile, target_tile, formation_context).duplicate()
+
+## compute_forecast without the defensive copy: returns the cached dictionary itself, so the caller
+## must treat it as read-only. For hot read-only loops (AI scoring runs one per launch x target).
+static func forecast_shared(
+	attacker: MechData,
+	defender: MechData,
+	from_tile: GridTileData,
+	target_tile: GridTileData,
+	formation_context: Dictionary = {}
+) -> Dictionary:
 	var key: Array = _forecast_key(attacker, defender, from_tile, target_tile, formation_context)
-	if _forecast_cache.has(key):
-		return (_forecast_cache[key] as Dictionary).duplicate()
+	var cached: Dictionary = _forecast_cache.get(key, {})
+	if not cached.is_empty():
+		return cached
 	var sim_atk := attacker.duplicate_mech()
 	var sim_def := defender.duplicate_mech()
 	var res := resolve_skirmish(sim_atk, sim_def, from_tile, target_tile, false, true, formation_context)
@@ -974,7 +986,7 @@ static func compute_forecast(
 		"tactical_tags": res.tactical_tags.duplicate(),
 	}
 	_forecast_cache[key] = forecast
-	return forecast.duplicate()
+	return forecast
 
 ## Executes a complete turn-based battle resolution (used by forecasts, AI simulations, and tests).
 ## If `apply_to_units` is true, mutates `attacker` and `defender` Hull and Energy.

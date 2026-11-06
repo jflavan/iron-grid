@@ -20,6 +20,7 @@ const PROFILES := {
 	"pile_bunker":   {"kind": "ram",     "fire": 0.10, "travel": 0.40, "tail": 1.10},
 }
 const DEFAULT := "kwk_88"
+const C_CASING := Color("#d8a040")
 
 static func has_anim(card_id: String) -> bool:
 	return PROFILES.has(card_id)
@@ -105,7 +106,7 @@ static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String,
 	if t >= fire and t < fire + 0.8 and id == "kwk_88":
 		var k := (t - fire) / 0.8
 		var casing := stage.point(a, "hull") + Vector2((-18 - k * 22) * dir, -20 + k * k * 90 - k * 30)
-		stage.fx(func(ci): ci.draw_rect(Rect2(casing.round(), Vector2(3, 2) if int(k * 12) % 2 else Vector2(2, 3)), Color("#d8a040")))
+		stage.fx(func(ci): ci.draw_rect(Rect2(casing.round(), Vector2(3, 2) if int(k * 12) % 2 else Vector2(2, 3)), C_CASING))
 	if t >= fire and t < imp:
 		var k := (t - fire) / (imp - fire)
 		var pos := muzzle.lerp(target, k) + Vector2(0, -sin(k * PI) * float(p["arc"]))

@@ -10,12 +10,14 @@ const ADVANCE := 6
 const HEIGHT := 8
 
 static var _tex: Texture2D = null
+static var _attempted: bool = false
 static var _index: Dictionary = {}
 static var _ascii_table: PackedInt32Array = PackedInt32Array()
 
 static func _ensure() -> void:
-	if _tex != null:
+	if _attempted:
 		return
+	_attempted = true
 	_tex = load(FONT_PNG) as Texture2D
 	var meta = JSON.parse_string(FileAccess.get_file_as_string(FONT_JSON))
 	var chars: String = meta["chars"] if meta != null else ""
@@ -33,6 +35,49 @@ static func _ensure() -> void:
 			_ascii_table[code] = i
 			if code >= 65 and code <= 90:
 				_ascii_table[code + 32] = i
+
+static var _mesh_atlas: ImageTexture = null
+
+## The font atlas laid out for baking text into a textured mesh (CanvasMeshBuilder): rows 0-7 are
+## the glyphs, row 8 repeats row 7 (so filtering at the glyphs' bottom edge matches the clamped
+## original), row 9 is a transparent gap and rows 10-13 are solid white, which untextured geometry
+## samples. One texture keeps solid geometry and labels in a single draw call.
+static func mesh_atlas() -> Texture2D:
+	_ensure()
+	if _mesh_atlas == null and _tex != null:
+		var src := _tex.get_image()
+		if src.is_compressed():
+			src.decompress()
+		src.convert(Image.FORMAT_RGBA8)
+		var w: int = src.get_width()
+		var img := Image.create(w, HEIGHT + 6, false, Image.FORMAT_RGBA8)
+		img.blit_rect(src, Rect2i(0, 0, w, HEIGHT), Vector2i.ZERO)
+		img.blit_rect(src, Rect2i(0, HEIGHT - 1, w, 1), Vector2i(0, HEIGHT))
+		img.fill_rect(Rect2i(0, HEIGHT + 2, w, 4), Color.WHITE)
+		_mesh_atlas = ImageTexture.create_from_image(img)
+	return _mesh_atlas
+
+## UV inside mesh_atlas()'s white band: the corner of four white texels, so it samples pure white
+## under nearest or linear filtering.
+static func mesh_white_uv() -> Vector2:
+	return Vector2(0.5, float(HEIGHT + 4) / float(HEIGHT + 6))
+
+## Glyph quads of `text` for mesh_atlas(): [dest Rect2 relative to the text origin, UV Rect2],
+## laid out exactly like draw_text (one 6x8 cell per character, spaces skipped).
+static func mesh_glyphs(text: String) -> Array:
+	var atlas := mesh_atlas()
+	var out: Array = []
+	if atlas == null:
+		return out
+	var inv := Vector2(1.0 / float(atlas.get_width()), 1.0 / float(atlas.get_height()))
+	for i in text.length():
+		var code: int = text.unicode_at(i)
+		if code == 32:
+			continue
+		var gi: int = _ascii_table[code] if code < 256 else _index.get(text[i].to_upper(), 0)
+		out.append([Rect2(Vector2(i * ADVANCE, 0), Vector2(ADVANCE, HEIGHT)),
+			Rect2(Vector2(gi * ADVANCE, 0) * inv, Vector2(ADVANCE, HEIGHT) * inv)])
+	return out
 
 static func _glyph_index(ch: String) -> int:
 	_ensure()

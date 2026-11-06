@@ -66,6 +66,11 @@ var _persist_done: Dictionary = {}   # beat index -> true once its ability's las
 var _fx: Array[Callable] = []
 var _fast_forwarding: bool = false   # skip_to_next_command_or_end: no sounds, no stacked numbers
 var _backdrop: Texture2D
+var _upper_cache: Dictionary = {}     # source string -> to_upper() (menu/banner text is static per fight)
+var _tech_label_cache: Dictionary = {}  # ability_id -> "NAME [CATEGORY]" banner title
+var _wrap_src: String = ""            # result headline wrap cache (text + width)
+var _wrap_px: int = -1
+var _wrap_lines: PackedStringArray = PackedStringArray()
 
 # Interactive Command Menu State
 var menu_cursor: int = 0
@@ -90,6 +95,9 @@ func setup(
 	tech_cursor = 0
 	in_tech_submenu = false
 	numbers.clear()
+	_upper_cache.clear()
+	_tech_label_cache.clear()
+	_wrap_px = -1
 	_impact_done = false
 	_persist_done.clear()
 	hull_display = timeline.start_hull.duplicate()
@@ -116,6 +124,10 @@ func _make_mech(side: String, data: MechData, on_left: bool, lift: int) -> Dicti
 		# per-frame effect state (reset every frame)
 		"glitch": 0.0, "ghosts": [], "glow": Color(0, 0, 0, 0), "attach": {}, "bricks_glow": 0.0, "sheet_vis": "",
 	}
+	# Warm every texture this mech can show (sheets, white silhouette, variants, attachments) so no
+	# load() happens mid-animation.
+	MechSpriteBank.warm(m["sheet"])
+	SupportAnims.warm(m["faction"])
 	var feet := MechSpriteBank.anchor(m["sheet"], "feet", "idle0", m["mirrored"])
 	var fx_pos: float = FEET_X["left" if on_left else "right"]
 	m["base"] = Vector2(roundf(fx_pos - feet.x), roundf(GROUND_Y - feet.y + lift))
@@ -170,9 +182,12 @@ func advance(delta: float) -> void:
 	if result == null:
 		return
 	clock += delta
-	for n in numbers:
-		n["age"] += delta
-	numbers = numbers.filter(func(n): return n["age"] < 1.6)
+	var ni := numbers.size() - 1
+	while ni >= 0:
+		numbers[ni]["age"] += delta
+		if numbers[ni]["age"] >= 1.6:
+			numbers.remove_at(ni)
+		ni -= 1
 	if phase == "result":
 		queue_redraw()
 		return
@@ -511,6 +526,20 @@ static func short_callsign(s: String) -> String:
 	return s.substr(0, i) if i > 0 else s
 
 # ---------------------------------------------------------------- drawing
+func _up(src: String) -> String:
+	var u = _upper_cache.get(src)
+	if u == null:
+		u = src.to_upper()
+		_upper_cache[src] = u
+	return u
+
+func _wrapped_headline(text: String, px: int) -> PackedStringArray:
+	if px != _wrap_px or text != _wrap_src:
+		_wrap_px = px
+		_wrap_src = text
+		_wrap_lines = PixelFont.wrap(_up(text), px)
+	return _wrap_lines
+
 func _animate() -> void:
 	for m in mechs.values():
 		m["pose"] = ""
@@ -676,7 +705,7 @@ func _draw_mech(m: Dictionary) -> void:
 	if not m["dark"]:
 		var stacks: Array = MechSpriteBank.meta_for(sheet_of(m)).get("anchors", {}).get("stacks", [])
 		for i in stacks.size():
-			BattleFX.exhaust(self, point(m, "stacks/%d" % i), clock, i * 0.37 + (0.2 if m["side"] == "def" else 0.0), m["dir"])
+			BattleFX.exhaust(self, point(m, MechSpriteBank.STACK_NAMES[i] if i < MechSpriteBank.STACK_NAMES.size() else "stacks/%d" % i), clock, i * 0.37 + (0.2 if m["side"] == "def" else 0.0), m["dir"])
 	elif sink > 0.0:
 		BattleFX.exhaust(self, point(m, "hull") + Vector2(0, sink), clock * 0.7, 0.1, m["dir"])
 
@@ -764,7 +793,7 @@ func _draw_menu() -> void:
 				var spent := not ab.is_weapon() and coa_state.used_support_ids.has(ab.ability_id)
 				var affordable := coa_state.can_use(ab)
 				var col := C_NAME if affordable else C_DIM
-				var short_ab := ab.ability_name.to_upper()
+				var short_ab := _up(ab.ability_name)
 				if short_ab.length() > 24:
 					short_ab = short_ab.substr(0, 24)
 				var ry := _tech_row_y(i)
@@ -825,8 +854,12 @@ func _draw_banner() -> void:
 		var top_lines: Array[String] = []
 		if in_tech_submenu and tech_cursor >= 0 and tech_cursor < coa_data.abilities.size():
 			var ab: CombatAbility = coa_data.abilities[tech_cursor]
-			top_lines.append("%s [%s]" % [ab.ability_name.to_upper(), ab.category])
-			top_lines.append(ab.description.to_upper())
+			var tl = _tech_label_cache.get(ab.ability_id)
+			if tl == null:
+				tl = "%s [%s]" % [ab.ability_name.to_upper(), ab.category]
+				_tech_label_cache[ab.ability_id] = tl
+			top_lines.append(tl)
+			top_lines.append(_up(ab.description))
 		else:
 			var prompts := [
 				"STANDARD CANNON ATTACK (0 EN)",
@@ -845,10 +878,10 @@ func _draw_banner() -> void:
 		for i in top_lines.size():
 			PixelFont.draw_centered(self, top_lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_LABEL)
 	elif phase in ["support", "attack", "settle"] and not b.is_empty():
-		var text: String = String(b["ability_name"]).to_upper()
+		var text: String = _up(String(b["ability_name"]))
 		var lines := [text]
 		if phase == "settle" and String(b.get("status_text", "")) != "":
-			lines.append(String(b["status_text"]).to_upper())
+			lines.append(_up(String(b["status_text"])))
 		var w := 16
 		for l in lines:
 			w = maxi(w, PixelFont.text_width(l) + 16)
@@ -858,7 +891,7 @@ func _draw_banner() -> void:
 		for i in lines.size():
 			PixelFont.draw_centered(self, lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_CURSOR)
 	elif phase == "result":
-		var lines := PixelFont.wrap(timeline.headline.to_upper(), 300)
+		var lines := _wrapped_headline(timeline.headline, 300)
 		var r := Rect2(24, 44, 312, 20 + lines.size() * 10 + 12)
 		BattleFX.panel(self, r)
 		for i in lines.size():

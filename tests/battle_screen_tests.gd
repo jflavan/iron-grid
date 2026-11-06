@@ -40,6 +40,9 @@ func _ready() -> void:
 		"test_ai_prefers_flank_and_rear_attacks",
 		"test_player_and_ai_reface_after_movement",
 		"test_decoupled_movement_and_combat",
+		"test_rules_page_draws_on_open", "test_ai_launch_context_excludes_mover", "test_redeploy_cancels_auto_advance",
+		"test_dijkstra_matches_bellman_ford_on_large_map", "test_terrain_is_baked_into_few_draws",
+		"test_hud_state_changes_queue_redraw",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -1600,3 +1603,237 @@ func test_decoupled_movement_and_combat() -> void:
 
 	bf.queue_free()
 	await get_tree().process_frame
+
+# ---------------------------------------------------------------- scalability / performance review regressions
+## The menu redraws on change, not every frame: opening the rules page must still draw it.
+func test_rules_page_draws_on_open() -> void:
+	var menu := MainMenu.new()
+	add_child(menu)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var draws := [0]
+	menu.draw.connect(func(): draws[0] += 1)
+	menu._activate("rules")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check(menu.show_rules and draws[0] > 0, "opening the rules page draws it (draws=%d)" % draws[0])
+	draws[0] = 0
+	menu._activate("rules:3")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check(draws[0] > 0, "changing chapter redraws the rules page")
+	draws[0] = 0
+	for i in 6:
+		await get_tree().process_frame
+	_check(draws[0] == 0, "an idle rules page does not redraw every frame (draws=%d)" % draws[0])
+	menu.queue_free()
+	await get_tree().process_frame
+
+## The AI scores launches while still standing on its start tile; that tile must not count it as its
+## own adjacent ally. Checked through AIController itself: the forecast cache records the formation
+## context each launch was scored with.
+func test_ai_launch_context_excludes_mover() -> void:
+	var bf := await _spawn_iron_bridge()
+	var uc := bf.unit_container
+	var rote := _unit_by_callsign(bf, "ROTE-1")
+	var iron := _unit_by_callsign(bf, "IRON-1")
+	# Park every other walker on the far row so only these two matter.
+	var spot := 0
+	for u in uc.units:
+		if u != rote and u != iron:
+			u.mech_data.grid_pos = Vector2i(spot, 7)
+			spot += 1
+	rote.mech_data.has_moved = false
+	rote.mech_data.has_attacked = false
+	rote.mech_data.current_fuel = rote.mech_data.max_fuel
+	var faction := int(rote.mech_data.faction)
+	var gm0 := bf.grid_map
+	# Find a target / start / launch triple: start and launch both next to the target, launch reachable.
+	var target := Vector2i(-1, -1)
+	var start := Vector2i(-1, -1)
+	var launch := Vector2i(-1, -1)
+	for y in range(1, 6):
+		for x in range(1, 9):
+			if launch != Vector2i(-1, -1):
+				break
+			var t := Vector2i(x, y)
+			for sd in UnitContainer._DIRS:
+				var st: Vector2i = t + sd
+				if not gm0.is_valid_coords(st) or st.y >= 7 or launch != Vector2i(-1, -1):
+					continue
+				iron.mech_data.grid_pos = t
+				rote.mech_data.grid_pos = st
+				var reach := gm0.find_reachable_tiles(rote.mech_data, uc.build_occupied_map(rote))
+				for ld in UnitContainer._DIRS:
+					var l: Vector2i = t + ld
+					if l != st and l.y < 7 and reach.has(l) and not reach[l]["is_attack"]:
+						target = t
+						start = st
+						launch = l
+						break
+	_check(launch != Vector2i(-1, -1), "setup: found a launch tile next to the target other than the start tile")
+	iron.mech_data.grid_pos = target
+	rote.mech_data.grid_pos = start
+	var self_counted := uc.get_formation_context(target, launch, faction)   # rote still on its start tile
+	rote.mech_data.grid_pos = launch
+	var after_move := uc.get_formation_context(target, launch, faction)
+	rote.mech_data.grid_pos = start
+	_check(self_counted["atk_allies_adj"] == after_move["atk_allies_adj"] + 1, "setup: standing on the start tile would count as a crossfire ally")
+
+	SkirmishEngine.clear_forecast_cache()
+	AIController.choose_best_action(rote, bf.grid_map, uc, bf.current_map_def)
+	var gm := bf.grid_map
+	var key_ok := SkirmishEngine._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), after_move)
+	var key_bad := SkirmishEngine._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), self_counted)
+	_check(SkirmishEngine._forecast_cache.has(key_ok), "AI scored the launch with the post-move formation context")
+	_check(not SkirmishEngine._forecast_cache.has(key_bad), "AI did not count itself as its own adjacent ally")
+	bf.queue_free()
+	await get_tree().process_frame
+
+## Redeploy during the end-of-phase countdown must not let the old timer start the new run's AI phase.
+func test_redeploy_cancels_auto_advance() -> void:
+	var bf := await _spawn_iron_bridge()
+	bf._start_auto_advance_timer(0.05)
+	bf.start_mission(0)
+	await get_tree().create_timer(0.15).timeout
+	_check(GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE, "stale countdown did not start the AI phase after Redeploy")
+	bf.queue_free()
+	await get_tree().process_frame
+
+## Heap Dijkstra (movement ranges, strike plans) against a brute-force relaxation on a big random map.
+func test_dijkstra_matches_bellman_ford_on_large_map() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var md := MapDefinition.new()
+	md.width = 32
+	md.height = 28
+	var codes := ["P", "D", "R", "F", "C", "M"]
+	for y in md.height:
+		var t := PackedStringArray()
+		var e := PackedStringArray()
+		for x in md.width:
+			t.append(codes[rng.randi_range(0, codes.size() - 1)])
+			e.append(str(rng.randi_range(0, 4)))
+		md.terrain_codes.append(" ".join(t))
+		md.elevation_rows.append(" ".join(e))
+	var gm := IsoGridMap.new()
+	add_child(gm)
+	gm.load_from_definition(md)
+	var m := GlobalState.create_mech_instance("falke", MechData.Faction.PLAYER, "T", Vector2i(16, 14), "dj")
+	m.current_fuel = 60
+	var occ := {}
+	for i in 40:
+		var e := GlobalState.create_mech_instance("goliath", MechData.Faction.AI if i % 2 == 0 else MechData.Faction.PLAYER, "E%d" % i, Vector2i(rng.randi_range(0, 31), rng.randi_range(0, 27)), "dj%d" % i)
+		if e.grid_pos != m.grid_pos:
+			occ[e.grid_pos] = e
+	var t0 := Time.get_ticks_usec()
+	var reach := gm.find_reachable_tiles(m, occ)
+	var dt := Time.get_ticks_usec() - t0
+	# Brute force: relax every edge until nothing changes.
+	var best := {m.grid_pos: 0}
+	var changed := true
+	while changed:
+		changed = false
+		for c: Vector2i in best.keys():
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var n: Vector2i = c + d
+				if not gm.is_valid_coords(n) or (occ.has(n) and occ[n].faction != m.faction):
+					continue
+				var nc: int = best[c] + m.get_step_fuel_cost(gm.get_tile(c), gm.get_tile(n))
+				if nc <= m.current_fuel and (not best.has(n) or nc < best[n]):
+					best[n] = nc
+					changed = true
+	var bad := 0
+	for c: Vector2i in best.keys():
+		if c != m.grid_pos and occ.has(c):
+			continue
+		if not reach.has(c) or int(reach[c]["fuel_spent"]) != best[c]:
+			bad += 1
+			continue
+		var path: Array[Vector2i] = reach[c]["path"]
+		var sum := 0
+		for i in range(1, path.size()):
+			sum += m.get_step_fuel_cost(gm.get_tile(path[i - 1]), gm.get_tile(path[i]))
+		if sum != best[c]:
+			bad += 1
+	_check(bad == 0 and reach.size() > 100, "heap Dijkstra matches brute force on 32x28 (%d mismatches, %d tiles, %d us)" % [bad, reach.size(), dt])
+	# Same paths (so the same final step and facing) as the original linear-scan search.
+	var ref_from := _linear_scan_came_from(gm, m, occ, m.current_fuel)
+	var path_bad := 0
+	for c: Vector2i in reach.keys():
+		if reach[c]["is_attack"]:
+			continue # [start, enemy]: a strike, not a search path
+		var path: Array[Vector2i] = reach[c]["path"]
+		var cur: Vector2i = c
+		var ref_path: Array[Vector2i] = [c]
+		while cur != m.grid_pos:
+			cur = ref_from[cur]
+			ref_path.push_front(cur)
+		if path != ref_path:
+			path_bad += 1
+	_check(path_bad == 0, "heap Dijkstra reproduces the linear-scan paths exactly (%d differ)" % path_bad)
+	gm.queue_free()
+	await get_tree().process_frame
+
+## Static terrain (labels included) is baked into one textured mesh, not one canvas command per
+## polygon / label, and the labels really are in it.
+func test_terrain_is_baked_into_few_draws() -> void:
+	var bf := await _spawn_iron_bridge()
+	var gm := bf.grid_map
+	var labels := 0
+	for c: Vector2i in gm.tiles.keys():
+		var td: GridTileData = gm.tiles[c]
+		if td.elevation >= 2 and not td.is_objective:
+			labels += 1
+	var with_labels: int = gm._terrain_mesh.vertex_count()
+	_check(gm._terrain_mesh.op_count() == 1, "a 10x8 map's terrain is one draw call (got %d)" % gm._terrain_mesh.op_count())
+	gm.show_elev_labels = false
+	var without: int = gm._terrain_mesh.vertex_count()
+	gm.show_elev_labels = true
+	_check(labels > 0 and with_labels - without >= labels * 6, "elevation labels are baked into the mesh (%d labels, %d vertices)" % [labels, with_labels - without])
+	_check(PixelFont.mesh_atlas() != null and PixelFont.mesh_atlas().get_height() == PixelFont.HEIGHT + 6, "terrain mesh samples the font mesh atlas")
+	bf.queue_free()
+	await get_tree().process_frame
+
+## The HUD redraws on change: every piece of state Battlefield pushes into it must mark it dirty.
+func test_hud_state_changes_queue_redraw() -> void:
+	var bf := await _spawn_iron_bridge()
+	var ui := bf.ui_overlay
+	for prop in ["selected_mech", "hovered_mech", "hovered_tile", "hovered_reach_info", "current_forecast",
+			"strike_plan", "step_cost_mech", "map_def", "player_unit_count", "ai_unit_count", "player_obj_count",
+			"total_obj_count", "show_manual_modal", "show_game_over_modal"]:
+		ui._dirty = false
+		ui.set(prop, ui.get(prop))
+		_check(ui._dirty, "assigning UIOverlay.%s marks the HUD dirty" % prop)
+	ui._dirty = false
+	GlobalState.add_log("redraw probe")
+	_check(ui._dirty, "a new log line marks the HUD dirty")
+	bf.queue_free()
+	await get_tree().process_frame
+
+## Reference: the pre-heap Dijkstra (linear min scan, ties to the earliest-queued node), came_from only.
+func _linear_scan_came_from(gm: IsoGridMap, unit: MechData, occ: Dictionary, budget: int) -> Dictionary:
+	var start: Vector2i = unit.grid_pos
+	var best := {start: 0}
+	var from := {start: start}
+	var queue: Array[Vector2i] = [start]
+	while not queue.is_empty():
+		var bi := 0
+		for i in range(1, queue.size()):
+			if best[queue[i]] < best[queue[bi]]:
+				bi = i
+		var cur: Vector2i = queue[bi]
+		queue.remove_at(bi)
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = cur + d
+			if not gm.is_valid_coords(n) or (occ.has(n) and occ[n].faction != unit.faction):
+				continue
+			var nc: int = best[cur] + unit.get_step_fuel_cost(gm.get_tile(cur), gm.get_tile(n))
+			if nc > budget:
+				continue
+			if not best.has(n) or nc < best[n]:
+				best[n] = nc
+				from[n] = cur
+				if not queue.has(n):
+					queue.append(n)
+	return from

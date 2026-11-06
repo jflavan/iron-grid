@@ -65,28 +65,53 @@ static func manual_lines() -> Array[String]:
 var root_ctrl: Control
 var skirmish_modal: BattleScreen
 
-var selected_mech: MechData = null
-var hovered_mech: MechData = null
-var hovered_tile: GridTileData = null
-var hovered_reach_info: Dictionary = {}
-var current_forecast: Dictionary = {}
-var strike_plan: StrikePlan = null       # why the hovered enemy can't be struck (Battlefield.strike_plan_for)
-var step_cost_mech: MechData = null      # ready selected walker whose real step cost the sector panel shows
+# HUD state set by Battlefield. Every assignment queues a redraw: the HUD is drawn on change (plus
+# the animated portrait and banner), not every frame.
+var selected_mech: MechData = null:
+	set(v): selected_mech = v; _dirty = true
+var hovered_mech: MechData = null:
+	set(v): hovered_mech = v; _dirty = true
+var hovered_tile: GridTileData = null:
+	set(v): hovered_tile = v; _dirty = true
+var hovered_reach_info: Dictionary = {}:
+	set(v): hovered_reach_info = v; _dirty = true
+var current_forecast: Dictionary = {}:
+	set(v): current_forecast = v; _dirty = true
+var strike_plan: StrikePlan = null:       # why the hovered enemy can't be struck (Battlefield.strike_plan_for)
+	set(v): strike_plan = v; _dirty = true
+var step_cost_mech: MechData = null:      # ready selected walker whose real step cost the sector panel shows
+	set(v): step_cost_mech = v; _dirty = true
 
-var map_def: MapDefinition = null
-var player_unit_count: int = 0
-var ai_unit_count: int = 0
-var player_obj_count: int = 0
-var total_obj_count: int = 0
+var map_def: MapDefinition = null:
+	set(v): map_def = v; _dirty = true
+var player_unit_count: int = 0:
+	set(v): player_unit_count = v; _dirty = true
+var ai_unit_count: int = 0:
+	set(v): ai_unit_count = v; _dirty = true
+var player_obj_count: int = 0:
+	set(v): player_obj_count = v; _dirty = true
+var total_obj_count: int = 0:
+	set(v): total_obj_count = v; _dirty = true
 
-var show_manual_modal: bool = false
-var show_game_over_modal: bool = false
+var show_manual_modal: bool = false:
+	set(v): show_manual_modal = v; _dirty = true; _manual_cache = []   # re-read balance values on open
+var show_game_over_modal: bool = false:
+	set(v): show_game_over_modal = v; _dirty = true
 var _banner_timer: float = 0.0
 var _banner_text: String = ""
 var _anim_time: float = 0.0
 var _scale: int = 2
 var _hot := CrtHotspots.new()
 var _debrief_row: int = 0
+# Redraw scheduling: _dirty is set by HUD state changes, input and GlobalState signals; the idle
+# portrait redraws when its frame steps; the heartbeat picks up in-place MechData changes (fuel,
+# armor) that no setter sees.
+const REDRAW_HEARTBEAT := 0.25
+var _dirty: bool = true
+var _since_redraw: float = 0.0
+var _portraits: PackedStringArray = []   # chassis of the idle portraits in the last frame
+var _portrait_frame: int = -1
+var _manual_cache: Array = []            # [inner width, laid-out lines] for the H manual
 
 func _ready() -> void:
 	layer = 10
@@ -99,15 +124,30 @@ func _ready() -> void:
 
 	skirmish_modal = BattleScreen.new()
 	skirmish_modal.resolution_confirmed.connect(func(res): skirmish_modal_closed.emit(res))
+	skirmish_modal.visibility_changed.connect(_mark_dirty)
 	add_child(skirmish_modal)
+	GlobalState.phase_changed.connect(func(_p, _t): _mark_dirty())
+	GlobalState.log_added.connect(func(_e): _mark_dirty())
+
+func _mark_dirty() -> void:
+	_dirty = true
 
 func _process(delta: float) -> void:
 	if skirmish_modal != null and skirmish_modal.visible:
 		return
 	_anim_time += delta
-	if _banner_timer > 0.0:
+	_since_redraw += delta
+	var banner_live: bool = _banner_timer > 0.0   # true for the frame it expires too, to erase it
+	if banner_live:
 		_banner_timer = maxf(0.0, _banner_timer - delta)
-	root_ctrl.queue_redraw()
+	var frame: int = 0
+	for chassis in _portraits:
+		frame += MechSpriteBank.idle_frame(chassis, _anim_time * 1000.0)
+	if _dirty or banner_live or frame != _portrait_frame or _since_redraw >= REDRAW_HEARTBEAT:
+		_dirty = false
+		_since_redraw = 0.0
+		_portrait_frame = frame
+		root_ctrl.queue_redraw()
 
 func trigger_phase_banner(text: String) -> void:
 	_banner_text = text
@@ -141,8 +181,12 @@ func _can_next_mech() -> bool:
 func _input(event: InputEvent) -> void:
 	if skirmish_modal.visible:
 		return
+	if event is InputEventKey or event is InputEventMouseButton:
+		_dirty = true
 	if event is InputEventMouseMotion:
 		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
+		if id != _hot.hovered:
+			_dirty = true
 		_hot.hovered = id
 		if id.begins_with("debrief:"):
 			_debrief_row = int(id.substr(8))
@@ -224,6 +268,7 @@ func _on_root_draw() -> void:
 	var v := CrtUI.virtual_size(vp, _scale)
 	CrtUI.begin(root_ctrl, _scale)
 	_hot.clear()
+	_portraits.clear()
 
 	_draw_top_bar(v)
 
@@ -311,6 +356,7 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	var port := Rect2(x, y, w, cell.y + 8)
 	CrtUI.frame(root_ctrl, port)
 	CrtUI.mech(root_ctrl, m.chassis_id, int(m.faction), Rect2(x, y + 4, w, cell.y), not is_player, _anim_time * 1000.0, _scale)
+	_portraits.append(m.chassis_id)
 	y += port.size.y + 4
 	var status_txt := "ENTRENCHED +15% DEF" if m.is_entrenched else ("READY TO STRIKE" if (m.has_moved and not m.has_attacked) else ("ORDER COMPLETE" if m.is_order_complete() else "SYSTEMS READY"))
 	_t(status_txt, Vector2(x, y), CrtUI.C_LABEL if not m.is_order_complete() else CrtUI.C_LABEL_DIM)
@@ -510,16 +556,9 @@ func _draw_manual_modal(v: Vector2) -> void:
 	root_ctrl.draw_rect(Rect2(Vector2.ZERO, v), Color(0.0, 0.0, 0.0, 0.72))
 	var w := minf(v.x - 24, 680.0)
 	var inner := w - 20
-	var lines: Array = []   # [text, x offset, colour]
-	for l: String in manual_lines():
-		if l == "":
-			lines.append(["", 0, CrtUI.C_NUM])
-		elif l.begins_with("   - "):
-			var wrapped := CrtUI.wrap_lines(l.substr(5), inner - 12)
-			for k in wrapped.size():
-				lines.append([("- " if k == 0 else "  ") + wrapped[k], 0, CrtUI.C_NUM])
-		else:
-			lines.append([l, 0, CrtUI.C_NAME])
+	if _manual_cache.is_empty() or _manual_cache[0] != inner:
+		_manual_cache = [inner, _layout_manual(inner)]
+	var lines: Array = _manual_cache[1]
 	var h := 30 + lines.size() * CrtUI.LINE + 8
 	var r := Rect2(roundf((v.x - w) / 2.0), roundf((v.y - h) / 2.0), w, h)
 	CrtUI.panel(root_ctrl, r)
@@ -530,6 +569,20 @@ func _draw_manual_modal(v: Vector2) -> void:
 		if l[0] != "":
 			_t(l[0], Vector2(r.position.x + 10 + l[1], y), l[2])
 		y += CrtUI.LINE
+
+## Wraps the manual into [text, x offset, colour] rows for an `inner`-wide panel.
+func _layout_manual(inner: float) -> Array:
+	var lines: Array = []
+	for l: String in manual_lines():
+		if l == "":
+			lines.append(["", 0, CrtUI.C_NUM])
+		elif l.begins_with("   - "):
+			var wrapped := CrtUI.wrap_lines(l.substr(5), inner - 12)
+			for k in wrapped.size():
+				lines.append([("- " if k == 0 else "  ") + wrapped[k], 0, CrtUI.C_NUM])
+		else:
+			lines.append([l, 0, CrtUI.C_NAME])
+	return lines
 
 func _draw_game_over_modal(v: Vector2) -> void:
 	root_ctrl.draw_rect(Rect2(Vector2.ZERO, v), Color(0.0, 0.0, 0.0, 0.8))
