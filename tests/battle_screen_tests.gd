@@ -43,6 +43,7 @@ func _ready() -> void:
 		"test_rules_page_draws_on_open", "test_ai_launch_context_excludes_mover", "test_redeploy_cancels_auto_advance",
 		"test_dijkstra_matches_bellman_ford_on_large_map", "test_terrain_is_baked_into_few_draws",
 		"test_hud_state_changes_queue_redraw",
+		"test_wrecked_selection_is_cleared", "test_modal_swallows_commands", "test_victory_rules_evaluate", "test_catalogs_are_consistent",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -1837,3 +1838,84 @@ func _linear_scan_came_from(gm: IsoGridMap, unit: MechData, occ: Dictionary, bud
 				if not queue.has(n):
 					queue.append(n)
 	return from
+
+# ---------------------------------------------------------------- review fixes: modals, victory rules, catalogs
+## An attacker wrecked in the counter-attack must not stay selected (its node is freed this frame).
+func test_wrecked_selection_is_cleared() -> void:
+	var bf := await _spawn_iron_bridge()
+	var attacker := _unit_by_callsign(bf, "IRON-1")
+	var defender: MechUnit = null
+	for u in bf.unit_container.get_faction_units(MechData.Faction.AI):
+		defender = u
+		break
+	# A 1v1 for the order economy: every other Coalition walker has already used its order
+	for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
+		if u != attacker:
+			u.mech_data.has_moved = true
+			u.mech_data.has_attacked = true
+	bf._select_unit(attacker)
+	attacker.mech_data.has_moved = true
+	attacker.mech_data.has_attacked = true
+	attacker.mech_data.current_armor = 0   # wrecked by the counter-attack
+	bf._pending_attacker = attacker
+	bf._pending_defender = defender
+	GlobalState.set_phase(GlobalState.TurnPhase.RESOLUTION_PHASE)
+	bf._phase_before_resolution = GlobalState.TurnPhase.PLAYER_PHASE
+	bf._on_skirmish_modal_closed(SkirmishEngine.SkirmishResult.new())
+	_check(bf.selected_unit == null, "a wrecked attacker is no longer the selected unit")
+	_check(bf.ui_overlay.selected_mech == null, "the HUD stops showing the wrecked attacker")
+	_check(not bf._selected_is_valid(), "_selected_is_valid() is false without a selection")
+	bf._auto_advance_token += 1   # cancel the pending end-of-phase countdown
+	bf.queue_free()
+	await get_tree().process_frame
+
+## While the manual or the debrief is up, only its own controls respond.
+func test_modal_swallows_commands() -> void:
+	var bf := await _spawn_iron_bridge()
+	var ov := bf.ui_overlay
+	var fired: Array = []
+	ov.action_end_turn_requested.connect(func(): fired.append("end_turn"))
+	ov.action_center_camera_requested.connect(func(): fired.append("cam"))
+	ov.show_manual_modal = true
+	ov._activate("end_turn")
+	ov._activate("cam")
+	_check(fired.is_empty(), "commands do nothing while the manual is open (fired %s)" % [fired])
+	ov._activate("manual")
+	_check(not ov.show_manual_modal, "the manual's own control still closes it")
+	ov.show_game_over_modal = true
+	ov._activate("end_turn")
+	_check(fired.is_empty(), "commands do nothing while the debrief is open (fired %s)" % [fired])
+	ov.show_game_over_modal = false
+	ov._activate("block")
+	_check(fired.is_empty(), "a plain panel hotspot does nothing")
+	ov._activate("end_turn")
+	_check(fired == ["end_turn"], "with no modal the command fires (fired %s)" % [fired])
+	bf._auto_advance_token += 1
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_victory_rules_evaluate() -> void:
+	var m: MapDefinition = GlobalState.maps[0]
+	_check(VictoryRules.evaluate(m, null, 3, 3, 0, 3, 3, false).is_empty(), "mid-game with both sides alive is undecided")
+	_check(VictoryRules.evaluate(m, null, 3, 3, 1, 3, 1, true).is_empty(), "end of an early turn with a split objective is undecided")
+	var win := VictoryRules.evaluate(m, null, 2, 0, 0, 3, 2, false)
+	_check(win.get("winner", -1) == 0 and win.get("reason", "") == "All Kriegs-Syndikat Armored Walkers have been destroyed!", "wiping out the Syndicate wins (got %s)" % [win])
+	var loss := VictoryRules.evaluate(m, null, 0, 2, 0, 3, 2, false)
+	_check(loss.get("winner", -1) == 1 and loss.get("reason", "") == "All 8th Iron Division Walkers were lost in action.", "losing every walker loses (got %s)" % [loss])
+	var limit := VictoryRules.evaluate(m, null, 3, 3, 1, 3, m.turn_limit, true)
+	_check(limit.get("winner", -1) == 1, "a minority of bridgeheads at the turn limit loses (got %s)" % [limit])
+	var held := VictoryRules.evaluate(m, null, 3, 3, 3, 3, 2, true)
+	_check(held.get("winner", -1) == 0, "holding every bridgehead at turn end wins (got %s)" % [held])
+
+func test_catalogs_are_consistent() -> void:
+	_check(not GlobalState.ability_catalog.is_empty(), "ability catalog is filled")
+	_check(not GlobalState.chassis_catalog.is_empty(), "chassis catalog is filled")
+	_check(not GlobalState.maps.is_empty(), "map catalog is filled")
+	_check(GlobalState.chassis_catalog.size() == ChassisCatalog.ORDER.size(), "ChassisCatalog.ORDER lists every chassis")
+	for id: String in ChassisCatalog.ORDER:
+		_check(GlobalState.chassis_catalog.has(id), "chassis %s exists" % id)
+		if not GlobalState.chassis_catalog.has(id):
+			continue
+		var ch: MechData = GlobalState.chassis_catalog[id]
+		for ab: CombatAbility in ch.abilities:
+			_check(GlobalState.ability_catalog.has(ab.ability_id), "%s ability %s exists in the ability catalog" % [id, ab.ability_id])
