@@ -266,13 +266,13 @@ func test_persistent_effects_after_skip() -> void:
 	s1.start_session(sess1)
 	await get_tree().process_frame
 	s1._on_skip_pressed()
-	_check(s1.stage.mechs["atk"]["sheet"] == "donner_braced", "Spinne ends braced after Anchor Struts + skip")
+	_check(s1.stage.mechs["atk"].sheet == "donner_braced", "Spinne ends braced after Anchor Struts + skip")
 	s1.queue_free()
 
 	var s2 := _screen_for(_fight("goliath", "falke"))
 	await get_tree().process_frame
 	s2._on_skip_pressed()
-	_check(s2.stage.mechs["atk"]["slab"] == true, "Siegebreaker slab stays up after skip")
+	_check(s2.stage.mechs["atk"].slab == true, "Siegebreaker slab stays up after skip")
 	s2.queue_free()
 
 	var atk_m := GlobalState.create_mech_instance("moloch", MechData.Faction.PLAYER, "A", Vector2i(3, 2))
@@ -285,13 +285,13 @@ func test_persistent_effects_after_skip() -> void:
 	s3.start_session(sess3)
 	await get_tree().process_frame
 	s3._on_skip_pressed()
-	_check(s3.stage.mechs["atk"]["sheet"] == "moloch_spent", "Brenner bricks are spent after absorbing a hit")
+	_check(s3.stage.mechs["atk"].sheet == "moloch_spent", "Brenner bricks are spent after absorbing a hit")
 	s3.queue_free()
 
 	var s4 := _screen_for(_fight("goliath", "falke", 0, 5))
 	await get_tree().process_frame
 	s4._on_skip_pressed()
-	_check(s4.stage.mechs["def"]["dark"] == true, "destroyed defender is shown as a wreck")
+	_check(s4.stage.mechs["def"].dark == true, "destroyed defender is shown as a wreck")
 	s4.queue_free()
 
 func test_pairings_play_to_result() -> void:
@@ -310,7 +310,7 @@ func test_pairings_play_to_result() -> void:
 	Engine.time_scale = 1.0
 
 func test_attachment_textures_cached() -> void:
-	var m := {"faction": 0}
+	var m := MechView.new()
 	for att in ["slab", "mast", "rangefinder"]:
 		_check(SupportAnims._attach_tex(att, m) != null, "%s attachment texture loads" % att)
 	_check(SupportAnims._attach_cache.size() >= 3, "attachment textures are retained across frames")
@@ -351,12 +351,12 @@ func test_support_run_is_pure() -> void:
 	await get_tree().process_frame
 	var st := screen.stage
 	for ab_id in ["anchor_strut", "ferro_bulkhead", "ablative_shield"]:
-		var a: Dictionary = st.mechs["atk"]
-		var d: Dictionary = st.mechs["def"]
-		var before := [a["sheet"], a["slab"], a["armed"]]
+		var a: MechView = st.mechs["atk"]
+		var d: MechView = st.mechs["def"]
+		var before := [a.sheet, a.slab, a.armed]
 		for t in [0.2, 0.5, 0.9]:
 			SupportAnims.run(st, a, d, ab_id, t)
-		_check([a["sheet"], a["slab"], a["armed"]] == before, "%s animation does not mutate lasting state" % ab_id)
+		_check([a.sheet, a.slab, a.armed] == before, "%s animation does not mutate lasting state" % ab_id)
 	screen.queue_free()
 
 # ---------------------------------------------------------------- shared CRT menu style (main menu / HUD)
@@ -669,24 +669,24 @@ func test_miss_plays_no_impact() -> void:
 	await get_tree().process_frame
 	var st := screen.stage
 	for id in WeaponAnims.PROFILES:
-		var a: Dictionary = st.mechs["atk"]
-		var d: Dictionary = st.mechs["def"]
+		var a: MechView = st.mechs["atk"]
+		var d: MechView = st.mechs["def"]
 		var imp := WeaponAnims.impact_time(id)
 		var dur := WeaponAnims.duration(id)
 		var reacted := false
 		for t in [imp + 0.02, imp + 0.2, (imp + dur) * 0.5, dur - 0.05]:
-			d["pose"] = ""
-			d["white"] = false
-			d["offset"] = Vector2.ZERO
+			d.pose = ""
+			d.white = false
+			d.offset = Vector2.ZERO
 			WeaponAnims.run(st, a, d, id, t, false)
-			if d["pose"] != "" or d["white"] or d["offset"] != Vector2.ZERO:
+			if d.pose != "" or d.white or d.offset != Vector2.ZERO:
 				reacted = true
 		_check(not reacted, "%s MISS leaves the target untouched after impact time" % id)
-		d["pose"] = ""
-		d["white"] = false
-		d["offset"] = Vector2.ZERO
+		d.pose = ""
+		d.white = false
+		d.offset = Vector2.ZERO
 		WeaponAnims.run(st, a, d, id, imp + 0.02, true)
-		_check(d["pose"] != "" or d["white"] or d["offset"] != Vector2.ZERO, "%s hit still reacts on impact" % id)
+		_check(d.pose != "" or d.white or d.offset != Vector2.ZERO, "%s hit still reacts on impact" % id)
 	screen.queue_free()
 
 func test_seed_counter_resets_per_mission() -> void:
