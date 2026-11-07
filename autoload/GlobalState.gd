@@ -94,5 +94,4 @@ func create_mech_instance(chassis_id: String, faction: MechData.Faction, callsig
 	inst.faction = faction
 	inst.callsign = callsign
 	inst.grid_pos = pos
-	inst.prev_grid_pos = pos
 	return inst

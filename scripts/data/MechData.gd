@@ -26,7 +26,6 @@ var chassis_class: String = "Medium Assault Walker"
 var faction: Faction = Faction.PLAYER
 
 var grid_pos: Vector2i = Vector2i.ZERO
-var prev_grid_pos: Vector2i = Vector2i.ZERO
 var facing: Vector2i = Vector2i(1, 0) # Cardinal isometric facing: (1,0)=SE, (0,1)=SW, (-1,0)=NW, (0,-1)=NE
 
 # Core RPG Combat & Engineering Ratings
@@ -92,7 +91,6 @@ func _init(
 	chassis_class = p_class
 	faction = p_faction
 	grid_pos = p_pos
-	prev_grid_pos = p_pos
 	max_armor = p_max_armor
 	current_armor = p_max_armor
 	armor_rating = p_armor_rating

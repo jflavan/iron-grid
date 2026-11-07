@@ -16,6 +16,10 @@ var current_map_def: MapDefinition
 # cursor back and forth across enemies runs each search once. Cleared with the selection.
 var _strike_plans: Dictionary = {}
 const STRIKE_PLAN_CACHE_MAX := 64
+## Uncapped movement-cost field of the selected walker (TerrainGrid.strike_cost_field), valid for one
+## (walker, tile, occupancy epoch); every strike plan against any enemy then costs a few lookups.
+var _strike_field: Dictionary = {}
+var _strike_field_key: Array = []
 var selected_unit: MechUnit = null
 var _is_animating_move: bool = false:
 	set(v):
@@ -80,6 +84,12 @@ func start_mission(map_idx: int) -> void:
 
 	grid_map.load_from_definition(current_map_def)
 	unit_container.spawn_units_for_map(current_map_def, grid_map)
+	var chassis_ids: Array = []
+	for sp in current_map_def.spawns:
+		var cid := str(sp.get("chassis", "vanguard"))
+		if not chassis_ids.has(cid):
+			chassis_ids.append(cid)
+	BattleStage.warm_assets(chassis_ids, BattleLayout.BACKDROP_BY_TERRAIN.keys())
 
 	_update_all_objective_ownership()
 	center_camera_on_map()
@@ -220,6 +230,8 @@ func _clear_hover_readouts() -> void:
 ## (or there is no selection), so neither applies any more.
 func _clear_strike_readout() -> void:
 	_strike_plans.clear()
+	_strike_field = {}
+	_strike_field_key = []
 	ui_overlay.strike_plan = null
 	ui_overlay.step_cost_mech = null
 
@@ -283,7 +295,12 @@ func strike_plan_for(coords: Vector2i) -> StrikePlan:
 		return cached
 	if _strike_plans.size() >= STRIKE_PLAN_CACHE_MAX:
 		_strike_plans.clear()
-	var plan := grid_map.compute_strike_plan(m, coords, unit_container.build_occupied_map(selected_unit))
+	var occ := unit_container.build_occupied_map(selected_unit)
+	var field_key := [m, m.grid_pos, unit_container.occupancy_epoch]
+	if field_key != _strike_field_key:
+		_strike_field = grid_map.strike_cost_field(m, occ)
+		_strike_field_key = field_key
+	var plan := grid_map.compute_strike_plan(m, coords, occ, _strike_field)
 	_strike_plans[key] = plan
 	return plan
 
@@ -345,7 +362,6 @@ func _execute_unit_attack(attacker: MechUnit, defender: MechUnit, fuel_spent: in
 	var atk_coords: Vector2i = m_data.grid_pos
 	var def_coords: Vector2i = defender.mech_data.grid_pos
 
-	m_data.prev_grid_pos = atk_coords
 	if def_coords != atk_coords:
 		m_data.set_facing(def_coords - atk_coords)
 	m_data.current_fuel = maxi(0, m_data.current_fuel - fuel_spent)
@@ -378,11 +394,11 @@ func _execute_unit_movement(unit: MechUnit, target_coords: Vector2i, path: Array
 	if screen_pts.size() < 2:
 		screen_pts = [unit.position, grid_map.grid_to_screen(target_coords, true)]
 
-	m_data.prev_grid_pos = from_coords
 	if target_coords != from_coords:
 		m_data.facing = target_coords - from_coords
 	m_data.current_fuel = maxi(0, m_data.current_fuel - fuel_spent)
 	m_data.grid_pos = target_coords
+	unit_container.note_unit_moved()
 	m_data.has_moved = true
 	m_data.is_entrenched = false
 
