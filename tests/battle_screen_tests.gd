@@ -1946,3 +1946,26 @@ func test_screen_to_grid_round_trips() -> void:
 				bad.append([mi, c, got])
 		gm.free()
 	_check(bad.is_empty(), "screen_to_grid(grid_to_screen(c)) == c on every shipped map (%d bad, first %s)" % [bad.size(), bad.slice(0, 1)])
+
+func test_overlay_hover_does_not_rebuild_base_list() -> void:
+	var bf := await _spawn_iron_bridge()
+	var gm := bf.grid_map
+	await get_tree().process_frame
+	var occ: Dictionary = {}
+	var u := _unit("vanguard", MechData.Faction.PLAYER, Vector2i(2, 3), "o")
+	gm.compute_reachable_tiles(u, occ)
+	gm.queue_redraw()
+	await get_tree().process_frame
+	var keys_before: PackedInt32Array = gm._base_keys
+	var sorted_ok := true
+	for i in range(1, keys_before.size()):
+		sorted_ok = sorted_ok and keys_before[i - 1] < keys_before[i]
+	_check(sorted_ok and keys_before.size() >= gm.reachable_info.size(), "base overlay keys are sorted, unique and cover the reachable set")
+	for c in [Vector2i(0, 0), Vector2i(7, 5), Vector2i(2, 3), Vector2i(-1, -1)]:
+		gm.hovered_coords = c
+		gm.queue_redraw()
+		await get_tree().process_frame
+		_check(not gm._base_dirty and gm._base_keys == keys_before, "hovering %s leaves the cached base list alone" % [c])
+		_check(gm._extra_keys.size() <= 2, "at most two extra overlay keys (got %d)" % gm._extra_keys.size())
+	bf.queue_free()
+	await get_tree().process_frame

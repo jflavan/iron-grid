@@ -41,6 +41,7 @@ var selected_coords: Vector2i = Vector2i(-1, -1):
 var reachable_info: Dictionary = {}:
 	set(v):
 		reachable_info = v
+		_base_dirty = true
 		_overlay_dirty = true
 		_path_dirty = true
 var current_path_preview: Array[Vector2i] = []:
@@ -62,10 +63,18 @@ var _tile_top: Dictionary = {} # Vector2i -> top-diamond centre (grid_to_screen 
 var _terrain_mesh: CanvasMeshBuilder = null
 # Tiles with per-frame ambient animation or badges (rivers, cities, objectives), as iso sort keys.
 var _ambient_keys := PackedInt32Array()
-# Every tile the dynamic overlay draws this frame, decoded in iso back-to-front order. Rebuilt only
-# when the hover, selection or reachable set changes, so a frame walks the active tiles, not the map.
-var _overlay_coords: Array[Vector2i] = []
+# The sorted, de-duplicated iso keys of the ambient + reachable tiles and their decoded coords. Rebuilt
+# only when the reachable set or the map changes (_base_dirty); a hover or selection change only
+# re-derives the few extra keys below, so moving the mouse never re-sorts the whole list.
+var _base_keys := PackedInt32Array()
+var _base_coords: Array[Vector2i] = []
+var _base_dirty: bool = true
+# The (at most two) selected / hovered tiles that are not already in the base list, ascending.
+var _extra_keys: Array[int] = []
 var _overlay_dirty: bool = true
+# Canvas transform and viewport size the overlay was last culled against.
+var _view_xform := Transform2D()
+var _view_size := Vector2.ZERO
 # Path preview polyline + fuel tag, rebuilt only when the preview or reachable set changes.
 var _path_dirty: bool = true
 var _path_pts := PackedVector2Array()
@@ -93,6 +102,11 @@ func _process(delta: float) -> void:
 		return
 	_anim_time += delta
 	_since_redraw += delta
+	# The overlay only records tiles inside the view, so a pan, zoom or resize re-records it.
+	var xf: Transform2D = get_global_transform_with_canvas()
+	var vs: Vector2 = get_viewport_rect().size
+	if xf != _view_xform or vs != _view_size:
+		queue_redraw()
 	if _since_redraw < 1.0 / AMBIENT_FPS:
 		return
 	if not reachable_info.is_empty() or not current_path_preview.is_empty() or hovered_coords != Vector2i(-1, -1) or selected_coords != Vector2i(-1, -1):
@@ -116,6 +130,7 @@ func load_from_definition(map_def: MapDefinition) -> void:
 		if td.is_objective or td.terrain_type == GridTileData.TerrainType.RIVER or td.terrain_type == GridTileData.TerrainType.CITY:
 			_ambient_keys.append(_iso_key(c))
 	_ambient_keys.sort()
+	_base_dirty = true
 	_overlay_dirty = true
 
 	_rebuild_terrain_mesh()
@@ -251,11 +266,27 @@ func _on_terrain_draw() -> void:
 func _draw() -> void:
 	var pulse: float = 0.5 + 0.5 * sin(_anim_time * 4.5)
 
-	# Dynamic overlay on the active tiles only, in isometric back-to-front order (x + y ascending)
+	# Dynamic overlay on the active tiles only, in isometric back-to-front order (x + y ascending),
+	# skipping tiles outside the view.
+	if _base_dirty:
+		_rebuild_base()
 	if _overlay_dirty:
-		_rebuild_overlay_coords()
-	for coords in _overlay_coords:
-		_draw_dynamic_tile(coords, tiles[coords], pulse)
+		_rebuild_extras()
+	_view_xform = get_global_transform_with_canvas()
+	_view_size = get_viewport_rect().size
+	var view: Rect2 = (_view_xform.affine_inverse() * get_viewport_rect()).grow(maxf(TILE_W, TILE_H * 2.0))
+	var inset_poly: PackedVector2Array = _inset_diamond(4.0, false)
+	var inset_loop: PackedVector2Array = _inset_diamond(4.0, true)
+	var ei: int = 0
+	for i in _base_coords.size():
+		var k: int = _base_keys[i]
+		while ei < _extra_keys.size() and _extra_keys[ei] < k:
+			_draw_overlay_at(_decode_key(_extra_keys[ei]), view, pulse, inset_poly, inset_loop)
+			ei += 1
+		_draw_overlay_at(_base_coords[i], view, pulse, inset_poly, inset_loop)
+	while ei < _extra_keys.size():
+		_draw_overlay_at(_decode_key(_extra_keys[ei]), view, pulse, inset_poly, inset_loop)
+		ei += 1
 
 	# Draw movement path preview arrow & fuel waypoints on top
 	if _path_dirty:
@@ -275,26 +306,41 @@ func _draw() -> void:
 		draw_rect(tag_rect, line_col, false, 1.2)
 		PixelFont.draw_text(self, _path_tag, (dest_pos + Vector2(6, 3)).round(), line_col)
 
-## Merges the ambient tiles with the reachable / selected / hovered tiles into one iso-ordered list.
-func _rebuild_overlay_coords() -> void:
-	_overlay_dirty = false
+func _decode_key(k: int) -> Vector2i:
+	var x: int = k % grid_width
+	return Vector2i(x, k / grid_width - x)
+
+## Sorted ambient + reachable tiles (the part of the overlay that does not change on hover).
+func _rebuild_base() -> void:
+	_base_dirty = false
 	var keys := _ambient_keys.duplicate()
 	for c: Vector2i in reachable_info.keys():
 		if tiles.has(c):
 			keys.append(_iso_key(c))
-	for c in [selected_coords, hovered_coords]:
-		if tiles.has(c):
-			keys.append(_iso_key(c))
 	keys.sort()
-	_overlay_coords.clear()
+	_base_keys = PackedInt32Array()
+	_base_coords.clear()
 	var last: int = -1
 	for k in keys:
 		if k == last:
 			continue
 		last = k
-		var s: int = k / grid_width
-		var x: int = k % grid_width
-		_overlay_coords.append(Vector2i(x, s - x))
+		_base_keys.append(k)
+		_base_coords.append(_decode_key(k))
+
+## The selected / hovered tiles missing from the base list: at most two keys, merged while drawing.
+func _rebuild_extras() -> void:
+	_overlay_dirty = false
+	_extra_keys.clear()
+	for c in [selected_coords, hovered_coords]:
+		if not tiles.has(c):
+			continue
+		var k: int = _iso_key(c)
+		var at: int = _base_keys.bsearch(k)
+		if (at < _base_keys.size() and _base_keys[at] == k) or _extra_keys.has(k):
+			continue
+		_extra_keys.append(k)
+	_extra_keys.sort()
 
 func _rebuild_path_preview() -> void:
 	_path_dirty = false
@@ -357,9 +403,13 @@ func _draw_static_tile(ci: CanvasMeshBuilder, coords: Vector2i, td: GridTileData
 		var ew: int = PixelFont.text_width(elev_str)
 		ci.add_text(elev_str, (top_center + Vector2(-roundf(float(ew) * 0.5), 18)).round(), Color(0.85, 0.86, 0.78, 0.65))
 
-func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, pulse: float) -> void:
+func _draw_overlay_at(coords: Vector2i, view: Rect2, pulse: float, inner_poly: PackedVector2Array, inner_loop: PackedVector2Array) -> void:
 	var top_center: Vector2 = _tile_top[coords]
+	if not view.has_point(top_center):
+		return
+	_draw_dynamic_tile(coords, tiles[coords], top_center, pulse, inner_poly, inner_loop)
 
+func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, top_center: Vector2, pulse: float, inner_poly: PackedVector2Array, inner_loop: PackedVector2Array) -> void:
 	# River animated ripples & city pulsating bunker slits
 	if td.terrain_type == GridTileData.TerrainType.RIVER:
 		var wave_offset: float = sin(_anim_time * 2.5 + float(td.coords.x + td.coords.y)) * 4.0
@@ -374,8 +424,6 @@ func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, pulse: float) -> voi
 	# Reachable Fuel / Attack Target Highlights
 	if reachable_info.has(coords) and coords != selected_coords:
 		var info: Dictionary = reachable_info[coords]
-		var inner_poly: PackedVector2Array = _inset_diamond(4.0, false)
-		var inner_loop: PackedVector2Array = _inset_diamond(4.0, true)
 		draw_set_transform(top_center)
 		if info["is_attack"]:
 			var atk_fill := Color(0.95, 0.22, 0.15, 0.28 + 0.18 * pulse)

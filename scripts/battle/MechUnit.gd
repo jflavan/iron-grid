@@ -25,6 +25,8 @@ func setup(data: MechData, screen_pos: Vector2) -> void:
 	mech_data = data
 	position = screen_pos
 	_anim_time = randf() * 10.0
+	# Spread the walkers' 30 Hz redraws over 8 phases so a big army doesn't all re-record in one frame.
+	_since_redraw = float(get_index() % 8) / 8.0 / AMBIENT_FPS
 	_plate_name = CrtUI.sanitize(mech_data.callsign.split(" ")[0])
 	_plate_w = maxf(48.0, float(PixelFont.text_width(_plate_name) + 14))
 	queue_redraw()

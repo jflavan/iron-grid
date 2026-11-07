@@ -6,6 +6,14 @@ extends Node2D
 
 var units: Array[MechUnit] = []
 
+## Bumped whenever the set of occupied tiles may have changed (spawn, removal, note_unit_moved()), so
+## a caller can cache build_occupied_map() / anything derived from it and compare epochs.
+var occupancy_epoch: int = 0
+
+## Call after any walker's grid_pos changes (the container cannot see mech_data moves itself).
+func note_unit_moved() -> void:
+	occupancy_epoch += 1
+
 func _ready() -> void:
 	y_sort_enabled = true
 
@@ -14,6 +22,7 @@ func clear_units() -> void:
 		if is_instance_valid(u):
 			u.queue_free()
 	units.clear()
+	occupancy_epoch += 1
 
 func spawn_units_for_map(map_def: MapDefinition, grid_map: IsoGridMap) -> void:
 	clear_units()
@@ -32,6 +41,7 @@ func spawn_units_for_map(map_def: MapDefinition, grid_map: IsoGridMap) -> void:
 		add_child(m_node)
 		m_node.setup(m_data, grid_map.grid_to_screen(pos, true))
 		units.append(m_node)
+		occupancy_epoch += 1
 
 func get_unit_at(coords: Vector2i, exclude_unit: MechUnit = null) -> MechUnit:
 	for u in units:
@@ -62,6 +72,7 @@ func remove_destroyed_unit(u: MechUnit) -> void:
 	if u == null:
 		return
 	units.erase(u)
+	occupancy_epoch += 1
 	if is_instance_valid(u):
 		_spawn_explosion_effect(u.position)
 		u.queue_free()
@@ -94,8 +105,8 @@ func _spawn_explosion_effect(screen_pos: Vector2) -> void:
 ## for an engagement where attacker launches from `from_pos` into `target_pos`.
 ## `occupied` (Vector2i -> MechData, as build_occupied_map returns) lets a caller that already holds
 ## an occupancy map skip rebuilding it; each neighbour is then a single lookup.
-func get_formation_context(target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int, occupied: Dictionary = {}) -> Dictionary:
-	var occ: Dictionary = occupied if not occupied.is_empty() else build_occupied_map()
+func get_formation_context(target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int, occupied: Variant = null) -> Dictionary:
+	var occ: Dictionary = occupied if occupied != null else build_occupied_map()
 	return formation_context(occ, target_pos, from_pos, attacker_faction)
 
 static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int) -> Dictionary:
