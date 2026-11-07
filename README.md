@@ -153,8 +153,8 @@ Stats are read from `autoload/GlobalState.gd`; `EN (+n)` is the reactor pool and
 | **`Tab` / `Space`** (battlefield) | Select next ready player walker |
 | **`R`** (battlefield) | Wait, Entrench (`+15% DEF`), & Refuel (`+5 Fuel`, `+4 EN`) selected walker |
 | **`E`** | End Player Command Phase |
-| **`C`** | Reset & center camera on battlefield |
-| **`H`** | Toggle Tactical Field Manual & Terrain Chart |
+| **`C`** | Reset & center camera on battlefield (ignored while the Syndicate AI phase is panning) |
+| **`H`** | Toggle Tactical Field Manual & Terrain Chart (closes automatically at mission end) |
 | **`R`** (Command HQ) | Open the **Rules of Engagement** page: 7 chapters on winning, fuel, terrain & high ground, the clash, its aftermath, chassis roles and field tips. `Up` / `Down` / `1`–`7` pick a chapter, `Esc` returns |
 | **`Up` / `Down` / Mouse Hover** | Battle screen: highlight `ATTACK` / `TECH` / `DEFEND` / `RETREAT` |
 | **`Space` / `Enter` / Left Click** | Battle screen: confirm command or confirm battle result |
@@ -174,7 +174,7 @@ iron-grid/
 ├── screenshot_rules.png            # Rules of Engagement page screenshot
 ├── screenshot_gameplay.png         # Tactical isometric battlefield screenshot
 ├── autoload/
-│   ├── GlobalState.gd              # Global turn/phase state, ability/mech/map catalogs, combat log
+│   ├── GlobalState.gd              # Turn/phase state, combat log, battle seed; catalogs filled from scripts/data builders
 │   └── SoundManager.gd             # Procedural retro/dieselpunk WAV audio synthesizer
 ├── assets/battle/                  # Generated pixel art (do not hand-edit; see Battle Art Pipeline)
 │   ├── mechs/                      # <chassis>[_variant]_<faction>.png pose sheets + <chassis>.json anchors
@@ -186,26 +186,38 @@ iron-grid/
 │   └── ui_snapshot/                # snapshot.gd: renders 1440x900 screenshots of any scene/state
 ├── scenes/
 │   ├── MainMenu.tscn               # Command HQ briefing console, 3-map selector, Mech Hangar Codex & Rules of Engagement
-│   ├── Battlefield.tscn            # Root battle scene (GridMap, UnitContainer, Camera2D, UIOverlay)
+│   ├── Battlefield.tscn            # Root battle scene (GridMap, UnitContainer, BattleCamera, UIOverlay)
 │   └── dev/BattlePreview.tscn      # Dev-only battle screen preview (every chassis, ability, terrain)
 └── scripts/
     ├── data/
+    │   ├── AbilityCatalog.gd       # Builds the ability catalog (weapons, armor & tactical TECH)
+    │   ├── ChassisCatalog.gd       # Builds the six chassis templates; ORDER is the canonical chassis list
+    │   ├── MapCatalog.gd           # Builds the three shipped MapDefinitions
+    │   ├── TerrainDefs.gd          # One table per terrain: codes, name, fuel, modifiers, colours
     │   ├── CombatAbility.gd        # Turn-based RPG ability struct (EN cost, power, accuracy, effects)
-    │   ├── GridTileData.gd         # Terrain type, elevation, fuel cost & combat modifier struct
-    │   ├── MapDefinition.gd        # Arena layout, strategy mode, objectives & unit spawns
+    │   ├── GridTileData.gd         # Terrain type & elevation; getters read TerrainDefs
+    │   ├── MapDefinition.gd        # Arena layout, strategy mode, objectives & spawns; validate() at load
     │   └── MechData.gd             # Core walker struct (hull, energy, firepower, armor, speed, abilities)
     ├── battle/
-    │   ├── Battlefield.gd          # Turn flow controller (Player -> Combat Encounter -> AI)
-    │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer, heap Dijkstra fuel pathfinder & strike plans
+    │   ├── Battlefield.gd          # Turn flow controller (Player -> Combat Encounter -> AI); wires the scene
+    │   ├── BattleCamera.gd         # Pan, zoom, drag and focus for the battlefield camera
+    │   ├── Rules.gd                # Shipped rule values (entrench, patch, upkeep) & the upkeep/WAIT arithmetic
+    │   ├── VictoryRules.gd         # Pure win/loss evaluation per strategy mode
+    │   ├── BalanceProbe.gd         # Test-only rule overrides & per-skirmish recording (tests/balance.gd)
+    │   ├── TerrainGrid.gd          # Node-free grid: tiles, coords, heap Dijkstra, movement range, strike plans
+    │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer & overlay; delegates logic to TerrainGrid
     │   ├── CanvasMeshBuilder.gd    # Bakes static 2D drawing (terrain + labels) into vertex-coloured meshes
     │   ├── StrikePlan.gd           # Why an enemy can't be struck: fuel needed, breakdown & checked advice
-    │   ├── UnitContainer.gd        # Y-sorted mech manager, collision checks & knockback logic
-    │   ├── MechUnit.gd             # Procedural multi-part isometric mech renderer & animator
+    │   ├── UnitContainer.gd        # Y-sorted mech manager, occupancy map & epoch, formation context
+    │   ├── MechUnit.gd             # Isometric walker node: animation, redraw timing, move tweens
+    │   ├── MechSilhouette.gd       # Procedural multi-part walker drawing shared by map, HUD, hangar & showdown
     │   ├── SkirmishEngine.gd       # Final Fantasy turn-based battle session & tactical AI resolver
+    │   ├── SkirmishForecast.gd     # Deterministic forecast + two-generation cache for AI and HUD
     │   └── AIController.gd         # Utility-based tactical AI decision engine
     ├── battle_screen/
     │   ├── BattleScreen.gd         # FF-style resolution screen (SubViewport 360x225, scaled 4x)
     │   ├── BattleStage.gd          # Phase machine + interactive command menu + HUD + animations
+    │   ├── MechView.gd             # Per-walker presentation state (pose, offset, flashes, attachments)
     │   ├── BattleTimeline.gd       # TurnStep -> presentation beats (weapon, support, defend, retreat)
     │   ├── WeaponAnims.gd          # Per-weapon attack animations
     │   ├── SupportAnims.gd         # Armor/tactical effects, defend/retreat poses, attachments
@@ -216,18 +228,20 @@ iron-grid/
     │   └── BattlePreview.gd        # Dev preview controller
     └── ui/
         ├── CrtUI.gd                # Scanline CRT UI design system, integer pixel scaling, PixelFont & panels
+        ├── CrtScreen.gd            # Base Control for CRT screens: hotspots, dirty flag, pixel scale
         ├── CrtHotspots.gd          # Mouse hover and hit-testing manager for CRT virtual coordinates
         ├── MainMenu.gd             # War-room menu, interactive Mech Hangar Codex & Rules of Engagement page
         ├── RulesContent.gd         # Rules of Engagement chapter text, built from live game data
-        └── UIOverlay.gd            # In-game CRT telemetry HUD, terrain inspector, forecast & OUT OF REACH box
+        └── UIOverlay.gd            # In-game CRT telemetry HUD, modals, terrain inspector, forecast & OUT OF REACH box
 └── tests/
     ├── Playtest.tscn               # Headless automated playtest entry scene
     ├── playtest.gd                 # Rule checks + full-mission playthroughs with per-frame invariants
     ├── BattleScreenTests.tscn      # Battle screen, strike plan & rules page unit tests
     ├── run_battle_tests.sh         # Headless runner for those tests (fails on any SCRIPT ERROR too)
+    ├── run_all.sh                  # Battle tests + Playtest (+ ScaleBench with SCALE=1); non-zero on any failure
     ├── Benchmark.tscn              # Hardware render frame time budget benchmark suite
     ├── benchmark.gd                # Benchmark measuring P50/P95/max frame times & draw calls against 16.6ms budget
-    ├── ScaleBench.tscn             # Headless scalability benchmark (synthetic 10x10 .. 48x48 maps)
+    ├── ScaleBench.tscn             # Headless scalability benchmark (synthetic 10x10 .. 100x100 maps)
     └── scale_bench.gd              # Times map load, movement range, strike plans & AI decisions vs map size
 ```
 
@@ -284,26 +298,39 @@ godot res://tests/Benchmark.tscn
 
 ### Scalability Benchmark
 
-`tests/ScaleBench.tscn` builds synthetic maps from 10×10 to 48×48 with a walker on roughly every 12th tile and times the CPU-side systems that grow with map and army size (medians, milliseconds):
+`tests/ScaleBench.tscn` builds synthetic maps from 10×10 to 100×100 with a walker on roughly every 12th tile (capped at 240) and times the CPU-side systems that grow with map and army size (medians, milliseconds):
 
 ```bash
 godot --headless --path . res://tests/ScaleBench.tscn
 ```
 
-| Map | Walkers | Map load (one-time, incl. terrain bake) | Movement range | Strike plan, farthest enemy | AI decision | Terrain draw calls |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| 10×10 | 8 | 3.7 | 0.16 | 0.7 | 0.11 | 1 |
-| 20×20 | 33 | 15 | 0.16 | 2.9 | 0.29 | 1 |
-| 32×32 | 85 | 39 | 0.18 | 7.7 | 0.69 | 1 |
-| 48×48 | 192 | 83 | 0.12 | 17 | 1.6 | 2 |
+| Map | Walkers | Map load (one-time, incl. terrain bake) | Movement range | Strike cost field (once per selection) | Strike plan from the field (per hover) | AI decision | Terrain draw calls |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| 10×10 | 8 | 3.5 | 0.20 | 0.29 | 0.03 | 0.29 | 1 |
+| 20×20 | 33 | 14 | 0.11 | 1.2 | 0.03 | 0.28 | 1 |
+| 32×32 | 85 | 37 | 0.15 | 3.3 | 0.03 | 0.63 | 1 |
+| 48×48 | 192 | 82 | 0.19 | 7.6 | 0.04 | 1.5 | 2 |
+| 64×64 | 240 | 145 | 0.27 | 14 | 0.04 | 1.4 | 3 |
+| 100×100 | 240 | 344 | 0.27 | 36 | 0.05 | 1.3 | 7 |
 
-The static terrain stays at one draw call per 196k vertices however large the map. Before the bake it cost one draw call per polygon, polyline and label, about 8–9 per tile (≈680 on a 10×8 map).
+Before the architecture pass a strike plan re-ran a map-wide Dijkstra for every enemy hovered (17 ms at 48×48, so a visible hitch). The selected walker's uncapped movement-cost field is now computed once per (walker, tile, occupancy epoch) and every enemy's plan reads a few entries from it; the search itself runs on flat arrays with a per-build step-cost table and is about 2.5× faster than the Dictionary version. The static terrain stays at one draw call per 196k vertices however large the map. Before the bake it cost one draw call per polygon, polyline and label, about 8–9 per tile (≈680 on a 10×8 map).
+
+### Architecture Conventions
+- **Rules live in rule classes, not in nodes or tests.** Turn-economy values and arithmetic are in `Rules`; win/loss evaluation in `VictoryRules`; terrain data in `TerrainDefs`; skirmish maths in `SkirmishEngine`. `BalanceProbe` only overrides rule values for `tests/balance.gd`. `Battlefield` orchestrates and wires the scene; it should not own arithmetic.
+- **Logic is node-free where it can be.** `TerrainGrid` (tiles, pathfinding, movement range, strike plans) and `SkirmishForecast` are `RefCounted` and run headless without a scene. `IsoGridMap` is the renderer and delegates to its `grid`. AI, bots and benchmarks should target the pure classes.
+- **Signals go up, calls go down.** `UIOverlay` emits `action_*_requested` signals and `modal_changed`; `Battlefield` connects them and pushes HUD state through setters. Nothing reaches up the tree with `get_parent()`.
+- **Data is table-driven and validated.** Chassis, abilities and maps are built by `ChassisCatalog`, `AbilityCatalog` and `MapCatalog`; `ChassisCatalog.ORDER` is the one chassis list. `MapDefinition.validate()` runs on every load and reports a broken map with `push_error`.
+- **Modals own the screen.** A `CrtScreen` registers blocker hotspots for its panels so clicks and hover never fall through to the map; when a modal is up only its own controls are registered. Use `UIOverlay.toggle_manual()` and `modal_open()` rather than flipping the flags.
+- **Deferred work carries a token.** Timers go through `Battlefield._after(delay, fn, phase)`, which drops the callback if the mission restarted or the phase moved on. Any new countdown must use it.
+- **Tests are discovered, and refactors are proven.** `tests/battle_screen_tests.gd` runs every `test_*` method in source order. Pathfinding changes are pinned by a Bellman-Ford oracle and the pre-heap linear scan; `tests/run_all.sh` runs the suite and the seeded playtest, whose per-mission outcome lines must not change for a behaviour-identical refactor.
 
 ### Rendering & Performance Conventions
 - **Static scenery is baked, not redrawn.** `IsoGridMap` records the terrain into `CanvasMeshBuilder` meshes once per map load. The meshes are textured with `PixelFont.mesh_atlas()`: solid geometry samples its white band, and the elevation labels sample their glyphs exactly as `PixelFont.draw_text` does. The GL Compatibility canvas renderer cannot batch polygons or polylines, so command-by-command drawing costs one draw call each. Anything static and solid-coloured should go through the builder.
-- **The tile overlay walks only active tiles.** Rivers, cities, objectives and the hovered, selected and reachable tiles are drawn in iso back-to-front order from a cached list. Replace `reachable_info` wholesale (never mutate it in place) so the overlay notices. Its entries and paths are shared read-only.
+- **The tile overlay walks only visible, active tiles.** Rivers, cities, objectives and the hovered, selected and reachable tiles are drawn in iso back-to-front order from a cached sorted list, binary-searched to the visible (x+y) band and culled to the view; below canvas scale 0.5 the ripples and window lights drop to a flat tint. Replace `reachable_info` wholesale (never mutate it in place) so the overlay notices. Its entries and paths are shared read-only.
 - **UI draws on change.** `UIOverlay` and `MainMenu` redraw when their state setters, input or `GlobalState` signals mark them dirty, or when an idle portrait's frame steps. A 0.25 s heartbeat catches in-place `MechData` edits. New HUD state belongs in a setter that sets `_dirty`.
-- **Ambient motion runs at 30 Hz.** Walker bob and exhaust, and the overlay's pulse and ripples, re-record at `AMBIENT_FPS`. Off-screen walkers don't re-record. State changes call `queue_redraw()` and show at once.
+- **Ambient motion runs at 30 Hz.** Walker bob and exhaust, and the overlay's pulse and ripples, re-record at `AMBIENT_FPS`, staggered across walkers. Off-screen walkers don't re-record, and the overlay doesn't re-record when nothing animated is in view. State changes call `queue_redraw()` and show at once.
+- **Forecasts are cheap and never touch units.** `SkirmishForecast` keeps a two-generation cache keyed on every field the engine reads, forecast sessions skip presentation text and badges, and `resolve_skirmish` defaults to `apply_to_units = false`. A test snapshots both walkers to prove forecasts leave them unchanged.
+- **The battle screen only redraws when something moves.** In the result and command-select phases `BattleStage` redraws on blink, idle-frame or exhaust ticks, and `BattleScreen` disables processing while hidden. Sprite sheets, backdrops, the font atlas and the effect circle are warmed at mission load.
 
 ## Screenshot Generation Pipeline
 
@@ -326,7 +353,8 @@ The generator renders each pose and writes palette-swapped sheets for the Coalit
 python3 tools/battle_sprites/generate.py           # regenerate assets/battle
 python3 tools/battle_sprites/generate.py --check   # exit 1 if committed art differs from the generator
 python3 -m unittest discover -s tools/battle_sprites
-tests/run_battle_tests.sh                          # battle screen unit tests (headless)
+tests/run_battle_tests.sh                          # battle screen, grid, AI & rules unit tests (headless; TEST_VERBOSE=1 prints names)
+tests/run_all.sh                                   # the unit tests plus the full seeded playtest (SCALE=1 adds ScaleBench)
 godot --path . res://scenes/dev/BattlePreview.tscn # browse chassis, abilities, terrains and endings
 ```
 
