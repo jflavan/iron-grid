@@ -16,6 +16,10 @@ static func choose_best_action(
 	var reachable: Dictionary = grid_map.find_reachable_tiles(m_data, occ_map)
 
 	var player_units: Array[MechUnit] = unit_container.get_faction_units(MechData.Faction.PLAYER)
+	# Foe positions, gathered once: the positional score reads them for every candidate tile.
+	var foe_positions: Array[Vector2i] = []
+	for pu in player_units:
+		foe_positions.append(pu.mech_data.grid_pos)
 	var start_pos: Vector2i = m_data.grid_pos
 	var start_tile: GridTileData = grid_map.get_tile(start_pos)
 	var obj_targets := _objective_targets(grid_map, map_def)
@@ -28,7 +32,7 @@ static func choose_best_action(
 		"target_pos": start_pos,
 		"path": [start_pos],
 		"fuel_spent": 0,
-		"score": _score_positional_tile(start_tile, m_data, player_units, map_def, obj_targets) + (18.0 if m_data.current_fuel <= 4 else 4.0)
+		"score": _score_positional_tile(start_tile, m_data, foe_positions, map_def, obj_targets) + (18.0 if m_data.current_fuel <= 4 else 4.0)
 	}
 
 	# On OFFENSE maps (where AI is the entrenched garrison), units standing on Objective Cities
@@ -45,7 +49,7 @@ static func choose_best_action(
 		var fuel_spent: int = info["fuel_spent"]
 		var dest_tile: GridTileData = grid_map.get_tile(dest_pos)
 
-		var pos_score: float = _score_positional_tile(dest_tile, m_data, player_units, map_def, obj_targets)
+		var pos_score: float = _score_positional_tile(dest_tile, m_data, foe_positions, map_def, obj_targets)
 		if deny_tiles.has(dest_pos):
 			pos_score += 150.0 # Retaking this node breaks the Coalition's pending objective victory
 		# Small penalty for burning all fuel without engaging
@@ -63,7 +67,8 @@ static func choose_best_action(
 			}
 
 	# Evaluate decoupled attacks against each living player unit from all reachable adjacent launch tiles (including start_pos)
-	for target_unit in player_units:
+	var attack_targets: Array[MechUnit] = [] if m_data.has_attacked else player_units
+	for target_unit in attack_targets:
 		if not is_instance_valid(target_unit) or target_unit.mech_data == null or not target_unit.mech_data.is_alive():
 			continue
 		var dest_pos: Vector2i = target_unit.mech_data.grid_pos
@@ -171,20 +176,20 @@ static func choose_best_facing(pos: Vector2i, enemy_units: Array[MechUnit]) -> V
 
 ## Player-held objective tiles that would hand the Coalition an objective victory at turn end
 ## (every bridgehead on Pitched maps, any Syndicate HQ on Offense maps). Empty if no such threat.
-static func _imminent_defeat_tiles(grid_map: IsoGridMap, map_def: MapDefinition) -> Array[Vector2i]:
-	var tiles: Array[Vector2i] = []
+static func _imminent_defeat_tiles(grid_map: IsoGridMap, map_def: MapDefinition) -> Dictionary:
+	var tiles: Dictionary = {} # Vector2i -> true, for O(1) has()
 	match map_def.strategy_mode:
 		MapDefinition.StrategyMode.PITCHED_BATTLE:
 			for obj in map_def.objectives:
 				var td: GridTileData = grid_map.get_tile(obj["pos"])
 				if td == null or td.controlled_by != MechData.Faction.PLAYER:
-					return []
-				tiles.append(td.coords)
+					return {}
+				tiles[td.coords] = true
 		MapDefinition.StrategyMode.OFFENSE:
 			for hq_pos in map_def.hq_positions:
 				var td: GridTileData = grid_map.get_tile(hq_pos)
 				if td != null and td.controlled_by == MechData.Faction.PLAYER:
-					tiles.append(hq_pos)
+					tiles[hq_pos] = true
 	return tiles
 
 ## Objective tiles the AI should steer toward. Assaulting AIs (Defense / Pitched maps) home in on the
@@ -206,7 +211,7 @@ static func _objective_targets(grid_map: IsoGridMap, map_def: MapDefinition) -> 
 static func _score_positional_tile(
 	tile: GridTileData,
 	m_data: MechData,
-	player_units: Array[MechUnit],
+	foe_positions: Array[Vector2i],
 	map_def: MapDefinition,
 	obj_targets: Array[Vector2i]
 ) -> float:
@@ -233,8 +238,8 @@ static func _score_positional_tile(
 
 	# 3. Distance to Player Units & Objectives based on Strategy Mode
 	var min_enemy_dist: float = 999.0
-	for pu in player_units:
-		var d: float = float(absi(tile.coords.x - pu.mech_data.grid_pos.x) + absi(tile.coords.y - pu.mech_data.grid_pos.y))
+	for fp in foe_positions:
+		var d: float = float(absi(tile.coords.x - fp.x) + absi(tile.coords.y - fp.y))
 		if d < min_enemy_dist:
 			min_enemy_dist = d
 
