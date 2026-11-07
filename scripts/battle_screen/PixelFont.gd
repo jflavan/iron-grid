@@ -24,7 +24,11 @@ static func _ensure() -> void:
 	_attempted = true
 	_tex = load(FONT_PNG) as Texture2D
 	var meta = JSON.parse_string(FileAccess.get_file_as_string(FONT_JSON))
-	var chars: String = meta["chars"] if meta != null else ""
+	var chars: String = ""
+	if meta is Dictionary and meta.has("chars"):
+		chars = String(meta["chars"])
+	else:
+		push_error("PixelFont: could not read the glyph index from %s; text will draw as '?'" % FONT_JSON)
 	for i in chars.length():
 		_index[chars[i]] = i
 

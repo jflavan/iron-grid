@@ -10,10 +10,10 @@ extends Node2D
 ## 2. Pre-resolved SkirmishResult playback (used by BattlePreview, tests, and skip_to_end):
 ##    intro -> [menu -> support OR attack -> settle] xN -> ending -> result
 
-const W := 360
-const H := 225
-const GROUND_Y := 141.0
-const FEET_X := {"left": 92.0, "right": 268.0}
+const W := BattleLayout.W
+const H := BattleLayout.H
+const GROUND_Y := BattleLayout.GROUND_Y
+const FEET_X := BattleLayout.FEET_X
 const MENU_Y := 153
 
 const C_LABEL := CrtUI.C_LABEL
@@ -62,6 +62,9 @@ var result: SkirmishEngine.SkirmishResult
 var session: SkirmishEngine.BattleSession = null
 var timeline: BattleTimeline
 var mechs: Dictionary = {}          # "atk"/"def" -> state Dictionary
+var _mech_list: Array = []          # mechs.values(), cached by setup() (the per-frame loops walk it)
+var _redraw_key: Array = []         # what last made a static phase (command select / result) repaint
+var _badge_cache: Dictionary = {}   # side -> [badge array it was joined from, joined text]
 var hull_display: Dictionary = {"atk": 0, "def": 0}
 var true_hull: Dictionary = {"atk": 0, "def": 0}
 var energy_display: Dictionary = {"atk": 0, "def": 0}
@@ -135,27 +138,28 @@ func setup(
 		"atk": _make_mech("atk", result.attacker, atk_left, lift.x),
 		"def": _make_mech("def", result.defender, not atk_left, lift.y),
 	}
+	_mech_list = mechs.values()
+	_redraw_key = []
+	_badge_cache.clear()
 	queue_redraw()
 
-func _make_mech(side: String, data: MechData, on_left: bool, lift: int) -> Dictionary:
-	var m := {
-		"side": side, "data": data, "chassis": data.chassis_id, "sheet": data.chassis_id,
-		"faction": int(data.faction), "mirrored": not on_left, "dir": 1 if on_left else -1,
-		"base": Vector2.ZERO, "pose": "", "offset": Vector2.ZERO, "white": false,
-		"visible": true, "idle_shift_ms": 0.0 if side == "atk" else 420.0,
-		# lasting state for the rest of the fight
-		"slab": false, "armed": false, "rangefinder_on": false, "mast_on": false, "jammed": false,
-		"dark": false, "sink": 0.0, "end_offset": Vector2.ZERO,
-		# per-frame effect state (reset every frame)
-		"glitch": 0.0, "ghosts": [], "glow": Color(0, 0, 0, 0), "attach": {}, "bricks_glow": 0.0, "sheet_vis": "",
-	}
+func _make_mech(side: String, data: MechData, on_left: bool, lift: int) -> MechView:
+	var m := MechView.new()
+	m.side = side
+	m.data = data
+	m.chassis = data.chassis_id
+	m.sheet = data.chassis_id
+	m.faction = int(data.faction)
+	m.mirrored = not on_left
+	m.dir = 1 if on_left else -1
+	m.idle_shift_ms = 0.0 if side == "atk" else 420.0
 	# Warm every texture this mech can show (sheets, white silhouette, variants, attachments) so no
 	# load() happens mid-animation.
-	MechSpriteBank.warm(m["sheet"])
-	SupportAnims.warm(m["faction"])
-	var feet := MechSpriteBank.anchor(m["sheet"], "feet", "idle0", m["mirrored"])
+	MechSpriteBank.warm(m.sheet)
+	SupportAnims.warm(m.faction)
+	var feet := MechSpriteBank.anchor(m.sheet, "feet", "idle0", m.mirrored)
 	var fx_pos: float = FEET_X["left" if on_left else "right"]
-	m["base"] = Vector2(roundf(fx_pos - feet.x), roundf(GROUND_Y - feet.y + lift))
+	m.base = Vector2(roundf(fx_pos - feet.x), roundf(GROUND_Y - feet.y + lift))
 	return m
 
 func skip_to_end() -> void:
@@ -214,13 +218,13 @@ func advance(delta: float) -> void:
 			numbers.remove_at(ni)
 		ni -= 1
 	if phase == PHASE_RESULT:
-		queue_redraw()
+		_redraw_if_animated()
 		return
 	if phase == PHASE_COMMAND_SELECT:
 		if auto_pilot:
 			_trigger_auto_player_command()
 		else:
-			queue_redraw()
+			_redraw_if_animated()
 			return
 	phase_t += delta
 	while true:
@@ -238,6 +242,19 @@ func advance(delta: float) -> void:
 			break
 	queue_redraw()
 
+## Seconds per exhaust-smoke repaint while the stage is otherwise static (smoke steps ~1px per 50ms).
+const STATIC_TICK := 0.05
+
+## Command select and the result screen only move through blinks, idle sprite frames and exhaust
+## smoke, so repaint when one of those steps (or damage numbers are still floating) instead of 60x/s.
+func _redraw_if_animated() -> void:
+	var key: Array = [int(clock / 0.2), int(clock / 0.5), int(clock / STATIC_TICK), numbers.size()]
+	for m in _mech_list:
+		key.append(MechSpriteBank.idle_frame(sheet_of(m), clock * 1000.0 + float(m.idle_shift_ms)))
+	if not numbers.is_empty() or key != _redraw_key:
+		_redraw_key = key
+		queue_redraw()
+
 func current_beat() -> Dictionary:
 	if beat_idx >= 0 and beat_idx < timeline.beats.size():
 		return timeline.beats[beat_idx]
@@ -249,7 +266,7 @@ func move_cursor(dir: int) -> void:
 		return
 	SoundManager.play("ui_click")
 	if in_tech_submenu:
-		var coa_data: MechData = coalition_mech()["data"]
+		var coa_data: MechData = coalition_mech().data
 		var ab_count: int = maxi(1, coa_data.abilities.size())
 		tech_cursor = (tech_cursor + dir + ab_count) % ab_count
 	else:
@@ -312,7 +329,7 @@ func menu_row_at(stage_pos: Vector2) -> int:
 	if not box.has_point(stage_pos):
 		return -1
 	var row0_top: int = TECH_ROW0_TOP if in_tech_submenu else CMD_ROW0_TOP
-	var row_count: int = (coalition_mech()["data"] as MechData).abilities.size() if in_tech_submenu else COMMANDS.size()
+	var row_count: int = (coalition_mech().data as MechData).abilities.size() if in_tech_submenu else COMMANDS.size()
 	var row := floori((stage_pos.y - float(row0_top)) / float(MENU_ROW_H))
 	return row if row >= 0 and row < row_count else -1
 
@@ -497,13 +514,13 @@ func _ending_losers() -> Array:
 
 func _apply_ending_final() -> void:
 	for side in _ending_losers():
-		var m: Dictionary = mechs[side]
-		m["dark"] = true
-		m["sink"] = MechSpriteBank.cell_size(m["sheet"]).y * 0.45
+		var m: MechView = mechs[side]
+		m.dark = true
+		m.sink = MechSpriteBank.cell_size(m.sheet).y * 0.45
 	if timeline.ending == "pushback":
-		mechs["def"]["end_offset"] = Vector2(-8 * int(mechs["def"]["dir"]), 1)
+		mechs["def"].end_offset = Vector2(-8 * int(mechs["def"].dir), 1)
 	elif timeline.ending == "repelled":
-		mechs["atk"]["end_offset"] = Vector2(-8 * int(mechs["atk"]["dir"]), 0)
+		mechs["atk"].end_offset = Vector2(-8 * int(mechs["atk"].dir), 0)
 
 func _apply_impact(b: Dictionary) -> void:
 	if b.is_empty() or _impact_done:
@@ -534,21 +551,21 @@ func fx(c: Callable) -> void:
 	_fx.append(c)
 
 ## Sheet drawn this frame: a support animation may preview a variant before it becomes lasting.
-func sheet_of(m: Dictionary) -> String:
-	return m["sheet_vis"] if m.get("sheet_vis", "") != "" else m["sheet"]
+func sheet_of(m: MechView) -> String:
+	return m.sheet_vis if m.sheet_vis != "" else m.sheet
 
-func pose_of(m: Dictionary) -> String:
-	if m["pose"] != "":
-		return m["pose"]
-	return MechSpriteBank.idle_pose(sheet_of(m), clock * 1000.0 + float(m["idle_shift_ms"]))
+func pose_of(m: MechView) -> String:
+	if m.pose != "":
+		return m.pose
+	return MechSpriteBank.idle_pose(sheet_of(m), clock * 1000.0 + float(m.idle_shift_ms))
 
-func point(m: Dictionary, anchor_name: String) -> Vector2:
-	return m["base"] + m["offset"] + MechSpriteBank.anchor(sheet_of(m), anchor_name, pose_of(m), m["mirrored"])
+func point(m: MechView, anchor_name: String) -> Vector2:
+	return m.base + m.offset + MechSpriteBank.anchor(sheet_of(m), anchor_name, pose_of(m), m.mirrored)
 
-func coalition_mech() -> Dictionary:
+func coalition_mech() -> MechView:
 	return mechs[timeline.coalition_side]
 
-func syndikat_mech() -> Dictionary:
+func syndikat_mech() -> MechView:
 	return mechs["def" if timeline.coalition_side == "atk" else "atk"]
 
 static var _prompts: PackedStringArray = PackedStringArray()
@@ -576,20 +593,27 @@ func _pair_text(slot: String, fmt: String, a: int, b: int) -> String:
 		e[2] = fmt % [a, b]
 	return e[2]
 
-## The status the HUD panels show for `side`: the snapshot stored on the beat being shown (so it can
-## never run ahead of the animation, and showdown playback matches a live fight). Before the first
-## beat of a live fight the session itself is still at its starting state; a showdown shows nothing.
-## Returns {} when there is nothing to show, else {"badges": Array, "spd": int, "eva": int}.
-func _status_of(side: String) -> Dictionary:
-	var b := current_beat()
-	if b.is_empty() and beat_idx >= timeline.beats.size() and not timeline.beats.is_empty():
-		b = timeline.beats.back()   # command_select / ending / result: the last recorded step
-	if not b.is_empty():
-		return {"badges": b["badges"][side], "spd": int(b["spd"][side]), "eva": int(b["eva"][side])}
-	if session != null:
-		var st := session.get_combatant(side)
-		return {"badges": st.get_status_badges(), "spd": st.get_effective_speed(), "eva": st.get_effective_evasion()}
-	return {}
+## The status snapshot the HUD panels read ({"badges"/"spd"/"eva": {"atk", "def"}}): it follows the
+## animation instead of running ahead of it. A beat's snapshot is the state after its step, so while
+## that beat's menu cue, support animation or pre-impact attack is still playing the previous beat's
+## snapshot is shown (the timeline's start status before beat 0, so an intro matches a live fight).
+## Command select, ending and result show the last recorded beat. {} when there is nothing to show.
+func _status_src() -> Dictionary:
+	var n := timeline.beats.size()
+	var i := mini(beat_idx, n - 1)
+	if beat_idx >= 0 and beat_idx < n:
+		var landed: bool = phase == PHASE_SETTLE or (phase == PHASE_ATTACK and _impact_done)
+		if not landed:
+			i = beat_idx - 1
+	return timeline.beats[i] if i >= 0 else timeline.start_status
+
+## Badges of `side` joined for the HUD ("A B"), rebuilt only when the badge array changes.
+func _badge_text(side: String, badges: Array) -> String:
+	var e = _badge_cache.get(side)
+	if e == null or not is_same(e[0], badges):
+		e = [badges, " ".join(badges.slice(0, 2))]
+		_badge_cache[side] = e
+	return e[1]
 
 ## Loads everything a battle can draw (sheets, silhouettes, variants and attachments of the given
 ## chassis, both factions' attachment art, the backdrops of the given terrains, the font and the
@@ -624,27 +648,27 @@ func _wrapped_headline(text: String, px: int) -> PackedStringArray:
 	return _wrap_lines
 
 func _animate() -> void:
-	for m in mechs.values():
-		m["pose"] = ""
-		m["offset"] = m["end_offset"]
-		m["white"] = false
-		m["glitch"] = 0.18 if m.get("jammed", false) and int(clock / 0.25) % 3 == 0 else 0.0
-		m["ghosts"] = []
-		m["glow"] = Color(0, 0, 0, 0)
-		m["attach"] = {}
-		if m.get("rangefinder_on", false):
-			m["attach"]["rangefinder"] = 1.0
-		if m.get("mast_on", false):
-			m["attach"]["mast"] = 1.0
-		m["sheet_vis"] = ""
-		m["bricks_glow"] = 0.4 if m["armed"] and int(clock / 0.3) % 2 == 0 else 0.0
+	for m in _mech_list:
+		m.pose = ""
+		m.offset = m.end_offset
+		m.white = false
+		m.glitch = 0.18 if m.jammed and int(clock / 0.25) % 3 == 0 else 0.0
+		m.ghosts = []
+		m.glow = Color(0, 0, 0, 0)
+		m.attach = {}
+		if m.rangefinder_on:
+			m.attach["rangefinder"] = 1.0
+		if m.mast_on:
+			m.attach["mast"] = 1.0
+		m.sheet_vis = ""
+		m.bricks_glow = 0.4 if m.armed and int(clock / 0.3) % 2 == 0 else 0.0
 	_fx.clear()
 	# Hold-at-1: a walker whose real hull is gone keeps acting but staggers, sparks and smokes.
 	if phase not in [PHASE_ENDING, PHASE_RESULT]:
 		for side in mechs:
 			if int(true_hull[side]) <= 0:
-				var m: Dictionary = mechs[side]
-				m["pose"] = "stagger"
+				var m: MechView = mechs[side]
+				m.pose = "stagger"
 				var h := point(m, "hull")
 				var k := fmod(clock * 1.7 + (0.5 if side == "def" else 0.0), 1.0)
 				fx(func(ci):
@@ -656,8 +680,8 @@ func _animate() -> void:
 	var b := current_beat()
 	if b.is_empty():
 		return
-	var a: Dictionary = mechs[b["actor"]]
-	var d: Dictionary = mechs[b["target"]]
+	var a: MechView = mechs[b["actor"]]
+	var d: MechView = mechs[b["target"]]
 	match phase:
 		PHASE_SUPPORT:
 			SupportAnims.run(self, a, d, b["ability_id"], phase_t)
@@ -668,40 +692,40 @@ func _animate() -> void:
 			if b.get("is_miss", false) and phase_t >= imp and phase_t < imp + 0.35:
 				var dt := phase_t - imp
 				var dodge := sin(dt / 0.35 * PI) * 8.0
-				d["pose"] = "brace"
-				d["white"] = false
-				d["offset"] = m_end_offset(d) + Vector2(roundf(-dodge * int(d["dir"])), 0)
+				d.pose = "brace"
+				d.white = false
+				d.offset = m_end_offset(d) + Vector2(roundf(-dodge * int(d.dir)), 0)
 			elif b["soften_from"] != "" and phase_t >= imp:
 				SupportAnims.soften(self, a, d, b["soften_from"], phase_t - imp)
 
-func m_end_offset(m: Dictionary) -> Vector2:
-	return m.get("end_offset", Vector2.ZERO)
+func m_end_offset(m: MechView) -> Vector2:
+	return m.end_offset
 
 func _animate_ending() -> void:
 	var t := phase_t
 	match timeline.ending:
 		"pushback":
-			var m: Dictionary = mechs["def"]
+			var m: MechView = mechs["def"]
 			var k := clampf(t / 0.6, 0.0, 1.0)
-			m["offset"] = Vector2(roundf(-8.0 * k * int(m["dir"])), roundf(k))
+			m.offset = Vector2(roundf(-8.0 * k * int(m.dir)), roundf(k))
 			if result != null and result.defender_retreated:
-				m["pose"] = "brace"
+				m.pose = "brace"
 			else:
-				m["pose"] = "hit" if t < 0.5 else "stagger"
+				m.pose = "hit" if t < 0.5 else "stagger"
 		"repelled":
-			var m: Dictionary = mechs["atk"]
+			var m: MechView = mechs["atk"]
 			var k := clampf(t / 0.6, 0.0, 1.0)
-			m["offset"] = Vector2(roundf(-8.0 * k * int(m["dir"])), 0)
+			m.offset = Vector2(roundf(-8.0 * k * int(m.dir)), 0)
 			if result != null and result.attacker_retreated:
-				m["pose"] = "brace"
+				m.pose = "brace"
 			else:
-				m["pose"] = "hit" if t < 0.5 else "brace"
+				m.pose = "hit" if t < 0.5 else "brace"
 		_:
 			for side in _ending_losers():
-				var m: Dictionary = mechs[side]
-				m["pose"] = "stagger"
+				var m: MechView = mechs[side]
+				m.pose = "stagger"
 				var h := point(m, "hull")
-				var size := MechSpriteBank.cell_size(m["sheet"])
+				var size := MechSpriteBank.cell_size(m.sheet)
 				for i in 6:
 					var t0 := i * 0.22
 					if t >= t0 and t < t0 + 0.6:
@@ -710,29 +734,32 @@ func _animate_ending() -> void:
 						var sz := 1.0 + (i % 2) * 0.4
 						fx(func(ci): BattleFX.explosion(ci, p, k, sz))
 				if t < 1.3:
-					m["white"] = int(t / 0.08) % 2 == 0
-					m["offset"] += Vector2(roundf(sin(t * 50.0) * 2.0), 0)
+					m.white = int(t / 0.08) % 2 == 0
+					m.offset += Vector2(roundf(sin(t * 50.0) * 2.0), 0)
 				if t > 1.2:
 					var k := clampf((t - 1.2) / 0.9, 0.0, 1.0)
-					m["sink"] = size.y * 0.45 * k
-					m["dark"] = k > 0.15
+					m.sink = size.y * 0.45 * k
+					m.dark = k > 0.15
 
 func _draw() -> void:
 	if result == null or mechs.is_empty():
 		return
+	# _animate() runs inside _draw so it sees the frame's final phase/clock; it mutates the mech
+	# dictionaries that phase code (point(), tests) reads between frames, which therefore lag one
+	# frame behind the draw. Accepted: every consumer tolerates a one-frame-old pose.
 	_animate()
 	if _backdrop != null:
 		draw_texture(_backdrop, Vector2.ZERO)
-	for m in mechs.values():
+	for m in _mech_list:
 		var feet := point(m, "feet")
-		BattleFX.shadow(self, feet.x, GROUND_Y, int(MechSpriteBank.cell_size(m["sheet"]).x * 0.32))
+		BattleFX.shadow(self, feet.x, GROUND_Y, int(MechSpriteBank.cell_size(m.sheet).x * 0.32))
 	for side in ["def", "atk"] if phase != PHASE_ATTACK or current_beat().get("actor", "atk") == "atk" else ["atk", "def"]:
 		_draw_mech(mechs[side])
-	for m in mechs.values():
-		if m["slab"]:
+	for m in _mech_list:
+		if m.slab:
 			SupportAnims.draw_slab(self, self, m)
-		for att in m["attach"]:
-			SupportAnims.draw_attachment(self, self, m, att, float(m["attach"][att]))
+		for att in m.attach:
+			SupportAnims.draw_attachment(self, self, m, att, float(m.attach[att]))
 	for c in _fx:
 		c.call(self)
 	for n in numbers:
@@ -740,31 +767,31 @@ func _draw() -> void:
 	_draw_menu()
 	_draw_banner()
 
-func _draw_mech(m: Dictionary) -> void:
-	if not m["visible"]:
+func _draw_mech(m: MechView) -> void:
+	if not m.visible:
 		return
 	var pose := pose_of(m)
-	var tex := MechSpriteBank.get_sheet(sheet_of(m), m["faction"])
+	var tex := MechSpriteBank.get_sheet(sheet_of(m), m.faction)
 	if tex == null:
 		return
 	var src := MechSpriteBank.frame_rect(sheet_of(m), pose)
-	var pos: Vector2 = m["base"] + m["offset"]
-	var needs_white: bool = m["white"] or m["ghosts"].size() > 0 or m["glow"].a > 0.0
+	var pos: Vector2 = m.base + m.offset
+	var needs_white: bool = m.white or m.ghosts.size() > 0 or m.glow.a > 0.0
 	var white := MechSpriteBank.get_white_sheet(sheet_of(m)) if needs_white else null
 	# sinking wreck: only the part above the ground line is drawn
-	var sink := roundf(float(m["sink"]))
+	var sink := roundf(float(m.sink))
 	var visible_h := src.size.y - sink
 	if visible_h <= 0:
 		return
 	var src_vis := Rect2(src.position, Vector2(src.size.x, visible_h))
 	var dst_pos := Vector2(0, sink)
-	var mod := Color(0.32, 0.30, 0.28) if m["dark"] else Color.WHITE
-	for g in m["ghosts"]:
+	var mod := Color(0.32, 0.30, 0.28) if m.dark else Color.WHITE
+	for g in m.ghosts:
 		_begin_mech_xform(m, pos + g, src.size)
 		if white != null:
 			draw_texture_rect_region(white, Rect2(dst_pos, src_vis.size), src_vis, Color(0.7, 0.8, 0.9, 0.35))
 	_begin_mech_xform(m, pos, src.size)
-	var glitch: float = m["glitch"]
+	var glitch: float = m.glitch
 	if glitch > 0.0:
 		var y := 0.0
 		var band := 4.0
@@ -776,25 +803,25 @@ func _draw_mech(m: Dictionary) -> void:
 	else:
 		draw_texture_rect_region(tex, Rect2(dst_pos, src_vis.size), src_vis, mod)
 	if white != null:
-		if m["white"]:
+		if m.white:
 			draw_texture_rect_region(white, Rect2(dst_pos, src_vis.size), src_vis)
-		elif m["glow"].a > 0.0:
-			draw_texture_rect_region(white, Rect2(dst_pos, src_vis.size), src_vis, m["glow"])
-	if m["bricks_glow"] > 0.0 and not m["dark"]:
-		var br = MechSpriteBank.bricks_anchor(m["chassis"])
+		elif m.glow.a > 0.0:
+			draw_texture_rect_region(white, Rect2(dst_pos, src_vis.size), src_vis, m.glow)
+	if m.bricks_glow > 0.0 and not m.dark:
+		var br = MechSpriteBank.bricks_anchor(m.chassis)
 		if br != null:
 			var off := MechSpriteBank.pose_offset(sheet_of(m), pose)
-			draw_rect(Rect2(br + off, Vector2(31, 19)), Color(1.0, 0.7, 0.2, m["bricks_glow"] * 0.5))
+			draw_rect(Rect2(br + off, Vector2(31, 19)), Color(1.0, 0.7, 0.2, m.bricks_glow * 0.5))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	if not m["dark"]:
+	if not m.dark:
 		var n_stacks := MechSpriteBank.stack_count(sheet_of(m))
 		for i in n_stacks:
-			BattleFX.exhaust(self, point(m, MechSpriteBank.STACK_NAMES[i] if i < MechSpriteBank.STACK_NAMES.size() else "stacks/%d" % i), clock, i * 0.37 + (0.2 if m["side"] == "def" else 0.0), m["dir"])
+			BattleFX.exhaust(self, point(m, MechSpriteBank.STACK_NAMES[i] if i < MechSpriteBank.STACK_NAMES.size() else "stacks/%d" % i), clock, i * 0.37 + (0.2 if m.side == "def" else 0.0), m.dir)
 	elif sink > 0.0:
-		BattleFX.exhaust(self, point(m, "hull") + Vector2(0, sink), clock * 0.7, 0.1, m["dir"])
+		BattleFX.exhaust(self, point(m, "hull") + Vector2(0, sink), clock * 0.7, 0.1, m.dir)
 
-func _begin_mech_xform(m: Dictionary, pos: Vector2, size: Vector2) -> void:
-	if m["mirrored"]:
+func _begin_mech_xform(m: MechView, pos: Vector2, size: Vector2) -> void:
+	if m.mirrored:
 		draw_set_transform(Vector2(pos.x + size.x, pos.y), 0.0, Vector2(-1, 1))
 	else:
 		draw_set_transform(pos, 0.0, Vector2.ONE)
@@ -810,7 +837,7 @@ func _draw_menu() -> void:
 	# Right Panel: Coalition Player Status + HULL & EN Bars + Command Box
 	BattleFX.panel(self, Rect2(112, MENU_Y, 246, 70))
 
-	var sd: MechData = syn["data"]
+	var sd: MechData = syn.data
 	PixelFont.draw_text(self, _labels["syn_name"], Vector2(8, MENU_Y + 7), C_NAME)
 	PixelFont.draw_text(self, _labels["syn_chassis"], Vector2(8, MENU_Y + 18), C_LABEL.darkened(0.25))
 
@@ -820,14 +847,14 @@ func _draw_menu() -> void:
 	_right_text(_pair_text("syn_hull", "%d/%d", syn_hull, sd.max_armor), 104, MENU_Y + 40, C_NUM)
 
 	PixelFont.draw_text(self, _labels["tile"], Vector2(8, MENU_Y + 56), C_LABEL)
-	var syn_status := _status_of(syn_side)
-	if not syn_status.is_empty():
-		var syn_badges: Array = syn_status["badges"]
+	var status := _status_src()
+	if not status.is_empty():
+		var syn_badges: Array = status["badges"][syn_side]
 		if not syn_badges.is_empty():
 			_right_text(syn_badges[0], 104, MENU_Y + 56, C_CURSOR)
 
 	# Coalition Panel (Right Half)
-	var cd: MechData = coa["data"]
+	var cd: MechData = coa.data
 	PixelFont.draw_text(self, _labels["coa_name"], Vector2(200, MENU_Y + 7), C_NAME)
 
 	var mode_tag := speed_label
@@ -846,13 +873,12 @@ func _draw_menu() -> void:
 	_gauge(Rect2(284, MENU_Y + 43, 66, 4), clampf(float(coa_en) / maxf(1.0, float(cd.max_energy)), 0.0, 1.0), C_EN)
 	_right_text(_pair_text("coa_en", "%d/%d", coa_en, cd.max_energy), 350, MENU_Y + 50, C_NUM)
 
-	var coa_status := _status_of(coa_side)
-	if not coa_status.is_empty():
-		var coa_badges: Array = coa_status["badges"]
+	if not status.is_empty():
+		var coa_badges: Array = status["badges"][coa_side]
 		if not coa_badges.is_empty():
-			PixelFont.draw_text(self, " ".join(coa_badges.slice(0, 2)), Vector2(200, MENU_Y + 58), C_CURSOR)
+			PixelFont.draw_text(self, _badge_text(coa_side, coa_badges), Vector2(200, MENU_Y + 58), C_CURSOR)
 		else:
-			PixelFont.draw_text(self, _pair_text("coa_spd_eva", "SPD %d  EVA %d%%", int(coa_status["spd"]), int(coa_status["eva"])), Vector2(200, MENU_Y + 58), C_LABEL.darkened(0.2))
+			PixelFont.draw_text(self, _pair_text("coa_spd_eva", "SPD %d  EVA %d%%", int(status["spd"][coa_side]), int(status["eva"][coa_side])), Vector2(200, MENU_Y + 58), C_LABEL.darkened(0.2))
 
 	# Command Menu (Interactive or Automated Beat Preview)
 	var b := current_beat()
@@ -943,7 +969,7 @@ func _draw_banner() -> void:
 		for i in intro_lines.size():
 			PixelFont.draw_centered(self, intro_lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_CURSOR)
 	elif phase == PHASE_COMMAND_SELECT:
-		var coa_data: MechData = coalition_mech()["data"]
+		var coa_data: MechData = coalition_mech().data
 		var top_lines: Array[String] = []
 		if in_tech_submenu and tech_cursor >= 0 and tech_cursor < coa_data.abilities.size():
 			var ab: CombatAbility = coa_data.abilities[tech_cursor]

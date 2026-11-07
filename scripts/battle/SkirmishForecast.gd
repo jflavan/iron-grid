@@ -82,7 +82,7 @@ static func forecast_shared(
 	# A deterministic, non-applying session only reads the walkers (every write goes to its own
 	# CombatantState copies and SkirmishResult; MechData/CombatAbility are written solely by
 	# apply_to_units, which is not called here), so no defensive duplicate_mech() is needed.
-	var res := SkirmishEngine.resolve_skirmish(attacker, defender, from_tile, target_tile, false, true, formation_context)
+	var res := SkirmishEngine.resolve_skirmish(attacker, defender, from_tile, target_tile, false, true, formation_context, false)
 	var favor: String
 	if res.defender_destroyed and not res.attacker_destroyed:
 		favor = "DECISIVE KILL PROJECTION"

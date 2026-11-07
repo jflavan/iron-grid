@@ -36,7 +36,7 @@ const ELEV_EVA_PER_LEVEL: int = 4        # the higher walker's EVA
 const ELEV_CRIT_PER_LEVEL: int = 5       # the higher walker's crit
 const ELEV_ACC_PER_LEVEL: int = 4        # hit chance, + for the higher walker, - for the lower
 const GUARD_DAMAGE_MULT: float = 0.50    # DEFEND: the next landed hit is halved
-const GUARD_BLOCK_PCT: int = int((1.0 - GUARD_DAMAGE_MULT) * 100.0)  # the 50 in "GUARD +50%" / "-50% DMG TAKEN"
+const GUARD_BLOCK_PCT: int = roundi((1.0 - GUARD_DAMAGE_MULT) * 100.0)  # the 50 in "GUARD +50%" / "-50% DMG TAKEN"
 const DEFEND_EN_GAIN: int = 2
 const ESCAPE_BASE_PCT: int = 58          # RETREAT chance = base + per-SPD x speed lead, clamped
 const ESCAPE_PER_SPD_PCT: int = 2
@@ -167,6 +167,9 @@ class SkirmishResult extends RefCounted:
 	var defender_pushed_back: bool = false
 	var summary_headline: String = ""
 	var approach_summary: String = ""
+	## Combatant status before the first step ({"badges"/"spd"/"eva": {"atk", "def"}}, the shape of a
+	## timeline beat's snapshot); empty for sessions that do not record presentation.
+	var start_status: Dictionary = {}
 	var approach_angle: String = "FRONT" # FRONT, FLANK, REAR
 	var atk_directional_mod_pct: int = 0
 	var def_directional_mod_pct: int = 0
@@ -256,6 +259,10 @@ class BattleSession extends RefCounted:
 	var turn_queue: Array[String] = []
 	var is_finished: bool = false
 	var _step_counter: int = 0
+	## When false, steps skip the presentation-only data (badge arrays, SPD/EVA snapshots, status text,
+	## descriptions): forecasts and AI simulations only read totals, tags and initiative. No RNG is
+	## touched either way, so outcomes are identical.
+	var record_presentation: bool = true
 
 	func _init(
 		attacker: MechData,
@@ -265,8 +272,10 @@ class BattleSession extends RefCounted:
 		p_can_def_retreat: bool = true,
 		p_seed: int = -1,
 		p_deterministic: bool = false,
-		p_formation: Dictionary = {}
+		p_formation: Dictionary = {},
+		p_record_presentation: bool = true
 	) -> void:
+		record_presentation = p_record_presentation
 		deterministic_mode = p_deterministic
 		can_defender_retreat = p_can_def_retreat
 		if p_seed >= 0:
@@ -283,6 +292,12 @@ class BattleSession extends RefCounted:
 		result.atk_effective_speed = round1[0]
 		result.def_effective_speed = round1[1]
 		result.first_striker = turn_queue[0]
+		if record_presentation:
+			result.start_status = {
+				"badges": {"atk": atk_state.get_status_badges(), "def": def_state.get_status_badges()},
+				"spd": {"atk": atk_state.get_effective_speed(), "def": def_state.get_effective_speed()},
+				"eva": {"atk": atk_state.get_effective_evasion(), "def": def_state.get_effective_evasion()},
+			}
 
 	func _make_combatant(
 		side: String,
@@ -410,7 +425,9 @@ class BattleSession extends RefCounted:
 		if round_number <= 2 and hp_ratio >= 0.45:
 			for ab in actor.mech.abilities:
 				if not ab.is_weapon() and actor.can_use(ab):
-					# Prioritize support tech if we haven't used one yet
+					# Prioritize support tech if we haven't used one yet. NOTE: each candidate rolls its own 75%, so
+					# with 2 unused support abilities the effective chance is 1 - 0.25^2 = 93.75%. Behaviour is
+					# deliberate and the roll count/order feeds the seeded RNG stream: it must not change.
 					if round_number == 1 or deterministic_mode or rng.randi_range(1, 100) <= 75:
 						return {"command": CommandType.TECH, "ability_id": ab.ability_id}
 
@@ -528,8 +545,9 @@ class BattleSession extends RefCounted:
 				step.ability_name = "DEFEND / BRACE"
 				step.ability_category = "DEFEND"
 				step.is_support_only = true
-				step.status_text = "GUARD +%d%% // +%d EN" % [GUARD_BLOCK_PCT, DEFEND_EN_GAIN]
-				step.description = "%s braces armor plating (+%d%% Guard, +%d EN)." % [actor.mech.callsign, GUARD_BLOCK_PCT, DEFEND_EN_GAIN]
+				if record_presentation:
+					step.status_text = "GUARD +%d%% // +%d EN" % [GUARD_BLOCK_PCT, DEFEND_EN_GAIN]
+					step.description = "%s braces armor plating (+%d%% Guard, +%d EN)." % [actor.mech.callsign, GUARD_BLOCK_PCT, DEFEND_EN_GAIN]
 			CommandType.RETREAT:
 				actor.retreat_attempted = true
 				step.ability_id = "retreat"
@@ -540,27 +558,30 @@ class BattleSession extends RefCounted:
 				var roll := 50 if deterministic_mode else rng.randi_range(1, 100)
 				if roll <= esc_chance:
 					step.escaped = true
-					step.status_text = "DISENGAGED!"
-					step.description = "%s broke off the engagement and retreated!" % actor.mech.callsign
+					if record_presentation:
+						step.status_text = "DISENGAGED!"
+						step.description = "%s broke off the engagement and retreated!" % actor.mech.callsign
 					if side == "atk":
 						result.attacker_retreated = true
 					else:
 						result.defender_retreated = true
 				else:
 					step.escape_failed = true
-					step.status_text = "RETREAT BLOCKED!"
-					step.description = "%s attempted to retreat, but %s cut off escape!" % [actor.mech.callsign, target.mech.callsign]
+					if record_presentation:
+						step.status_text = "RETREAT BLOCKED!"
+						step.description = "%s attempted to retreat, but %s cut off escape!" % [actor.mech.callsign, target.mech.callsign]
 
 		step.atk_hp_after = atk_state.hp
 		step.def_hp_after = def_state.hp
 		step.atk_en_after = atk_state.en
 		step.def_en_after = def_state.en
-		step.atk_badges = atk_state.get_status_badges()
-		step.def_badges = def_state.get_status_badges()
-		step.atk_spd_after = atk_state.get_effective_speed()
-		step.def_spd_after = def_state.get_effective_speed()
-		step.atk_eva_after = atk_state.get_effective_evasion()
-		step.def_eva_after = def_state.get_effective_evasion()
+		if record_presentation:
+			step.atk_badges = atk_state.get_status_badges()
+			step.def_badges = def_state.get_status_badges()
+			step.atk_spd_after = atk_state.get_effective_speed()
+			step.def_spd_after = def_state.get_effective_speed()
+			step.atk_eva_after = atk_state.get_effective_evasion()
+			step.def_eva_after = def_state.get_effective_evasion()
 		result.steps.append(step)
 
 		if step.escaped or atk_state.hp <= 0 or def_state.hp <= 0:
@@ -587,8 +608,9 @@ class BattleSession extends RefCounted:
 		if hit_roll > hit_chance:
 			step.is_miss = true
 			step.damage_dealt = 0
-			step.status_text = "MISS!"
-			step.description = "%s fired [%s] -> MISSED (%s evaded)!" % [actor.mech.callsign, step.ability_name, target.mech.callsign]
+			if record_presentation:
+				step.status_text = "MISS!"
+				step.description = "%s fired [%s] -> MISSED (%s evaded)!" % [actor.mech.callsign, step.ability_name, target.mech.callsign]
 			return
 
 		var crit_chance: int = crit_chance_for(actor, weapon_tech)
@@ -617,22 +639,24 @@ class BattleSession extends RefCounted:
 		else:
 			result.total_dmg_to_attacker += dmg
 
-		var notes: Array[String] = []
-		if is_crit:
-			notes.append("CRITICAL HIT!")
-		if target.defending:
-			notes.append("GUARDED (-%d%%)" % GUARD_BLOCK_PCT)
-		if step.soften_from != "":
-			notes.append("SHIELD DEFLECT!")
-		step.status_text = " // ".join(notes)
+		if record_presentation:
+			var notes: Array[String] = []
+			if is_crit:
+				notes.append("CRITICAL HIT!")
+			if target.defending:
+				notes.append("GUARDED (-%d%%)" % GUARD_BLOCK_PCT)
+			if step.soften_from != "":
+				notes.append("SHIELD DEFLECT!")
+			step.status_text = " // ".join(notes)
 		# Like a pending shield, a DEFEND guard is spent by the first enemy shot that lands. It is
 		# not cleared at the guarding unit's next turn start (an initiative flip would waste it) nor
 		# by a MISS, a support TECH or a failed RETREAT.
 		target.defending = false
 
-		step.description = "%s strikes with [%s] for %d DMG%s!" % [
-			actor.mech.callsign, step.ability_name, dmg, " (CRITICAL!)" if is_crit else ""
-		]
+		if record_presentation:
+			step.description = "%s strikes with [%s] for %d DMG%s!" % [
+				actor.mech.callsign, step.ability_name, dmg, " (CRITICAL!)" if is_crit else ""
+			]
 
 	func _resolve_support_tech(step: TurnStep, actor: CombatantState, target: CombatantState, ab: CombatAbility) -> void:
 		step.ability_id = ab.ability_id
@@ -653,9 +677,9 @@ class BattleSession extends RefCounted:
 			who.set(mod[0], v)
 		if fx.has("soften"):
 			actor.pending_soften = fx["soften"]
-		step.status_text = fx["text"]
-
-		step.description = "%s activates [%s] -> %s!" % [actor.mech.callsign, ab.ability_name, step.status_text]
+		if record_presentation:
+			step.status_text = fx["text"]
+			step.description = "%s activates [%s] -> %s!" % [actor.mech.callsign, ab.ability_name, step.status_text]
 
 	func _conclude_battle() -> void:
 		if is_finished:
@@ -894,9 +918,10 @@ static func create_deterministic_session(
 	defender: MechData,
 	from_tile: GridTileData,
 	target_tile: GridTileData,
-	formation_context: Dictionary = {}
+	formation_context: Dictionary = {},
+	record_presentation: bool = true
 ) -> BattleSession:
-	return BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, true, formation_context)
+	return BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, true, formation_context, record_presentation)
 
 ## Forecast API forwarders (cache, key and simulation live in SkirmishForecast).
 ## `_forecast_cache` / `_forecast_key` stay reachable here for the tests: the cache is the current generation.
@@ -917,17 +942,18 @@ static func forecast_shared(attacker: MechData, defender: MechData, from_tile: G
 	return SkirmishForecast.forecast_shared(attacker, defender, from_tile, target_tile, formation_context)
 
 ## Executes a complete turn-based battle resolution (used by forecasts, AI simulations, and tests).
-## If `apply_to_units` is true, mutates `attacker` and `defender` Hull and Energy.
+## `apply_to_units` defaults to false (a pure simulation); when true it mutates `attacker` and `defender` Hull and Energy.
 static func resolve_skirmish(
 	attacker: MechData,
 	defender: MechData,
 	from_tile: GridTileData,
 	target_tile: GridTileData,
-	apply_to_units: bool = true,
+	apply_to_units: bool = false,
 	deterministic: bool = true,
-	formation_context: Dictionary = {}
+	formation_context: Dictionary = {},
+	record_presentation: bool = true
 ) -> SkirmishResult:
-	var session := BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, deterministic, formation_context)
+	var session := BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, deterministic, formation_context, record_presentation)
 	session.auto_resolve()
 	if apply_to_units:
 		session.apply_to_units()

@@ -266,13 +266,13 @@ func test_persistent_effects_after_skip() -> void:
 	s1.start_session(sess1)
 	await get_tree().process_frame
 	s1._on_skip_pressed()
-	_check(s1.stage.mechs["atk"]["sheet"] == "donner_braced", "Spinne ends braced after Anchor Struts + skip")
+	_check(s1.stage.mechs["atk"].sheet == "donner_braced", "Spinne ends braced after Anchor Struts + skip")
 	s1.queue_free()
 
 	var s2 := _screen_for(_fight("goliath", "falke"))
 	await get_tree().process_frame
 	s2._on_skip_pressed()
-	_check(s2.stage.mechs["atk"]["slab"] == true, "Siegebreaker slab stays up after skip")
+	_check(s2.stage.mechs["atk"].slab == true, "Siegebreaker slab stays up after skip")
 	s2.queue_free()
 
 	var atk_m := GlobalState.create_mech_instance("moloch", MechData.Faction.PLAYER, "A", Vector2i(3, 2))
@@ -285,13 +285,13 @@ func test_persistent_effects_after_skip() -> void:
 	s3.start_session(sess3)
 	await get_tree().process_frame
 	s3._on_skip_pressed()
-	_check(s3.stage.mechs["atk"]["sheet"] == "moloch_spent", "Brenner bricks are spent after absorbing a hit")
+	_check(s3.stage.mechs["atk"].sheet == "moloch_spent", "Brenner bricks are spent after absorbing a hit")
 	s3.queue_free()
 
 	var s4 := _screen_for(_fight("goliath", "falke", 0, 5))
 	await get_tree().process_frame
 	s4._on_skip_pressed()
-	_check(s4.stage.mechs["def"]["dark"] == true, "destroyed defender is shown as a wreck")
+	_check(s4.stage.mechs["def"].dark == true, "destroyed defender is shown as a wreck")
 	s4.queue_free()
 
 func test_pairings_play_to_result() -> void:
@@ -310,7 +310,7 @@ func test_pairings_play_to_result() -> void:
 	Engine.time_scale = 1.0
 
 func test_attachment_textures_cached() -> void:
-	var m := {"faction": 0}
+	var m := MechView.new()
 	for att in ["slab", "mast", "rangefinder"]:
 		_check(SupportAnims._attach_tex(att, m) != null, "%s attachment texture loads" % att)
 	_check(SupportAnims._attach_cache.size() >= 3, "attachment textures are retained across frames")
@@ -351,12 +351,12 @@ func test_support_run_is_pure() -> void:
 	await get_tree().process_frame
 	var st := screen.stage
 	for ab_id in ["anchor_strut", "ferro_bulkhead", "ablative_shield"]:
-		var a: Dictionary = st.mechs["atk"]
-		var d: Dictionary = st.mechs["def"]
-		var before := [a["sheet"], a["slab"], a["armed"]]
+		var a: MechView = st.mechs["atk"]
+		var d: MechView = st.mechs["def"]
+		var before := [a.sheet, a.slab, a.armed]
 		for t in [0.2, 0.5, 0.9]:
 			SupportAnims.run(st, a, d, ab_id, t)
-		_check([a["sheet"], a["slab"], a["armed"]] == before, "%s animation does not mutate lasting state" % ab_id)
+		_check([a.sheet, a.slab, a.armed] == before, "%s animation does not mutate lasting state" % ab_id)
 	screen.queue_free()
 
 # ---------------------------------------------------------------- shared CRT menu style (main menu / HUD)
@@ -669,24 +669,24 @@ func test_miss_plays_no_impact() -> void:
 	await get_tree().process_frame
 	var st := screen.stage
 	for id in WeaponAnims.PROFILES:
-		var a: Dictionary = st.mechs["atk"]
-		var d: Dictionary = st.mechs["def"]
+		var a: MechView = st.mechs["atk"]
+		var d: MechView = st.mechs["def"]
 		var imp := WeaponAnims.impact_time(id)
 		var dur := WeaponAnims.duration(id)
 		var reacted := false
 		for t in [imp + 0.02, imp + 0.2, (imp + dur) * 0.5, dur - 0.05]:
-			d["pose"] = ""
-			d["white"] = false
-			d["offset"] = Vector2.ZERO
+			d.pose = ""
+			d.white = false
+			d.offset = Vector2.ZERO
 			WeaponAnims.run(st, a, d, id, t, false)
-			if d["pose"] != "" or d["white"] or d["offset"] != Vector2.ZERO:
+			if d.pose != "" or d.white or d.offset != Vector2.ZERO:
 				reacted = true
 		_check(not reacted, "%s MISS leaves the target untouched after impact time" % id)
-		d["pose"] = ""
-		d["white"] = false
-		d["offset"] = Vector2.ZERO
+		d.pose = ""
+		d.white = false
+		d.offset = Vector2.ZERO
 		WeaponAnims.run(st, a, d, id, imp + 0.02, true)
-		_check(d["pose"] != "" or d["white"] or d["offset"] != Vector2.ZERO, "%s hit still reacts on impact" % id)
+		_check(d.pose != "" or d.white or d.offset != Vector2.ZERO, "%s hit still reacts on impact" % id)
 	screen.queue_free()
 
 func test_seed_counter_resets_per_mission() -> void:
@@ -1908,10 +1908,115 @@ func test_replacing_a_finished_session_applies_it() -> void:
 	_check(dfn.current_armor == sess.result.def_armor_after and dfn.current_armor < start_def, "a concluded session replaced on screen is written back to the units first")
 	screen.queue_free()
 
+## A replaced finished session also reaches the listeners, once, whether or not it was fully played.
+func test_replaced_finished_session_emits_resolution() -> void:
+	for played in [false, true]:
+		var screen := BattleScreen.new()
+		add_child(screen)
+		await get_tree().process_frame
+		var emitted: Array = []
+		screen.resolution_confirmed.connect(func(r): emitted.append(r))
+		var sess := _flat_session("vanguard", "moloch")
+		sess.auto_resolve()
+		screen.start_session(sess)
+		if played:
+			screen._on_skip_pressed()   # played out, waiting for the confirm
+		screen.start_showdown(_fight("falke", "goliath"))
+		_check(emitted.size() == 1 and emitted[0] == sess.result, "a replaced finished session emits resolution_confirmed once (fully played: %s)" % played)
+		screen.start_showdown(_fight("falke", "goliath"))
+		_check(emitted.size() == 1, "replacing a showdown emits nothing")
+		screen.queue_free()
+
+func test_screen_only_processes_while_active() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	_check(not screen.is_processing(), "an idle battle screen does not process")
+	screen.start_showdown(_fight("vanguard", "moloch"))
+	_check(screen.is_processing(), "a running fight processes")
+	screen._on_skip_pressed()
+	screen._on_confirm_pressed()
+	_check(not screen.is_processing(), "a confirmed fight stops processing")
+	screen.queue_free()
+
+func test_hud_status_follows_the_animation() -> void:
+	var sess := _flat_session("falke", "goliath")
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "gyro_thruster")   # atk gets HASTE
+	sess.auto_resolve()
+	var tl := BattleTimeline.build(sess.result)
+	_check(not tl.start_status.is_empty() and tl.start_status["badges"]["atk"].is_empty(), "the timeline carries a start status with no badges")
+	var st := BattleStage.new()
+	add_child(st)
+	st.setup(sess.result, tl, null)
+	_check(st._status_src() == tl.start_status, "an intro shows the start status (SPD/EVA row) even for a showdown")
+	var first: Dictionary = tl.beats[0]
+	_check(first["badges"]["atk"].has("HASTE") or first["badges"]["def"].has("HASTE"), "beat 0 snapshots the haste its step grants")
+	st.beat_idx = 0
+	for p in [BattleStage.PHASE_MENU, BattleStage.PHASE_SUPPORT]:
+		st.phase = p
+		_check(st._status_src() == tl.start_status, "during %s the previous beat's status (the start) is shown" % p)
+	st.phase = BattleStage.PHASE_ATTACK
+	st._impact_done = false
+	_check(st._status_src() == tl.start_status, "an attack before impact still shows the previous status")
+	st._impact_done = true
+	_check(st._status_src() == first, "after impact the beat's own snapshot is shown")
+	st.phase = BattleStage.PHASE_SETTLE
+	_check(st._status_src() == first, "settling shows the beat's snapshot")
+	st.beat_idx = 1
+	st.phase = BattleStage.PHASE_MENU
+	_check(st._status_src() == first, "beat 1's menu cue shows beat 0's snapshot")
+	st.beat_idx = tl.beats.size()
+	st.phase = BattleStage.PHASE_RESULT
+	_check(st._status_src() == tl.beats.back(), "the result screen shows the last recorded beat")
+	# the joined badge text is cached per side until the array changes
+	var b1: Array = ["A", "B", "C"]
+	_check(st._badge_text("atk", b1) == "A B", "badge text shows the first two badges")
+	var cached: Array = st._badge_cache["atk"]
+	_check(st._badge_text("atk", b1) == "A B" and is_same(st._badge_cache["atk"], cached), "an unchanged badge array is served from the cache")
+	var b2: Array = ["X"]
+	_check(st._badge_text("atk", b2) == "X", "a new badge array rebuilds the text")
+	st.queue_free()
+
+func test_static_phases_redraw_only_when_something_moves() -> void:
+	var screen := _screen_for(_fight("vanguard", "moloch"))
+	var st: BattleStage = screen.stage
+	st.skip_to_end()
+	_check(st.phase == BattleStage.PHASE_RESULT, "a skipped fight rests on the result screen")
+	st.numbers.clear()
+	st._redraw_key = []
+	st._redraw_if_animated()
+	var key: Array = st._redraw_key
+	_check(not key.is_empty(), "the first static tick records what it drew")
+	# a tiny step inside the same blink / idle / smoke slot changes nothing
+	st.clock = floorf(st.clock / 1.0) + 0.011
+	st._redraw_if_animated()
+	var base: Array = st._redraw_key.duplicate()
+	st.clock += 0.001
+	st._redraw_if_animated()
+	_check(st._redraw_key == base, "no repaint key change inside one slot")
+	st.clock += 0.06   # past one smoke tick
+	st._redraw_if_animated()
+	_check(st._redraw_key != base, "crossing a tick changes the key and repaints")
+	screen.queue_free()
+
+func test_pixel_font_loads_its_index() -> void:
+	PixelFont.warm()
+	_check(PixelFont.has_glyph("A") and PixelFont.has_glyph("?"), "the font index loaded (a failed meta load would leave every glyph a '?')")
+	_check(BattleLayout.W == BattleStage.W and BattleLayout.H == BattleStage.H and BattleLayout.GROUND_Y == BattleStage.GROUND_Y and BattleLayout.FEET_X == BattleStage.FEET_X,
+		"BattleStage geometry constants alias BattleLayout's")
+
 func test_backdrop_cache_never_holds_null() -> void:
 	for t in BattleLayout.BACKDROP_BY_TERRAIN:
 		_check(BattleLayout.get_backdrop(t) != null, "backdrop for terrain %d loads" % t)
 	_check(not BattleLayout._backdrop_cache.values().has(null), "no null is cached as a backdrop")
+	# a missing file returns null and leaves the cache untouched (key 999 is no real terrain)
+	var before := BattleLayout._backdrop_cache.size()
+	_check(BattleLayout.get_backdrop(999, "res://assets/battle/backdrops/__missing__.png") == null, "a nonexistent backdrop path yields null")
+	_check(not BattleLayout._backdrop_cache.has(999) and BattleLayout._backdrop_cache.size() == before and not BattleLayout._backdrop_cache.values().has(null),
+		"a failed load caches nothing (not even null)")
+	_check(BattleLayout.get_backdrop(999, BattleLayout.backdrop_path(GridTileData.TerrainType.PLAIN)) != null and BattleLayout._backdrop_cache.has(999),
+		"a good override path loads and is cached")
+	BattleLayout._backdrop_cache.erase(999)
 
 func test_hud_status_comes_from_the_beat() -> void:
 	var sess := _flat_session("falke", "goliath")
@@ -1925,8 +2030,8 @@ func test_hud_status_comes_from_the_beat() -> void:
 	screen.stage.skip_to_end()
 	for side in ["atk", "def"]:
 		var live := sess.get_combatant(side)
-		var shown := screen.stage._status_of(side)
-		_check(shown["badges"] == live.get_status_badges() and shown["spd"] == live.get_effective_speed() and shown["eva"] == live.get_effective_evasion(),
+		var shown: Dictionary = screen.stage._status_src()
+		_check(shown["badges"][side] == live.get_status_badges() and shown["spd"][side] == live.get_effective_speed() and shown["eva"][side] == live.get_effective_evasion(),
 			"showdown HUD status for %s matches the live fight" % side)
 	# a step keeps the status it had, even once the session has moved on
 	var early: SkirmishEngine.TurnStep = sess.result.steps[0]
@@ -2362,3 +2467,137 @@ func test_recon_colors_cover_every_terrain() -> void:
 	for code in ["P", "D", "R_D", "r_d", "R", "F", "C", "M", "?"]:
 		_check(MainMenu.RECON_COLORS.has(TerrainDefs.parse_code(code)), "recon code %s resolves to a terrain colour" % code)
 	_check(TerrainDefs.parse_code("R_D") == GridTileData.TerrainType.ROAD, "the R_D alias renders as road in the recon map")
+
+# ---------------------------------------------------------------- review pass 2: safety claims
+## Every script variable of an object as {name: value}, containers shallow-copied.
+func _script_vars(obj: Object) -> Dictionary:
+	var out: Dictionary = {}
+	for prop in obj.get_property_list():
+		if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE and not String(prop["name"]).begins_with("_state_props"):
+			var v: Variant = obj.get(prop["name"])
+			if v is Array or v is Dictionary:
+				v = v.duplicate()
+			out[prop["name"]] = v
+	return out
+
+func _mech_snapshot(m: MechData) -> Dictionary:
+	var snap := _script_vars(m)
+	var abs_snap: Array = []
+	for ab in m.abilities:
+		abs_snap.append([ab, _script_vars(ab)])
+	snap["__abilities"] = abs_snap
+	return snap
+
+func test_forecast_and_pure_sim_never_mutate_walkers() -> void:
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	atk.current_armor -= 7
+	atk.current_energy -= 2
+	dfn.is_entrenched = true
+	_check(atk.abilities.size() > 0 and dfn.abilities.size() > 0, "both walkers carry abilities to snapshot")
+	var from := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 2)
+	var to := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.FOREST, 1)
+	var ctx := {"atk_allies_adj": 1, "def_allies_adj": 1, "is_pincer": false, "atk_suppression": 1}
+	var snap_a := _mech_snapshot(atk)
+	var snap_d := _mech_snapshot(dfn)
+	SkirmishEngine.clear_forecast_cache()
+	SkirmishEngine.compute_forecast(atk, dfn, from, to, ctx)
+	SkirmishEngine.forecast_shared(atk, dfn, from, to, ctx)
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to, false, true, ctx)
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to)   # the default must be a pure simulation too
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to, false, false, ctx)   # live dice, still no write-back
+	_check(_mech_snapshot(atk) == snap_a, "the attacker is unchanged by forecasts and non-applying simulations")
+	_check(_mech_snapshot(dfn) == snap_d, "the defender is unchanged by forecasts and non-applying simulations")
+	# the flipped default really does not apply, while an explicit true does
+	var hull := dfn.current_armor
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to)
+	_check(dfn.current_armor == hull, "resolve_skirmish defaults to apply_to_units = false")
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to, true)
+	_check(dfn.current_armor != hull, "apply_to_units = true still writes the result back")
+
+func test_forecast_cache_rotation_at_the_limit() -> void:
+	SkirmishEngine.clear_forecast_cache()
+	var limit := SkirmishForecast.FORECAST_CACHE_LIMIT
+	for i in limit:
+		SkirmishForecast._store([i], {"v": i})
+	_check(SkirmishForecast._forecast_cache.size() == limit and SkirmishForecast._forecast_old.is_empty(), "a full generation has not rotated yet")
+	SkirmishForecast._store([limit], {"v": limit})
+	_check(SkirmishForecast._forecast_old.size() == limit and SkirmishForecast._forecast_old.has([0]) and SkirmishForecast._forecast_old.has([limit - 1]),
+		"the full generation became the old one with every earlier entry intact")
+	_check(SkirmishForecast._forecast_cache.size() == 1 and SkirmishForecast._forecast_cache.has([limit]), "the new entry starts a fresh current generation")
+	SkirmishEngine.clear_forecast_cache()
+	_check(SkirmishForecast._forecast_cache.is_empty() and SkirmishForecast._forecast_old.is_empty(), "clear_forecast_cache empties both generations")
+
+## Pinned from the table at review time: effect_type -> [on_foe, {property: delta from a clean state}, soften token, status text].
+const SUPPORT_FIXTURE := {
+	"PROTECT_RICOCHET": [false, {"def_buff_pct": 35}, "krupp_plate", "DEF +35% // GLACIS ANGLING"],
+	"BULKHEAD_WALL": [false, {"def_buff_pct": 45}, "", "BULKHEAD DEPLOYED (+45% DEF)"],
+	"ANCHOR_BRACE": [false, {"def_buff_pct": 30, "acc_buff_pct": 20, "crit_buff_pct": 15}, "", "BRACED (+30% DEF / +CRIT)"],
+	"REACTIVE_SHIELD": [false, {"def_buff_pct": 20}, "ablative_shield", "REACTIVE SHIELD ARMED"],
+	"THRUSTER_EVADE": [false, {"eva_buff_pct": 30, "spd_buff_pct": 35}, "gyro_thruster", "EVA +30% // HASTE +35%"],
+	"RECON_LOCK": [false, {"acc_buff_pct": 35, "crit_buff_pct": 35, "atk_buff_pct": 20}, "", "TARGET LOCK (+35% CRIT/ACC)"],
+	"BALLISTIC_PLOT": [false, {"atk_buff_pct": 30, "crit_buff_pct": 25, "armor_pierce_bonus": 0.20}, "", "FIRE PLOT (+30% ATK / +AP)"],
+	"ECM_JAM": [true, {"acc_buff_pct": -30, "spd_buff_pct": -25, "def_buff_pct": -20}, "", "ENEMY JAMMED (-ACC/-SPD/-DEF)"],
+	"CMD_UPLINK": [false, {"atk_buff_pct": 25, "def_buff_pct": 25, "spd_buff_pct": 15, "acc_buff_pct": 15}, "", "HQ UPLINK (+25% ATK/DEF)"],
+}
+const BUFF_PROPS: Array[String] = ["atk_buff_pct", "def_buff_pct", "spd_buff_pct", "eva_buff_pct", "acc_buff_pct", "crit_buff_pct", "armor_pierce_bonus"]
+
+func test_every_support_effect_matches_the_pinned_fixture() -> void:
+	_check(SkirmishEngine.SUPPORT_EFFECTS.size() == SUPPORT_FIXTURE.size(), "the fixture covers every SUPPORT_EFFECTS row (%d vs %d)" % [SkirmishEngine.SUPPORT_EFFECTS.size(), SUPPORT_FIXTURE.size()])
+	for et in SkirmishEngine.SUPPORT_EFFECTS:
+		_check(SUPPORT_FIXTURE.has(et), "%s is pinned in the fixture" % et)
+		if not SUPPORT_FIXTURE.has(et):
+			continue
+		var fx: Array = SUPPORT_FIXTURE[et]
+		var sess := _flat_session("vanguard", "moloch")
+		var ab := CombatAbility.new("t_" + et, "T", "TACTIC", 0, 1.0, 0, 95, 0, 0.0, et)
+		var step := SkirmishEngine.TurnStep.new()
+		sess._resolve_support_tech(step, sess.atk_state, sess.def_state, ab)
+		var who: SkirmishEngine.CombatantState = sess.def_state if fx[0] else sess.atk_state
+		var other: SkirmishEngine.CombatantState = sess.atk_state if fx[0] else sess.def_state
+		for prop in BUFF_PROPS:
+			var want: float = float((fx[1] as Dictionary).get(prop, 0))
+			_check(is_equal_approx(float(who.get(prop)), want), "%s sets %s to %s (got %s)" % [et, prop, want, who.get(prop)])
+			_check(is_equal_approx(float(other.get(prop)), 0.0), "%s leaves the other side's %s alone" % [et, prop])
+		_check(sess.atk_state.pending_soften == fx[2], "%s soften token is '%s'" % [et, fx[2]])
+		_check(step.status_text == fx[3], "%s status text is pinned ('%s')" % [et, step.status_text])
+	# a presentation-free session skips text but applies the identical numbers
+	var quiet := _flat_session("vanguard", "moloch")
+	quiet.record_presentation = false
+	var q_step := SkirmishEngine.TurnStep.new()
+	quiet._resolve_support_tech(q_step, quiet.atk_state, quiet.def_state, CombatAbility.new("t_q", "T", "ARMOR", 0, 1.0, 0, 95, 0, 0.0, "BULKHEAD_WALL"))
+	_check(quiet.atk_state.def_buff_pct == 45 and q_step.status_text == "" and q_step.description == "", "record_presentation=false skips text but applies the effect")
+
+func _pct_figures(text: String) -> Array[int]:
+	var out: Array[int] = []
+	var re := RegEx.new()
+	re.compile("([+-])(\\d+)%")
+	for m in re.search_all(text):
+		out.append(int(m.get_string(2)) * (-1 if m.get_string(1) == "-" else 1))
+	return out
+
+func test_support_text_and_descriptions_match_the_mods() -> void:
+	for et in SkirmishEngine.SUPPORT_EFFECTS:
+		var fx: Dictionary = SkirmishEngine.SUPPORT_EFFECTS[et]
+		var mod_figs: Array[int] = []
+		for mod in fx["mods"]:
+			var v: float = float(mod[1]) * (100.0 if mod[0] == "armor_pierce_bonus" else 1.0)
+			var fig := roundi(v)
+			if not mod_figs.has(fig):
+				mod_figs.append(fig)
+		mod_figs.sort()
+		for fig in _pct_figures(String(fx["text"])):
+			_check(mod_figs.has(fig), "%s status text figure %+d%% is one of the mods %s" % [et, fig, mod_figs])
+		var matched := 0
+		for id in GlobalState.ability_catalog:
+			var ab: CombatAbility = GlobalState.ability_catalog[id]
+			if ab.effect_type != et:
+				continue
+			matched += 1
+			var desc_figs: Array[int] = []
+			for fig in _pct_figures(ab.description):
+				if not desc_figs.has(fig):
+					desc_figs.append(fig)
+			desc_figs.sort()
+			_check(desc_figs == mod_figs, "%s description figures %s equal the mods %s" % [id, desc_figs, mod_figs])
+		_check(matched > 0, "%s has a catalog ability" % et)
