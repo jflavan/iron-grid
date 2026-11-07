@@ -46,7 +46,7 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 			best = act
 
 	for tgt in foes:
-		if not is_instance_valid(tgt) or tgt.mech_data == null or not tgt.mech_data.is_alive():
+		if not MechUnit.is_live(tgt):
 			continue
 		var dest_pos: Vector2i = tgt.mech_data.grid_pos
 		var dest_tile: GridTileData = grid_map.get_tile(dest_pos)
@@ -131,19 +131,16 @@ static func _objective_targets(grid_map: IsoGridMap, map_def: MapDefinition) -> 
 
 static func _score_tile(tile: GridTileData, m: MechData, foes: Array[MechUnit], map_def: MapDefinition, targets: Array[Vector2i]) -> float:
 	if tile == null: return -999.0
-	var s: float = float(tile.get_defense_modifier_pct()) * 0.65 + float(tile.elevation) * 7.5
-	if tile.terrain_type == GridTileData.TerrainType.RIVER: s -= 26.0
-	elif tile.terrain_type == GridTileData.TerrainType.CITY: s += 18.0
-	elif tile.terrain_type == GridTileData.TerrainType.MOUNTAIN and m.mountain_gear: s += 16.0
+	var s: float = AIController.terrain_position_score(tile, m)
 	if tile.is_objective:
 		if tile.controlled_by != ME:
 			s += 52.0
 		else:
 			s += 44.0 if map_def.strategy_mode == MapDefinition.StrategyMode.DEFENSE else 24.0
 	var ed: float = 999.0
-	for f in foes: ed = minf(ed, float(absi(tile.coords.x - f.mech_data.grid_pos.x) + absi(tile.coords.y - f.mech_data.grid_pos.y)))
+	for f in foes: ed = minf(ed, float(TerrainGrid.manhattan(tile.coords, f.mech_data.grid_pos)))
 	var od: float = 999.0
-	for o in targets: od = minf(od, float(absi(tile.coords.x - o.x) + absi(tile.coords.y - o.y)))
+	for o in targets: od = minf(od, float(TerrainGrid.manhattan(tile.coords, o)))
 	match map_def.strategy_mode:
 		MapDefinition.StrategyMode.DEFENSE:
 			s -= od * 7.0 + ed * 2.2   # Coalition garrison

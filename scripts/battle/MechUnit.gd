@@ -9,7 +9,6 @@ var mech_data: MechData
 var is_selected: bool = false
 var _anim_time: float = 0.0
 var _is_walking: bool = false
-var _hit_flash: float = 0.0
 var _since_redraw: float = 0.0
 # Name plate text and width, fixed per walker (the callsign never changes after setup).
 var _plate_name: String = ""
@@ -38,9 +37,7 @@ func _process(delta: float) -> void:
 		return
 	_anim_time += delta * (3.5 if _is_walking else 1.0)
 	_since_redraw += delta
-	if _hit_flash > 0.0:
-		_hit_flash = maxf(0.0, _hit_flash - delta * 3.0)
-	elif _since_redraw < 1.0 / AMBIENT_FPS:
+	if _since_redraw < 1.0 / AMBIENT_FPS:
 		return
 	# Keep the remainder so the per-walker stagger survives; an off-screen walker waits a whole tick
 	# before testing visibility again instead of every frame.
@@ -53,9 +50,13 @@ func _on_screen() -> bool:
 	var p: Vector2 = get_global_transform_with_canvas().origin
 	return get_viewport_rect().grow(CULL_MARGIN).has_point(p)
 
-func trigger_hit_flash() -> void:
-	_hit_flash = 1.0
-	queue_redraw()
+## True while `u` is a walker node that still exists and whose walker is not wrecked. Takes any value
+## (including a freed instance or null), which is why it is static rather than a method.
+static func is_live(u) -> bool:
+	if not is_instance_valid(u):
+		return false
+	var unit: MechUnit = u   # typed from here on: the member reads below are the hot part
+	return unit.mech_data != null and unit.mech_data.is_alive()
 
 func animate_move_along_screen_points(points: Array[Vector2], on_complete: Callable) -> void:
 	if points.size() <= 1:
@@ -136,7 +137,7 @@ func _draw() -> void:
 	var flip_h: bool = ((mech_data.facing.x - mech_data.facing.y) < 0)
 	if flip_h:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2(-1.0, 1.0))
-	MechSilhouette.draw(self, Vector2(0, 6), mech_data.chassis_id, mech_data.faction, 0.78, _anim_time, dim_factor, _hit_flash > 0.0)
+	MechSilhouette.draw(self, Vector2(0, 6), mech_data.chassis_id, mech_data.faction, 0.78, _anim_time, dim_factor)
 	if flip_h:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, 1.0))
 

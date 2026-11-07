@@ -127,7 +127,7 @@ func _tactical_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Dicti
 	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.is_order_complete():
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
 			if not u.mech_data.is_order_complete():
-				bf._on_tile_clicked(u.mech_data.grid_pos, null)
+				bf._on_tile_clicked(u.mech_data.grid_pos)
 				return
 		return
 	var d := TacticalBot.choose_best_action(sel, bf.grid_map, bf.unit_container, map_def)
@@ -137,4 +137,4 @@ func _tactical_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Dicti
 		bf._on_wait_refuel_requested()
 	else:
 		stats["moves"] += 1
-		bf._on_tile_clicked(d["target_pos"], null)
+		bf._on_tile_clicked(d["target_pos"])

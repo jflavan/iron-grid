@@ -12,14 +12,8 @@ extends Node2D
 
 var current_map_def: MapDefinition
 
-# Strike plans for the current selection, keyed by everything they depend on, so sweeping the
-# cursor back and forth across enemies runs each search once. Cleared with the selection.
-var _strike_plans: Dictionary = {}
-const STRIKE_PLAN_CACHE_MAX := 64
-## Uncapped movement-cost field of the selected walker (TerrainGrid.strike_cost_field), valid for one
-## (walker, tile, occupancy epoch); every strike plan against any enemy then costs a few lookups.
-var _strike_field: Dictionary = {}
-var _strike_field_key: Array = []
+## Strike plans of the current selection (cleared with it).
+var _strike_cache := StrikePlanCache.new()
 var selected_unit: MechUnit = null
 var _is_animating_move: bool = false:
 	set(v):
@@ -32,11 +26,13 @@ var _phase_before_resolution: GlobalState.TurnPhase = GlobalState.TurnPhase.PLAY
 var _pending_attacker: MechUnit = null
 var _pending_defender: MechUnit = null
 var _pending_target_coords: Vector2i = Vector2i.ZERO
+# The strike an AI walker will make once its move animation lands (cleared by _clear_pending_ai)
 var _pending_ai_target: MechUnit = null
 var _pending_ai_attack_fuel: int = 0
 
 # AI Turn Queue
 var _ai_queue: Array[MechUnit] = []
+## Cancels a running "all walkers ordered, start the AI phase" countdown when bumped.
 var _auto_advance_token: int = 0
 var _mission_token: int = 0
 
@@ -65,7 +61,7 @@ func _exit_tree() -> void:
 
 func start_mission(map_idx: int) -> void:
 	_mission_token += 1
-	_auto_advance_token += 1   # a countdown from the previous run must not start this one's AI phase
+	_cancel_auto_advance()   # a countdown from the previous run must not start this one's AI phase
 	GlobalState.reset_battle_state()
 	# Drop any transient turn state left over from a previous run of this battlefield (Redeploy)
 	selected_unit = null
@@ -73,12 +69,9 @@ func start_mission(map_idx: int) -> void:
 	_ai_queue.clear()
 	_pending_attacker = null
 	_pending_defender = null
-	_pending_ai_target = null
-	_pending_ai_attack_fuel = 0
+	_clear_pending_ai()
 	_phase_before_resolution = GlobalState.TurnPhase.PLAYER_PHASE
-	_strike_plans.clear()
-	_strike_field = {}
-	_strike_field_key = []
+	_strike_cache.clear()
 	grid_map.suppress_redraw = false
 	MechUnit.suppress_redraw = false
 	var idx: int = clampi(map_idx, 0, GlobalState.maps.size() - 1)
@@ -200,6 +193,10 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 func _entrench_unit(m: MechData) -> int:
 	return Rules.entrench(m, grid_map.get_tile(m.grid_pos))
 
+func _clear_pending_ai() -> void:
+	_pending_ai_target = null
+	_pending_ai_attack_fuel = 0
+
 func _select_unit(u: MechUnit) -> void:
 	if selected_unit != null and is_instance_valid(selected_unit):
 		selected_unit.is_selected = false
@@ -241,13 +238,11 @@ func _clear_hover_readouts() -> void:
 ## Drops the OUT OF REACH box and the YOUR STEP COST row: the selected walker has used its order
 ## (or there is no selection), so neither applies any more.
 func _clear_strike_readout() -> void:
-	_strike_plans.clear()
-	_strike_field = {}
-	_strike_field_key = []
+	_strike_cache.clear()
 	ui_overlay.strike_plan = null
 	ui_overlay.step_cost_mech = null
 
-func _on_tile_hovered(coords: Vector2i, _tile: GridTileData) -> void:
+func _on_tile_hovered(coords: Vector2i) -> void:
 	_refresh_hover_telemetry(coords)
 
 func _refresh_hover_telemetry(coords: Vector2i) -> void:
@@ -277,7 +272,7 @@ func _refresh_hover_telemetry(coords: Vector2i) -> void:
 
 ## True while `selected_unit` still refers to a live walker (not freed, not wrecked).
 func _selected_is_valid() -> bool:
-	return selected_unit != null and is_instance_valid(selected_unit) and selected_unit.mech_data != null and selected_unit.mech_data.is_alive()
+	return MechUnit.is_live(selected_unit)
 
 func _can_rotate_selected_unit() -> bool:
 	return (can_command() and selected_unit != null
@@ -298,29 +293,11 @@ func strike_plan_for(coords: Vector2i) -> StrikePlan:
 	if u_at == null or u_at.mech_data.faction == selected_unit.mech_data.faction:
 		return null
 	var m := selected_unit.mech_data
-	if m.has_moved and absi(coords.x - m.grid_pos.x) + absi(coords.y - m.grid_pos.y) != 1:
+	if m.has_moved and TerrainGrid.manhattan(coords, m.grid_pos) != 1:
 		return null
-	var key := [m, m.grid_pos, m.current_fuel, m.has_moved, coords, u_at, u_at.mech_data.grid_pos, unit_container.occupancy_epoch]
-	var cached: StrikePlan = _strike_plans.get(key, null)
-	if cached != null:
-		return cached
-	if _strike_plans.size() >= STRIKE_PLAN_CACHE_MAX:
-		_strike_plans.clear()
-	var occ := unit_container.build_occupied_map(selected_unit)
-	var plan: StrikePlan
-	if m.has_moved:
-		# Only the start tile can launch now, so the targeted search settles after one pop: no field.
-		plan = grid_map.compute_strike_plan(m, coords, occ)
-	else:
-		var field_key := [m, m.grid_pos, unit_container.occupancy_epoch]
-		if field_key != _strike_field_key:
-			_strike_field = grid_map.strike_cost_field(m, occ)
-			_strike_field_key = field_key
-		plan = grid_map.compute_strike_plan(m, coords, occ, _strike_field)
-	_strike_plans[key] = plan
-	return plan
+	return _strike_cache.plan_for(grid_map, unit_container, selected_unit, coords, u_at)
 
-func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
+func _on_tile_clicked(coords: Vector2i) -> void:
 	if not can_command():
 		return
 
@@ -342,8 +319,8 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 	# 2. If a moved player unit is selected and player clicks an orthogonal neighbor empty tile -> reface toward it!
 	if _selected_is_valid() and selected_unit.mech_data.faction == MechData.Faction.PLAYER and selected_unit.mech_data.has_moved and clicked_unit == null:
 		var diff := coords - selected_unit.mech_data.grid_pos
-		if diff in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			_auto_advance_token += 1
+		if diff in TerrainGrid.DIRS:
+			_cancel_auto_advance()
 			selected_unit.mech_data.set_facing(diff)
 			selected_unit.mech_data.has_attacked = true
 			SoundManager.play("ui_click")
@@ -357,7 +334,7 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 	# 3. Otherwise, clicking any unit selects it to inspect its telemetry & fuel range.
 	# An enemy the selected walker could almost strike says why it can't (OUT OF REACH).
 	if clicked_unit != null:
-		_auto_advance_token += 1
+		_cancel_auto_advance()
 		var plan := strike_plan_for(coords)
 		if plan != null and plan.severity == StrikePlan.IN_STRIKING_DISTANCE:
 			SoundManager.play("ui_cancel")
@@ -366,21 +343,21 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 			SoundManager.play("ui_click")
 		_select_unit(clicked_unit)
 	else:
-		_auto_advance_token += 1
+		_cancel_auto_advance()
 		SoundManager.play("ui_cancel")
 		_deselect_unit()
 
 func _execute_unit_attack(attacker: MechUnit, defender: MechUnit, fuel_spent: int) -> void:
 	if attacker == null or defender == null:
 		return
-	_auto_advance_token += 1
+	_cancel_auto_advance()
 	var m_data := attacker.mech_data
 	var atk_coords: Vector2i = m_data.grid_pos
 	var def_coords: Vector2i = defender.mech_data.grid_pos
 
 	if def_coords != atk_coords:
 		m_data.set_facing(def_coords - atk_coords)
-	m_data.current_fuel = maxi(0, m_data.current_fuel - fuel_spent)
+	m_data.spend_fuel(fuel_spent)
 	m_data.has_moved = true
 	m_data.has_attacked = true
 	m_data.is_entrenched = false
@@ -412,9 +389,8 @@ func _execute_unit_movement(unit: MechUnit, target_coords: Vector2i, path: Array
 
 	if target_coords != from_coords:
 		m_data.facing = target_coords - from_coords
-	m_data.current_fuel = maxi(0, m_data.current_fuel - fuel_spent)
-	m_data.grid_pos = target_coords
-	unit_container.note_unit_moved()
+	m_data.spend_fuel(fuel_spent)
+	unit_container.move_unit(unit, target_coords)
 	m_data.has_moved = true
 	m_data.is_entrenched = false
 
@@ -446,11 +422,10 @@ func _on_unit_movement_finished(unit: MechUnit, target_coords: Vector2i, fuel_sp
 		grid_map.compute_reachable_tiles(unit.mech_data, occ)
 		_select_unit(unit)
 	elif GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
-		if _pending_ai_target != null and is_instance_valid(_pending_ai_target) and _pending_ai_target.mech_data.is_alive():
+		if MechUnit.is_live(_pending_ai_target):
 			var tgt := _pending_ai_target
 			var atk_f := _pending_ai_attack_fuel
-			_pending_ai_target = null
-			_pending_ai_attack_fuel = 0
+			_clear_pending_ai()
 			_execute_unit_attack(unit, tgt, atk_f)
 			return
 		unit.mech_data.has_attacked = true
@@ -488,41 +463,49 @@ func _on_wait_refuel_requested() -> void:
 	selected_unit.queue_redraw()
 	_check_auto_advance_player_phase()
 
-func _has_unmoved_player_units() -> bool:
+## The first living player walker (in spawn order) that still has an order to give, or null.
+func _first_ready_player_unit() -> MechUnit:
 	for u in unit_container.get_faction_units(MechData.Faction.PLAYER):
-		if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive() and not u.mech_data.is_order_complete():
-			return true
-	return false
+		if MechUnit.is_live(u) and not u.mech_data.is_order_complete():
+			return u
+	return null
+
+func _has_unmoved_player_units() -> bool:
+	return _first_ready_player_unit() != null
+
+## Any player input cancels a running countdown to the AI phase.
+func _cancel_auto_advance() -> void:
+	_auto_advance_token += 1
 
 func _start_auto_advance_timer(delay: float = 0.45) -> void:
-	_auto_advance_token += 1
+	_cancel_auto_advance()
 	var token: int = _auto_advance_token
 	_after(delay, func():
 		if token == _auto_advance_token and not _is_animating_move:
 			_begin_ai_phase()
 	, GlobalState.TurnPhase.PLAYER_PHASE)
 
+## True while the mission that captured `tok` is still running and the game is in `phase`: the guard
+## every deferred callback (timer, camera tween) applies before acting.
+func _mission_alive(tok: int, phase: GlobalState.TurnPhase) -> bool:
+	return tok == _mission_token and GlobalState.current_phase == phase
+
 ## Runs `fn` after `delay` seconds unless the mission was restarted / ended meanwhile or the game is
 ## no longer in `phase` (the AI phase by default).
 func _after(delay: float, fn: Callable, phase: GlobalState.TurnPhase = GlobalState.TurnPhase.AI_PHASE) -> void:
 	var tok := _mission_token
 	get_tree().create_timer(delay).timeout.connect(func():
-		if tok == _mission_token and GlobalState.current_phase == phase:
+		if _mission_alive(tok, phase):
 			fn.call()
 	)
 
-func _check_auto_advance_player_phase(auto_select_unmoved: bool = true) -> void:
-	var p_units := unit_container.get_faction_units(MechData.Faction.PLAYER)
-	if auto_select_unmoved:
-		for u in p_units:
-			if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive() and not u.mech_data.is_order_complete():
-				# Select next unmoved unit automatically
-				_select_unit(u)
-				return
-	else:
-		if _has_unmoved_player_units():
-			return
-	# All player units have moved -> automatically transition to AI Phase after brief pause
+## Selects the next walker that still has an order; when none is left, the AI phase starts after a
+## brief pause.
+func _check_auto_advance_player_phase() -> void:
+	var next_unit := _first_ready_player_unit()
+	if next_unit != null:
+		_select_unit(next_unit)
+		return
 	_start_auto_advance_timer(0.45)
 
 func _select_next_player_unit() -> void:
@@ -531,17 +514,17 @@ func _select_next_player_unit() -> void:
 	var p_units := unit_container.get_faction_units(MechData.Faction.PLAYER)
 	if p_units.is_empty():
 		return
-	_auto_advance_token += 1
+	_cancel_auto_advance()
 	var cur_idx: int = p_units.find(selected_unit)
 	for i in range(1, p_units.size() + 1):
 		var candidate: MechUnit = p_units[(cur_idx + i) % p_units.size()]
-		if is_instance_valid(candidate) and candidate.mech_data != null and candidate.mech_data.is_alive() and not candidate.mech_data.is_order_complete():
+		if MechUnit.is_live(candidate) and not candidate.mech_data.is_order_complete():
 			_select_unit(candidate)
 			SoundManager.play("ui_click")
 			return
 	for i in range(1, p_units.size() + 1):
 		var candidate: MechUnit = p_units[(cur_idx + i) % p_units.size()]
-		if is_instance_valid(candidate) and candidate.mech_data != null and candidate.mech_data.is_alive():
+		if MechUnit.is_live(candidate):
 			_select_unit(candidate)
 			SoundManager.play("ui_click")
 			if not _has_unmoved_player_units():
@@ -583,8 +566,8 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 	BalanceProbe.record_outcome(result)
 	GlobalState.add_log("COMBAT RESULT: " + result.summary_headline)
 
-	var atk_alive: bool = (_pending_attacker != null and is_instance_valid(_pending_attacker) and _pending_attacker.mech_data.is_alive())
-	var def_alive: bool = (_pending_defender != null and is_instance_valid(_pending_defender) and _pending_defender.mech_data.is_alive())
+	var atk_alive: bool = MechUnit.is_live(_pending_attacker)
+	var def_alive: bool = MechUnit.is_live(_pending_defender)
 
 	if not def_alive and _pending_defender != null:
 		GlobalState.add_log("%s WRECKED at Sector (%d,%d)!" % [_pending_defender.mech_data.callsign, _pending_target_coords.x, _pending_target_coords.y])
@@ -614,8 +597,7 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 
 	_pending_attacker = null
 	_pending_defender = null
-	_pending_ai_target = null
-	_pending_ai_attack_fuel = 0
+	_clear_pending_ai()
 
 	_update_all_objective_ownership()
 	grid_map.queue_redraw()
@@ -647,9 +629,8 @@ func _begin_ai_phase() -> void:
 
 	# Finalize any player units that moved but did not attack
 	for u in unit_container.get_faction_units(MechData.Faction.PLAYER):
-		if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive():
-			if u.mech_data.has_moved and not u.mech_data.has_attacked:
-				u.mech_data.has_attacked = true
+		if MechUnit.is_live(u) and u.mech_data.has_moved and not u.mech_data.has_attacked:
+			u.mech_data.has_attacked = true
 
 	_ai_queue = unit_container.get_faction_units(MechData.Faction.AI)
 	# Mirror the player: no refuel/repair upkeep before a faction's first phase
@@ -663,7 +644,7 @@ func _process_next_ai_unit() -> void:
 
 	while not _ai_queue.is_empty():
 		var next_ai: MechUnit = _ai_queue.pop_front()
-		if is_instance_valid(next_ai) and next_ai.mech_data != null and next_ai.mech_data.is_alive():
+		if MechUnit.is_live(next_ai):
 			_execute_single_ai_turn(next_ai)
 			return
 
@@ -676,11 +657,12 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 	# Smoothly pan camera toward active AI walker
 	var cam_tw := camera.focus(ai_unit.position, 0.28)
 	cam_tw.tween_callback(func():
-		if tok != _mission_token or GlobalState.current_phase != GlobalState.TurnPhase.AI_PHASE:
+		if not _mission_alive(tok, GlobalState.TurnPhase.AI_PHASE):
 			return
-		if not is_instance_valid(ai_unit) or not ai_unit.mech_data.is_alive():
+		if not MechUnit.is_live(ai_unit):
 			_process_next_ai_unit()
 			return
+		_clear_pending_ai()
 		var decision: Dictionary = AIController.choose_best_action(
 			ai_unit, grid_map, unit_container, current_map_def
 		)
@@ -688,8 +670,6 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			ai_unit.mech_data.facing = decision["facing"]
 		var action_type: String = decision.get("type", AIController.ACTION_WAIT)
 		if action_type == AIController.ACTION_WAIT:
-			_pending_ai_target = null
-			_pending_ai_attack_fuel = 0
 			_entrench_unit(ai_unit.mech_data)
 			GlobalState.add_log("%s entrenched & refueled at (%d,%d)." % [
 				ai_unit.mech_data.callsign, ai_unit.mech_data.grid_pos.x, ai_unit.mech_data.grid_pos.y
@@ -701,25 +681,20 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			var target_unit := unit_container.get_unit_at(target_pos, ai_unit)
 			if target_unit == null:
 				# The decision's target is gone: skip this walker rather than stall the phase
-				_pending_ai_target = null
-				_pending_ai_attack_fuel = 0
 				_after(0.32, _process_next_ai_unit)
 				return
-			var move_pos: Vector2i = decision.get("move_pos", ai_unit.mech_data.grid_pos)
-			var move_path: Array[Vector2i] = decision.get("move_path", [ai_unit.mech_data.grid_pos]).duplicate()
-			var move_fuel: int = int(decision.get("move_fuel", 0))
-			var attack_fuel: int = int(decision.get("attack_fuel", decision.get("fuel_spent", 0)))
+			var move_pos: Vector2i = decision["move_pos"]
+			var move_path: Array[Vector2i] = decision["move_path"].duplicate()
+			var move_fuel: int = int(decision["move_fuel"])
+			var attack_fuel: int = int(decision["attack_fuel"])
 			if move_pos == ai_unit.mech_data.grid_pos or move_path.size() <= 1:
-				_pending_ai_target = null
-				_pending_ai_attack_fuel = 0
 				_execute_unit_attack(ai_unit, target_unit, attack_fuel)
 			else:
+				# Strike once the move animation lands (_on_unit_movement_finished)
 				_pending_ai_target = target_unit
 				_pending_ai_attack_fuel = attack_fuel
 				_execute_unit_movement(ai_unit, move_pos, move_path, move_fuel)
 		else:
-			_pending_ai_target = null
-			_pending_ai_attack_fuel = 0
 			var target_pos: Vector2i = decision["target_pos"]
 			var path: Array[Vector2i] = decision["path"].duplicate()
 			var fuel_spent: int = int(decision["fuel_spent"])
@@ -739,7 +714,7 @@ func _finish_ai_phase() -> void:
 # =============================================================================
 func _update_all_objective_ownership() -> void:
 	for u in unit_container.units:
-		if not is_instance_valid(u) or u.mech_data == null or not u.mech_data.is_alive():
+		if not MechUnit.is_live(u):
 			continue
 		var td := grid_map.get_tile(u.mech_data.grid_pos)
 		if td != null and td.is_objective:
@@ -792,11 +767,8 @@ func _on_restart_mission_requested() -> void:
 func _rotate_selected_unit() -> void:
 	if not _can_rotate_selected_unit():
 		return
-	_auto_advance_token += 1
-	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
-	var cur_idx: int = dirs.find(selected_unit.mech_data.facing)
-	var next_idx: int = (cur_idx + 1) % dirs.size()
-	selected_unit.mech_data.set_facing(dirs[next_idx])
+	_cancel_auto_advance()
+	selected_unit.mech_data.set_facing(selected_unit.mech_data.next_facing())
 	SoundManager.play("ui_click")
 	GlobalState.add_log("%s re-oriented facing to %s." % [selected_unit.mech_data.callsign, selected_unit.mech_data.get_facing_name()])
 	selected_unit.queue_redraw()

@@ -225,10 +225,26 @@ func get_facing_arrow() -> String:
 		Vector2i(0, -1): return "NE ^"
 	return "SE >"
 
+## The cardinal direction closest to `diff` (ties go to the x axis); ZERO stays ZERO.
+static func cardinal_of(diff: Vector2i) -> Vector2i:
+	if diff == Vector2i.ZERO:
+		return Vector2i.ZERO
+	if absi(diff.x) >= absi(diff.y):
+		return Vector2i(1 if diff.x > 0 else -1, 0)
+	return Vector2i(0, 1 if diff.y > 0 else -1)
+
 func set_facing(dir: Vector2i) -> void:
 	if dir == Vector2i.ZERO:
 		return
-	if absi(dir.x) >= absi(dir.y):
-		facing = Vector2i(1 if dir.x > 0 else -1, 0)
-	else:
-		facing = Vector2i(0, 1 if dir.y > 0 else -1)
+	facing = cardinal_of(dir)
+
+## Clockwise facing order of the ROTATE order: SE, SW, NW, NE (see get_facing_name).
+const FACING_CYCLE: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
+
+## The facing one ROTATE step clockwise from the current one.
+func next_facing() -> Vector2i:
+	return FACING_CYCLE[(FACING_CYCLE.find(facing) + 1) % FACING_CYCLE.size()]
+
+## Burns `amount` fuel for a move or a strike; the tank never reads below zero.
+func spend_fuel(amount: int) -> void:
+	current_fuel = maxi(0, current_fuel - amount)

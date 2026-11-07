@@ -208,7 +208,8 @@ iron-grid/
     │   ├── IsoGridMap.gd           # 2.5D isometric terrain renderer & overlay; delegates logic to TerrainGrid
     │   ├── CanvasMeshBuilder.gd    # Bakes static 2D drawing (terrain + labels) into vertex-coloured meshes
     │   ├── StrikePlan.gd           # Why an enemy can't be struck: fuel needed, breakdown & checked advice
-    │   ├── UnitContainer.gd        # Y-sorted mech manager, occupancy map & epoch, formation context
+    │   ├── StrikePlanCache.gd      # Per-selection strike plans and the cost field they read (one per occupancy epoch)
+    │   ├── UnitContainer.gd        # Y-sorted mech manager, the one mover (move_unit), occupancy map & epoch, formation context
     │   ├── MechUnit.gd             # Isometric walker node: animation, redraw timing, move tweens
     │   ├── MechSilhouette.gd       # Procedural multi-part walker drawing shared by map, HUD, hangar & showdown
     │   ├── SkirmishEngine.gd       # Final Fantasy turn-based battle session & tactical AI resolver
@@ -321,7 +322,8 @@ Before the architecture pass a strike plan re-ran a map-wide Dijkstra for every 
 - **Signals go up, calls go down.** `UIOverlay` emits `action_*_requested` signals and `modal_changed`; `Battlefield` connects them and pushes HUD state through setters. Nothing reaches up the tree with `get_parent()`.
 - **Data is table-driven and validated.** Chassis, abilities and maps are built by `ChassisCatalog`, `AbilityCatalog` and `MapCatalog`; `ChassisCatalog.ORDER` is the one chassis list. `MapDefinition.validate()` runs on every load and reports a broken map with `push_error`.
 - **Modals own the screen.** A `CrtScreen` registers blocker hotspots for its panels so clicks and hover never fall through to the map; when a modal is up only its own controls are registered. Use `UIOverlay.toggle_manual()` and `modal_open()` rather than flipping the flags.
-- **Deferred work carries a token.** Timers go through `Battlefield._after(delay, fn, phase)`, which drops the callback if the mission restarted or the phase moved on. Any new countdown must use it.
+- **Deferred work carries a token.** Timers go through `Battlefield._after(delay, fn, phase)`, which drops the callback if the mission restarted or the phase moved on (`_mission_alive` is the one guard; camera-tween callbacks use it too). Any new countdown must use it, and any player input that should abort the "all walkers ordered" countdown calls `_cancel_auto_advance()`.
+- **One owner per shared fact.** A walker changes tile only through `UnitContainer.move_unit()`, which bumps the occupancy epoch that `StrikePlanCache` and the AI key their caches on. Liveness is `MechUnit.is_live(u)` (handles null and freed nodes), grid distance is `TerrainGrid.manhattan()` (the AI tile scorer's inner loops inline it on purpose and say so: the call overhead there was a quarter of a decision), the neighbour order is `TerrainGrid.DIRS`, facing arithmetic is `MechData.cardinal_of()` / `next_facing()`, fuel is spent with `MechData.spend_fuel()`, and both commanders value terrain through `AIController.terrain_position_score()`. Don't re-spell these inline.
 - **Tests are discovered, and refactors are proven.** `tests/battle_screen_tests.gd` runs every `test_*` method in source order. Pathfinding changes are pinned by a Bellman-Ford oracle and the pre-heap linear scan; `tests/run_all.sh` runs the suite, a script-mode compile check (scripts run with `godot -s` compile before the autoloads exist, so rule and data classes must not reference `GlobalState`) and the seeded playtest, whose per-mission outcome lines must not change for a behaviour-identical refactor.
 
 ### Rendering & Performance Conventions

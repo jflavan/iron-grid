@@ -4,7 +4,7 @@ extends RefCounted
 ## Procedural walker renderer for the isometric battlefield (MechUnit). Node-free so any canvas can
 ## draw a walker; the HUD portrait, Showdown and Hangar use the pixel-art sprite sheets instead.
 
-static var _warned: Dictionary = {} # unknown chassis ids already reported
+static var _checked: Dictionary = {} # chassis ids already validated against the catalog (unknown ones warned once)
 
 static func draw(
 	ci: CanvasItem,
@@ -13,24 +13,19 @@ static func draw(
 	faction: int,
 	scale_f: float = 1.0,
 	anim_t: float = 0.0,
-	dim: float = 1.0,
-	flash_white: bool = false
+	dim: float = 1.0
 ) -> void:
-	if not ChassisCatalog.ORDER.has(chassis_id) and not _warned.has(chassis_id):
-		_warned[chassis_id] = true
-		push_warning("MechSilhouette: unknown chassis '%s', drawing the vanguard silhouette" % chassis_id)
+	if not _checked.has(chassis_id):
+		_checked[chassis_id] = true
+		if not ChassisCatalog.ORDER.has(chassis_id):
+			push_warning("MechSilhouette: unknown chassis '%s', drawing the vanguard silhouette" % chassis_id)
 	var bob: float = sin(anim_t * 3.2) * 1.4 * scale_f
 	var hull_base: Color
 	var hull_light: Color
 	var hull_dark: Color
 	var visor_col: Color
 
-	if flash_white:
-		hull_base = Color(0.98, 0.95, 0.88)
-		hull_light = Color.WHITE
-		hull_dark = Color(0.85, 0.82, 0.75)
-		visor_col = Color(1.0, 0.3, 0.1)
-	elif faction == MechData.Faction.PLAYER:
+	if faction == MechData.Faction.PLAYER:
 		hull_base = Color(0.36 * dim, 0.43 * dim, 0.29 * dim)
 		hull_light = Color(0.50 * dim, 0.58 * dim, 0.40 * dim)
 		hull_dark = Color(0.22 * dim, 0.27 * dim, 0.18 * dim)

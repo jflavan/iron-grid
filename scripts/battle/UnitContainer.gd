@@ -6,12 +6,13 @@ extends Node2D
 
 var units: Array[MechUnit] = []
 
-## Bumped whenever the set of occupied tiles may have changed (spawn, removal, note_unit_moved()), so
-## a caller can cache build_occupied_map() / anything derived from it and compare epochs.
+## Bumped whenever the set of occupied tiles may have changed (spawn, removal, move_unit()), so a
+## caller can cache build_occupied_map() / anything derived from it and compare epochs.
 var occupancy_epoch: int = 0
 
-## Call after any walker's grid_pos changes (the container cannot see mech_data moves itself).
-func note_unit_moved() -> void:
+## The one way a walker changes tile: writes its grid position and bumps the occupancy epoch.
+func move_unit(u: MechUnit, to: Vector2i) -> void:
+	u.mech_data.grid_pos = to
 	occupancy_epoch += 1
 
 func _ready() -> void:
@@ -41,31 +42,26 @@ func spawn_units_for_map(map_def: MapDefinition, grid_map: IsoGridMap) -> void:
 		add_child(m_node)
 		m_node.setup(m_data, grid_map.grid_to_screen(pos, true))
 		units.append(m_node)
-		occupancy_epoch += 1
+	occupancy_epoch += 1
 
 func get_unit_at(coords: Vector2i, exclude_unit: MechUnit = null) -> MechUnit:
 	for u in units:
-		if not is_instance_valid(u) or u == exclude_unit:
-			continue
-		if u.mech_data != null and u.mech_data.is_alive() and u.mech_data.grid_pos == coords:
+		if u != exclude_unit and MechUnit.is_live(u) and u.mech_data.grid_pos == coords:
 			return u
 	return null
 
 func build_occupied_map(exclude_unit: MechUnit = null) -> Dictionary:
 	var occ: Dictionary = {}
 	for u in units:
-		if not is_instance_valid(u) or u == exclude_unit:
-			continue
-		if u.mech_data != null and u.mech_data.is_alive():
+		if u != exclude_unit and MechUnit.is_live(u):
 			occ[u.mech_data.grid_pos] = u.mech_data
 	return occ
 
 func get_faction_units(faction: MechData.Faction) -> Array[MechUnit]:
 	var list: Array[MechUnit] = []
 	for u in units:
-		if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive():
-			if u.mech_data.faction == faction:
-				list.append(u)
+		if MechUnit.is_live(u) and u.mech_data.faction == faction:
+			list.append(u)
 	return list
 
 func remove_destroyed_unit(u: MechUnit) -> void:
@@ -102,12 +98,10 @@ func _spawn_explosion_effect(screen_pos: Vector2) -> void:
 	)
 
 ## Calculates adjacent tactical formation (crossfire, pincer, escort screen, suppression)
-## for an engagement where attacker launches from `from_pos` into `target_pos`.
-## `occupied` (Vector2i -> MechData, as build_occupied_map returns) lets a caller that already holds
-## an occupancy map skip rebuilding it; each neighbour is then a single lookup.
-func get_formation_context(target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int, occupied: Variant = null) -> Dictionary:
-	var occ: Dictionary = occupied if occupied != null else build_occupied_map()
-	return formation_context(occ, target_pos, from_pos, attacker_faction)
+## for an engagement where attacker launches from `from_pos` into `target_pos`. A caller that already
+## holds an occupancy map (the AI) uses the static formation_context directly.
+func get_formation_context(target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int) -> Dictionary:
+	return formation_context(build_occupied_map(), target_pos, from_pos, attacker_faction)
 
 static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int) -> Dictionary:
 	var atk_allies: int = 0

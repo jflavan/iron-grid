@@ -60,14 +60,3 @@ func get_evasion_modifier_pct() -> int:
 
 func get_elevation_meters() -> int:
 	return elevation * 100
-
-func get_tactical_summary() -> String:
-	var def_str := "%+d%%" % get_defense_modifier_pct()
-	var atk_str := "%+d%%" % get_attack_modifier_pct()
-	return "%s (Elev %dm) | Fuel: %d | ATK %s | DEF %s" % [
-		get_terrain_name(),
-		get_elevation_meters(),
-		get_base_fuel_cost(),
-		atk_str,
-		def_str
-	]

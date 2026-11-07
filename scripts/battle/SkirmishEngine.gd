@@ -924,15 +924,8 @@ static func create_deterministic_session(
 	return BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, true, formation_context, record_presentation)
 
 ## Forecast API forwarders (cache, key and simulation live in SkirmishForecast).
-## `_forecast_cache` / `_forecast_key` stay reachable here for the tests: the cache is the current generation.
-static var _forecast_cache: Dictionary:
-	get: return SkirmishForecast._forecast_cache
-
 static func clear_forecast_cache() -> void:
 	SkirmishForecast.clear_forecast_cache()
-
-static func _forecast_key(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}) -> Array:
-	return SkirmishForecast._forecast_key(attacker, defender, from_tile, target_tile, formation_context)
 
 static func compute_forecast(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}) -> Dictionary:
 	return SkirmishForecast.compute_forecast(attacker, defender, from_tile, target_tile, formation_context)

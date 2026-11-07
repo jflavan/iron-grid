@@ -74,13 +74,16 @@ static func choose_best_action(
 
 	# Evaluate decoupled attacks against each living player unit from all reachable adjacent launch tiles (including start_pos)
 	var attack_targets: Array[MechUnit] = [] if m_data.has_attacked else player_units
+	var start_path: Array[Vector2i] = [start_pos]
+	var my_key: Array = SkirmishForecast.mech_key(m_data)   # the attacker's forecast key, once per decision
 	for target_unit in attack_targets:
-		if not is_instance_valid(target_unit) or target_unit.mech_data == null or not target_unit.mech_data.is_alive():
+		if not MechUnit.is_live(target_unit):
 			continue
 		var dest_pos: Vector2i = target_unit.mech_data.grid_pos
 		var dest_tile: GridTileData = grid_map.get_tile(dest_pos)
 		if dest_tile == null:
 			continue
+		var target_key: Array = []   # built on the first forecast against this target (most are out of reach)
 
 		for d in TerrainGrid.DIRS:
 			var from_pos: Vector2i = dest_pos + d
@@ -89,11 +92,8 @@ static func choose_best_action(
 			if from_pos != start_pos and (not reachable.has(from_pos) or reachable[from_pos]["is_attack"]):
 				continue
 			var move_fuel: int = 0 if from_pos == start_pos else int(reachable[from_pos]["fuel_spent"])
-			var move_path: Array[Vector2i] = []
-			if from_pos == start_pos:
-				move_path.append(start_pos)
-			else:
-				move_path.assign(reachable[from_pos]["path"])
+			# Read-only until this candidate wins; copied only then (most candidates are discarded)
+			var src_path: Array[Vector2i] = start_path if from_pos == start_pos else reachable[from_pos]["path"]
 			var from_tile: GridTileData = grid_map.get_tile(from_pos)
 			var attack_fuel: int = m_data.get_step_fuel_cost(from_tile, dest_tile)
 			var total_fuel: int = move_fuel + attack_fuel
@@ -103,8 +103,10 @@ static func choose_best_action(
 			# occ_map excludes ai_unit: it is still on start_pos during the forecast, and must not
 			# count as its own adjacent ally when it launches from another tile.
 			var form_ctx := UnitContainer.formation_context(occ_map, dest_pos, from_pos, int(m_data.faction))
-			var forecast: Dictionary = SkirmishEngine.forecast_shared(   # read-only below
-				m_data, target_unit.mech_data, from_tile, dest_tile, form_ctx
+			if target_key.is_empty():
+				target_key = SkirmishForecast.mech_key(target_unit.mech_data)
+			var forecast: Dictionary = SkirmishForecast.forecast_shared(   # read-only below
+				m_data, target_unit.mech_data, from_tile, dest_tile, form_ctx, my_key, target_key
 			)
 			var est_dmg_def: int = forecast["est_dmg_to_def"]
 			var est_dmg_atk: int = forecast["est_dmg_to_atk"]
@@ -134,8 +136,7 @@ static func choose_best_action(
 			# On OFFENSE maps, prioritize intercepting player walkers threatening the HQ bunkers
 			if garrison:
 				for hq_pos in map_def.hq_positions:
-					var hq_dist: int = absi(dest_pos.x - hq_pos.x) + absi(dest_pos.y - hq_pos.y)
-					if hq_dist <= 3:
+					if TerrainGrid.manhattan(dest_pos, hq_pos) <= 3:
 						atk_score += 45.0
 						break
 			# Caution if the counter-attack would destroy the AI walker without a kill trade
@@ -143,7 +144,8 @@ static func choose_best_action(
 				atk_score -= 95.0
 
 			if atk_score > best_action["score"]:
-				var full_path: Array[Vector2i] = move_path.duplicate()
+				var move_path: Array[Vector2i] = src_path.duplicate()
+				var full_path: Array[Vector2i] = src_path.duplicate()
 				full_path.append(dest_pos)
 				best_action = {
 					"type": ACTION_ENGAGE,
@@ -168,17 +170,15 @@ static func choose_best_facing(pos: Vector2i, enemy_units: Array[MechUnit]) -> V
 	var closest_dist: int = 99999
 	var closest_pos: Vector2i = pos + Vector2i(-1, 0)
 	for u in enemy_units:
-		if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive():
-			var d: int = absi(u.mech_data.grid_pos.x - pos.x) + absi(u.mech_data.grid_pos.y - pos.y)
+		if MechUnit.is_live(u):
+			var d: int = TerrainGrid.manhattan(u.mech_data.grid_pos, pos)
 			if d < closest_dist:
 				closest_dist = d
 				closest_pos = u.mech_data.grid_pos
 	var diff: Vector2i = closest_pos - pos
 	if diff == Vector2i.ZERO:
 		return Vector2i(-1, 0)
-	if absi(diff.x) >= absi(diff.y):
-		return Vector2i(1 if diff.x > 0 else -1, 0)
-	return Vector2i(0, 1 if diff.y > 0 else -1)
+	return MechData.cardinal_of(diff)
 
 ## Player-held objective tiles that would hand the Coalition an objective victory at turn end
 ## (every bridgehead on Pitched maps, any Syndicate HQ on Offense maps). Empty if no such threat.
@@ -214,6 +214,19 @@ static func _objective_targets(grid_map: IsoGridMap, map_def: MapDefinition) -> 
 		return all_objs
 	return unheld
 
+## How good `tile` is to stand on for its own sake: cover and height, with rivers shunned, cities
+## favoured and mountains favoured for a walker with mountain gear. Shared with the test-side
+## TacticalBot so both commanders value terrain the same way.
+static func terrain_position_score(tile: GridTileData, m_data: MechData) -> float:
+	var score: float = float(tile.get_defense_modifier_pct()) * 0.65 + float(tile.elevation) * 7.5
+	if tile.terrain_type == GridTileData.TerrainType.RIVER:
+		score -= 26.0 # Avoid stopping in exposed rivers!
+	elif tile.terrain_type == GridTileData.TerrainType.CITY:
+		score += 18.0
+	elif tile.terrain_type == GridTileData.TerrainType.MOUNTAIN and m_data.mountain_gear:
+		score += 16.0
+	return score
+
 static func _score_positional_tile(
 	tile: GridTileData,
 	m_data: MechData,
@@ -223,17 +236,8 @@ static func _score_positional_tile(
 ) -> float:
 	if tile == null:
 		return -999.0
-	var score: float = 0.0
-
 	# 1. Terrain Defense & Elevation value
-	score += float(tile.get_defense_modifier_pct()) * 0.65
-	score += float(tile.elevation) * 7.5
-	if tile.terrain_type == GridTileData.TerrainType.RIVER:
-		score -= 26.0 # Avoid stopping in exposed rivers!
-	elif tile.terrain_type == GridTileData.TerrainType.CITY:
-		score += 18.0
-	elif tile.terrain_type == GridTileData.TerrainType.MOUNTAIN and m_data.mountain_gear:
-		score += 16.0
+	var score: float = terrain_position_score(tile, m_data)
 
 	# 2. Objective Control value
 	if tile.is_objective:
@@ -243,6 +247,8 @@ static func _score_positional_tile(
 			score += 24.0 # Good to garrison friendly objectives
 
 	# 3. Distance to Player Units & Objectives based on Strategy Mode
+	# Inline Manhattan distance (not TerrainGrid.manhattan): this runs foes x reachable tiles per
+	# decision, and the call overhead alone measured as a quarter of the AI's decision time.
 	var min_enemy_dist: float = 999.0
 	for fp in foe_positions:
 		var d: float = float(absi(tile.coords.x - fp.x) + absi(tile.coords.y - fp.y))

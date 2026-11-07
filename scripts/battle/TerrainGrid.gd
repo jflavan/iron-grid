@@ -8,6 +8,10 @@ extends RefCounted
 ## Neighbour order every search and scorer uses (it decides tie-breaks): +x, -x, +y, -y.
 const DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
+## Grid (Manhattan) distance: the number of orthogonal steps between two tiles.
+static func manhattan(a: Vector2i, b: Vector2i) -> int:
+	return absi(a.x - b.x) + absi(a.y - b.y)
+
 const _NO_FUEL_CAP: int = 1 << 30
 const _SEQ_BITS: int = 24
 ## Step-cost table dimensions, derived from the data so a new terrain row or a higher MAX_ELEVATION
@@ -24,16 +28,16 @@ var height: int:
 var _width: int = 0   # 0x0 until load_from_definition
 var _height: int = 0
 var tiles: Dictionary = {} # Vector2i -> GridTileData
-var _flat: Array[GridTileData] = [] # same tiles, indexed y * width + x
+var _flat: Array[GridTileData] = [] # same tiles, indexed y * _width + x
 var _terrain_flat := PackedByteArray() # terrain type per flat index (search hot path)
 var _elev_flat := PackedByteArray()    # elevation per flat index
 var _probe_tiles: Array[GridTileData] = [] # [terrain * ELEV_COUNT + elevation], for the step-cost table
 
 func is_valid_coords(coords: Vector2i) -> bool:
-	return coords.x >= 0 and coords.x < width and coords.y >= 0 and coords.y < height
+	return coords.x >= 0 and coords.x < _width and coords.y >= 0 and coords.y < _height
 
 func get_tile(coords: Vector2i) -> GridTileData:
-	if coords.x < 0 or coords.x >= width or coords.y < 0 or coords.y >= height:
+	if coords.x < 0 or coords.x >= _width or coords.y < 0 or coords.y >= _height:
 		return null
 	assert(_flat.size() == _width * _height, "TerrainGrid.get_tile before load_from_definition")
 	return _flat[coords.y * _width + coords.x]
@@ -51,17 +55,17 @@ func load_from_definition(map_def: MapDefinition) -> void:
 	tiles.clear()
 	assert(_width * _height < (1 << _SEQ_BITS), "map too large for the search's discovery-order key")
 	_flat = []
-	_flat.resize(width * height)
-	_terrain_flat.resize(width * height)
-	_elev_flat.resize(width * height)
-	for y in range(height):
-		for x in range(width):
+	_flat.resize(_width * _height)
+	_terrain_flat.resize(_width * _height)
+	_elev_flat.resize(_width * _height)
+	for y in range(_height):
+		for x in range(_width):
 			var c := Vector2i(x, y)
 			var td := GridTileData.new(c, map_def.terrain_at(x, y), map_def.elevation_at(x, y), false, "")
 			tiles[c] = td
-			_flat[y * width + x] = td
-			_terrain_flat[y * width + x] = td.terrain_type
-			_elev_flat[y * width + x] = td.elevation
+			_flat[y * _width + x] = td
+			_terrain_flat[y * _width + x] = td.terrain_type
+			_elev_flat[y * _width + x] = td.elevation
 
 	for obj in map_def.objectives:
 		var pos: Vector2i = obj["pos"]
@@ -85,22 +89,33 @@ func find_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Diction
 		var cost: PackedInt32Array = res[0]
 		var came: PackedInt32Array = res[1]
 		var order: Array[int] = res[2]
-		var start_idx: int = start.y * width + start.x
+		var start_idx: int = start.y * _width + start.x
 
-		# Build reachable dictionary for unoccupied tiles only, in discovery order
+		# Each path is its parent's path plus one tile, so a parent's path is built once and copied
+		# natively into its children's instead of every tile walking back to the start. `order` is
+		# discovery order (a parent can be improved after its child was discovered), hence the walk up
+		# to the nearest tile whose path is already known.
+		var paths: Array = []
+		paths.resize(_width * _height)
+		paths[start_idx] = [start] as Array[Vector2i]
 		for idx in order:
-			var pos := Vector2i(idx % width, idx / width)
+			var pos := Vector2i(idx % _width, idx / _width)
+			if paths[idx] == null:
+				var chain: Array[int] = []
+				var cur: int = idx
+				while paths[cur] == null:
+					chain.append(cur)
+					cur = came[cur]
+				var base: Array[Vector2i] = paths[cur]
+				for k in range(chain.size() - 1, -1, -1):
+					var c: int = chain[k]
+					var p: Array[Vector2i] = base.duplicate()
+					p.append(Vector2i(c % _width, c / _width))
+					paths[c] = p
+					base = p
+			var path: Array[Vector2i] = paths[idx]
 			if idx != start_idx and occupied_units.has(pos):
 				continue # Cannot end move on any occupied tile (friendly or enemy)
-
-			# Reconstruct path in O(N) using append + reverse
-			var path: Array[Vector2i] = []
-			var curr: int = idx
-			while curr != start_idx:
-				path.append(Vector2i(curr % width, curr / width))
-				curr = came[curr]
-			path.append(start)
-			path.reverse()
 
 			var spent: int = cost[idx]
 			reachable[pos] = {
@@ -130,7 +145,7 @@ func find_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Diction
 						}
 	return reachable
 
-## Fuel Dijkstra over flat tile indices (y * width + x), shared by movement ranges and strike plans
+## Fuel Dijkstra over flat tile indices (y * _width + x), shared by movement ranges and strike plans
 ## so both always agree. Rules: never step onto an enemy node, and drop any step whose running cost
 ## would exceed `budget`. `settle`, when given, stops the search once every listed node has been
 ## popped (its cost is final).
@@ -139,8 +154,8 @@ func find_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Diction
 ## Step costs come from a 6 x 5 x 5 table ([to_terrain][from_elev][to_elev]) filled once per search
 ## from the real MechData.get_step_fuel_cost, so the rule itself lives in one place.
 func _search(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
-	var w: int = width
-	var h: int = height
+	var w: int = _width
+	var h: int = _height
 	var n: int = w * h
 	var start_idx: int = unit.grid_pos.y * w + unit.grid_pos.x
 
@@ -267,7 +282,7 @@ func _step_cost_table(unit: MechData) -> PackedInt32Array:
 func _costs_dict(res: Array) -> Dictionary:
 	var cost: PackedInt32Array = res[0]
 	var order: Array[int] = res[2]
-	var w: int = width
+	var w: int = _width
 	var d: Dictionary = {}
 	for i in order:
 		d[Vector2i(i % w, i / w)] = cost[i]
@@ -317,6 +332,15 @@ static func _heap_pop(heap: Array[int], heap_pos: Array[int]) -> void:
 func strike_cost_field(unit: MechData, occupied_units: Dictionary) -> Dictionary:
 	return _costs_dict(_search(unit, occupied_units, _NO_FUEL_CAP))
 
+## A tile `unit` (standing on `start`) may fire from: on the map, free of other walkers, and, once
+## the walker has moved, only its own tile.
+func _can_launch_from(l: Vector2i, start: Vector2i, unit: MechData, occupied_units: Dictionary) -> bool:
+	if not is_valid_coords(l):
+		return false
+	if l == start:
+		return true
+	return not unit.has_moved and not occupied_units.has(l)
+
 ## Explains whether `unit` can strike the enemy at `target` this turn, and if not, why and what to
 ## do (see StrikePlan). Uses the same search and costs as find_reachable_tiles, without its fuel
 ## cap. The advice replays next turn under the real WAIT and upkeep rules, assuming the enemy holds
@@ -333,9 +357,8 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 		var neighbours: Array[Vector2i] = []
 		for d in DIRS:
 			var l: Vector2i = target + d
-			if not is_valid_coords(l) or (unit.has_moved and l != start) or (l != start and occupied_units.has(l)):
-				continue
-			neighbours.append(l)
+			if _can_launch_from(l, start, unit, occupied_units):
+				neighbours.append(l)
 		if not neighbours.is_empty():
 			costs = _costs_dict(_search(unit, occupied_units, _NO_FUEL_CAP, neighbours))
 	var target_tile := get_tile(target)
@@ -344,11 +367,7 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 	var launches: Array[Dictionary] = []   # {pos, path, step: breakdown}
 	for d in DIRS:
 		var l: Vector2i = target + d
-		if unit.has_moved and l != start:
-			continue
-		if not costs.has(l):
-			continue
-		if l != start and occupied_units.has(l):
+		if not costs.has(l) or not _can_launch_from(l, start, unit, occupied_units):
 			continue
 		launches.append({"pos": l, "path": int(costs[l]), "step": unit.get_step_fuel_breakdown(get_tile(l), target_tile)})
 	if launches.is_empty():

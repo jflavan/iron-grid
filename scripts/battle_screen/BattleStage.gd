@@ -22,7 +22,6 @@ const C_NUM := CrtUI.C_NUM
 const C_DIM := CrtUI.C_DIM
 const C_CURSOR := CrtUI.C_CURSOR
 const C_GAUGE_BG := CrtUI.C_GAUGE_BG
-const C_FUEL := CrtUI.C_FUEL
 const C_EN := CrtUI.C_EN
 const C_HULL := CrtUI.C_HULL
 
@@ -694,12 +693,9 @@ func _animate() -> void:
 				var dodge := sin(dt / 0.35 * PI) * 8.0
 				d.pose = "brace"
 				d.white = false
-				d.offset = m_end_offset(d) + Vector2(roundf(-dodge * int(d.dir)), 0)
+				d.offset = d.end_offset + Vector2(roundf(-dodge * int(d.dir)), 0)
 			elif b["soften_from"] != "" and phase_t >= imp:
 				SupportAnims.soften(self, a, d, b["soften_from"], phase_t - imp)
-
-func m_end_offset(m: MechView) -> Vector2:
-	return m.end_offset
 
 func _animate_ending() -> void:
 	var t := phase_t
@@ -948,6 +944,19 @@ func _gauge(r: Rect2, ratio: float, col: Color) -> void:
 func _right_text(s: String, right_x: int, y: int, col: Color) -> void:
 	PixelFont.draw_text(self, s, Vector2(right_x - PixelFont.text_width(s), y), col)
 
+## The centred panel at the top of the stage: `lines` sized to the widest line (at least `min_w`,
+## at most `max_w` when that is > 0), the first line in C_NAME and the rest in `sub_col`.
+func _top_banner(lines: Array[String], min_w: int, max_w: int, sub_col: Color) -> void:
+	var w := min_w
+	for l in lines:
+		w = maxi(w, PixelFont.text_width(l) + 16)
+	if max_w > 0:
+		w = mini(w, max_w)
+	var r := Rect2(roundf((W - w) / 2.0), 4, w, 6 + lines.size() * 10)
+	BattleFX.panel(self, r)
+	for i in lines.size():
+		PixelFont.draw_centered(self, lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else sub_col)
+
 func _draw_banner() -> void:
 	var b := current_beat()
 	if phase == PHASE_INTRO and result != null:
@@ -960,14 +969,7 @@ func _draw_banner() -> void:
 			intro_lines.append("HEAD-ON ENGAGEMENT // FRONTAL CLASH")
 		if not result.tactical_tags.is_empty():
 			intro_lines.append(result.tactical_tags[0])
-		var w := 180
-		for l in intro_lines:
-			w = maxi(w, PixelFont.text_width(l) + 16)
-		w = mini(w, 352)
-		var r := Rect2(roundf((W - w) / 2.0), 4, w, 6 + intro_lines.size() * 10)
-		BattleFX.panel(self, r)
-		for i in intro_lines.size():
-			PixelFont.draw_centered(self, intro_lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_CURSOR)
+		_top_banner(intro_lines, 180, 352, C_CURSOR)
 	elif phase == PHASE_COMMAND_SELECT:
 		var coa_data: MechData = coalition_mech().data
 		var top_lines: Array[String] = []
@@ -983,27 +985,12 @@ func _draw_banner() -> void:
 			var prompts := _command_prompts()
 			top_lines.append(_labels["command_banner"])
 			top_lines.append(prompts[clampi(menu_cursor, 0, prompts.size() - 1)])
-		var w := 180
-		for l in top_lines:
-			w = maxi(w, PixelFont.text_width(l) + 16)
-		w = mini(w, 352)
-		var r := Rect2(roundf((W - w) / 2.0), 4, w, 6 + top_lines.size() * 10)
-		BattleFX.panel(self, r)
-		for i in top_lines.size():
-			PixelFont.draw_centered(self, top_lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_LABEL)
+		_top_banner(top_lines, 180, 352, C_LABEL)
 	elif phase in [PHASE_SUPPORT, PHASE_ATTACK, PHASE_SETTLE] and not b.is_empty():
-		var text: String = _up(String(b["ability_name"]))
-		var lines := [text]
+		var lines: Array[String] = [_up(String(b["ability_name"]))]
 		if phase == PHASE_SETTLE and String(b.get("status_text", "")) != "":
 			lines.append(_up(String(b["status_text"])))
-		var w := 16
-		for l in lines:
-			w = maxi(w, PixelFont.text_width(l) + 16)
-		w = maxi(w, 168)
-		var r := Rect2(roundf((W - w) / 2.0), 4, w, 6 + lines.size() * 10)
-		BattleFX.panel(self, r)
-		for i in lines.size():
-			PixelFont.draw_centered(self, lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_CURSOR)
+		_top_banner(lines, 168, 0, C_CURSOR)
 	elif phase == PHASE_RESULT:
 		var lines := _wrapped_headline(timeline.headline, 300)
 		var r := Rect2(24, 44, 312, 20 + lines.size() * 10 + 12)

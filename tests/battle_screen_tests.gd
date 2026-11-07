@@ -4,7 +4,7 @@ extends Node
 ## Run headless:  godot --headless --path . res://tests/BattleScreenTests.tscn
 ## Exit code is the number of failures (0 = all checks passed).
 
-const CHASSIS: Array[String] = ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+const CHASSIS: Array[String] = ChassisCatalog.ORDER
 
 var failures: Array[String] = []
 var _checks: int = 0
@@ -380,7 +380,7 @@ func test_crt_glyph_coverage() -> void:
 		strings.append_array([ch.callsign, ch.unit_name, ch.chassis_class, ch.lore_blurb])
 		for ab: CombatAbility in ch.abilities:
 			strings.append_array([ab.ability_name, ab.category, ab.description])
-	strings.append_array(UIOverlay.manual_lines())
+	strings.append_array(RulesContent.manual_lines())
 	var missing := {}
 	for s in strings:
 		for ch in CrtUI.sanitize(s):
@@ -637,20 +637,20 @@ func test_forecast_cache() -> void:
 	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
 	var f1 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
 	var f2 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
-	_check(f1 == f2 and SkirmishEngine._forecast_cache.size() == 1, "identical inputs are served from one cache entry")
+	_check(f1 == f2 and SkirmishForecast._forecast_cache.size() == 1, "identical inputs are served from one cache entry")
 	f2["est_dmg_to_def"] = -1
 	_check(SkirmishEngine.compute_forecast(atk, dfn, flat, flat)["est_dmg_to_def"] == f1["est_dmg_to_def"], "callers get a copy, not the cached dictionary")
 	dfn.current_armor -= 20
 	var f3 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
-	_check(SkirmishEngine._forecast_cache.size() == 2 and f3["est_dmg_to_def"] <= f1["est_dmg_to_def"], "changed hull is a different key")
+	_check(SkirmishForecast._forecast_cache.size() == 2 and f3["est_dmg_to_def"] <= f1["est_dmg_to_def"], "changed hull is a different key")
 	dfn.is_entrenched = true
 	SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
-	_check(SkirmishEngine._forecast_cache.size() == 3, "entrenchment is part of the key")
+	_check(SkirmishForecast._forecast_cache.size() == 3, "entrenchment is part of the key")
 	atk.firepower += 10
 	var f4 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
-	_check(SkirmishEngine._forecast_cache.size() == 4 and f4["atk_eff_fp"] > f1["atk_eff_fp"], "a per-unit stat change is a different key")
+	_check(SkirmishForecast._forecast_cache.size() == 4 and f4["atk_eff_fp"] > f1["atk_eff_fp"], "a per-unit stat change is a different key")
 	SkirmishEngine.clear_forecast_cache()
-	_check(SkirmishEngine._forecast_cache.is_empty(), "cache clears")
+	_check(SkirmishForecast._forecast_cache.is_empty(), "cache clears")
 
 func test_status_badges() -> void:
 	var sess := _flat_session("falke", "goliath")
@@ -761,7 +761,7 @@ func test_identical_walkers_share_forecast() -> void:
 	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
 	var f1 := SkirmishEngine.compute_forecast(a1, dfn, flat, flat)
 	var f2 := SkirmishEngine.compute_forecast(a2, dfn, flat, flat)
-	_check(f1 == f2 and SkirmishEngine._forecast_cache.size() == 1, "two identical walkers share one forecast entry")
+	_check(f1 == f2 and SkirmishForecast._forecast_cache.size() == 1, "two identical walkers share one forecast entry")
 	SkirmishEngine.clear_forecast_cache()
 
 func test_apply_before_conclusion_is_ignored() -> void:
@@ -786,7 +786,7 @@ func test_fast_forward_is_quiet() -> void:
 	screen.queue_free()
 
 # ---------------------------------------------------------------- strike plan (out-of-reach feedback)
-const ALL_CHASSIS := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+const ALL_CHASSIS := ChassisCatalog.ORDER
 
 func _grid(map_idx: int) -> IsoGridMap:
 	var gm := IsoGridMap.new()
@@ -957,7 +957,7 @@ func test_out_of_reach_hover_and_click() -> void:
 	_check(bf.ui_overlay.strike_plan == null, "hovering an empty tile clears the strike plan")
 
 	var log_before: int = GlobalState.combat_log.size()
-	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
+	bf._on_tile_clicked(Vector2i(8, 7))
 	var new_lines: Array = GlobalState.combat_log.slice(log_before)
 	var logged := new_lines.any(func(l): return "CANNOT REACH" in l and "STRIKE NEEDS 14F" in l)
 	_check(logged, "clicking the unreachable enemy logs why (got %s)" % [new_lines])
@@ -970,7 +970,7 @@ func test_out_of_reach_hover_and_click() -> void:
 	var far: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
 	_check(far != null and far.severity == StrikePlan.BEYOND_RANGE, "SPINNE-4 is beyond IRON-1's range (got %s)" % [far.severity if far else null])
 	log_before = GlobalState.combat_log.size()
-	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
+	bf._on_tile_clicked(Vector2i(8, 7))
 	_check(GlobalState.combat_log.size() == log_before, "clicking a beyond-range enemy adds no log line")
 	bf.queue_free()
 	await get_tree().process_frame
@@ -1147,7 +1147,7 @@ func test_next_turn_fuel_matches_upkeep() -> void:
 	await get_tree().process_frame
 
 func test_manual_numbers_come_from_data() -> void:
-	var manual := "\n".join(UIOverlay.manual_lines())
+	var manual := "\n".join(RulesContent.manual_lines())
 	_check(("+%d Fuel" % MechData.WAIT_FUEL) in manual and ("+%d EN" % MechData.WAIT_ENERGY) in manual, "manual WAIT line reads the WAIT constants")
 	var mtn := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.MOUNTAIN, 1)
 	var mtn_row := "%s (%s): %d Fuel / %+d%% ATK / %+d%% DEF" % [mtn.get_terrain_name().to_upper(), mtn.get_terrain_short_code(),
@@ -1448,17 +1448,17 @@ func test_player_and_ai_reface_after_movement() -> void:
 	_check(iron1.mech_data.facing != initial_facing, "IRON-1 facing changed via _rotate_selected_unit")
 
 	# Reface by clicking an orthogonal neighbor empty tile (North: (2, 1))
-	bf._on_tile_clicked(Vector2i(2, 1), null)
+	bf._on_tile_clicked(Vector2i(2, 1))
 	_check(iron1.mech_data.facing == Vector2i(0, -1), "IRON-1 refaced to North (0, -1) by clicking neighbor tile")
 
 	# Reface by clicking East neighbor: (3, 2)
-	bf._on_tile_clicked(Vector2i(3, 2), null)
+	bf._on_tile_clicked(Vector2i(3, 2))
 	_check(iron1.mech_data.facing == Vector2i(1, 0), "IRON-1 refaced to East (1, 0) by clicking neighbor tile")
 
 	# Deselect and re-select moved unit: player can still reface it
 	bf._deselect_unit()
 	_check(bf.selected_unit == null, "deselected")
-	bf._on_tile_clicked(Vector2i(2, 2), null)
+	bf._on_tile_clicked(Vector2i(2, 2))
 	_check(bf.selected_unit == iron1, "re-selected IRON-1")
 	_check(bf._can_rotate_selected_unit(), "can still rotate re-selected moved unit")
 	bf._rotate_selected_unit()
@@ -1515,7 +1515,7 @@ func test_decoupled_movement_and_combat() -> void:
 	bf._select_unit(iron)
 	_check(bf.grid_map.reachable_info.has(Vector2i(5, 4)) and bool(bf.grid_map.reachable_info[Vector2i(5, 4)]["is_attack"]), "adjacent enemy is highlighted as an attack target")
 	var expected_atk_fuel: int = iron.mech_data.get_step_fuel_cost(bf.grid_map.get_tile(Vector2i(4, 4)), bf.grid_map.get_tile(Vector2i(5, 4)))
-	bf._on_tile_clicked(Vector2i(5, 4), bf.grid_map.get_tile(Vector2i(5, 4)))
+	bf._on_tile_clicked(Vector2i(5, 4))
 	while bf._is_animating_move or modal.visible:
 		if modal.visible:
 			if modal._all_steps_done:
@@ -1549,7 +1549,7 @@ func test_decoupled_movement_and_combat() -> void:
 	_check(bf.grid_map.reachable_info.has(Vector2i(4, 5)) and not bool(bf.grid_map.reachable_info[Vector2i(4, 5)]["is_attack"]), "empty launch tile (4, 5) is reachable for movement")
 
 	# Step 1: Click empty tile (4, 5) to move adjacent to GLUT-2
-	bf._on_tile_clicked(Vector2i(4, 5), bf.grid_map.get_tile(Vector2i(4, 5)))
+	bf._on_tile_clicked(Vector2i(4, 5))
 	for i in 60:
 		await get_tree().process_frame
 
@@ -1563,7 +1563,7 @@ func test_decoupled_movement_and_combat() -> void:
 	_check(not falke.mech_data.has_attacked and bf.grid_map.reachable_info.has(Vector2i(5, 5)), "rotating after moving keeps adjacent attack target available")
 
 	# Step 2: Click adjacent GLUT-2 at (5, 5) to attack after moving
-	bf._on_tile_clicked(Vector2i(5, 5), bf.grid_map.get_tile(Vector2i(5, 5)))
+	bf._on_tile_clicked(Vector2i(5, 5))
 	while bf._is_animating_move or modal.visible:
 		if modal.visible:
 			if modal._all_steps_done:
@@ -1658,10 +1658,10 @@ func test_ai_launch_context_excludes_mover() -> void:
 	SkirmishEngine.clear_forecast_cache()
 	AIController.choose_best_action(rote, bf.grid_map, uc, bf.current_map_def)
 	var gm := bf.grid_map
-	var key_ok := SkirmishEngine._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), after_move)
-	var key_bad := SkirmishEngine._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), self_counted)
-	_check(SkirmishEngine._forecast_cache.has(key_ok), "AI scored the launch with the post-move formation context")
-	_check(not SkirmishEngine._forecast_cache.has(key_bad), "AI did not count itself as its own adjacent ally")
+	var key_ok := SkirmishForecast._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), after_move)
+	var key_bad := SkirmishForecast._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), self_counted)
+	_check(SkirmishForecast._forecast_cache.has(key_ok), "AI scored the launch with the post-move formation context")
+	_check(not SkirmishForecast._forecast_cache.has(key_bad), "AI did not count itself as its own adjacent ally")
 	bf.queue_free()
 	await get_tree().process_frame
 
@@ -1712,7 +1712,7 @@ func test_dijkstra_matches_bellman_ford_on_large_map() -> void:
 	while changed:
 		changed = false
 		for c: Vector2i in best.keys():
-			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			for d in TerrainGrid.DIRS:
 				var n: Vector2i = c + d
 				if not gm.is_valid_coords(n) or (occ.has(n) and occ[n].faction != m.faction):
 					continue
@@ -1801,7 +1801,7 @@ func _linear_scan_came_from(gm: IsoGridMap, unit: MechData, occ: Dictionary, bud
 				bi = i
 		var cur: Vector2i = queue[bi]
 		queue.remove_at(bi)
-		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		for d in TerrainGrid.DIRS:
 			var n: Vector2i = cur + d
 			if not gm.is_valid_coords(n) or (occ.has(n) and occ[n].faction != unit.faction):
 				continue
@@ -1843,11 +1843,11 @@ func test_forecast_key_covers_every_engine_read_field() -> void:
 				continue
 			SkirmishEngine.clear_forecast_cache()
 			var base_f := SkirmishEngine.compute_forecast(base_atk, base_def, flat, flat2)
-			var key_a := SkirmishEngine._forecast_key(base_atk, base_def, flat, flat2)
+			var key_a := SkirmishForecast._forecast_key(base_atk, base_def, flat, flat2)
 			target.set(pname, changed)
 			SkirmishEngine.clear_forecast_cache()
 			var mut_f := SkirmishEngine.compute_forecast(mut_atk, mut_def, flat, flat2)
-			var key_b := SkirmishEngine._forecast_key(mut_atk, mut_def, flat, flat2)
+			var key_b := SkirmishForecast._forecast_key(mut_atk, mut_def, flat, flat2)
 			if base_f != mut_f:
 				_check(key_a != key_b, "%s.%s changes the forecast, so it must change the cache key" % [side, pname])
 			elif pname in must_differ and side == "def" or (pname in ["current_armor", "firepower", "speed"] and side == "atk"):
@@ -1869,13 +1869,13 @@ func test_forecast_cache_two_generations() -> void:
 	var a := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
 	var d := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
 	var f0 := SkirmishEngine.forecast_shared(a, d, flat, flat2)
-	var key := SkirmishEngine._forecast_key(a, d, flat, flat2)
+	var key := SkirmishForecast._forecast_key(a, d, flat, flat2)
 	# force a rotation: pretend the current generation is full
 	SkirmishForecast._forecast_old = SkirmishForecast._forecast_cache
 	SkirmishForecast._forecast_cache = {}
-	_check(not SkirmishEngine._forecast_cache.has(key), "after a rotation the entry lives in the old generation")
+	_check(not SkirmishForecast._forecast_cache.has(key), "after a rotation the entry lives in the old generation")
 	SkirmishEngine.compute_forecast(a, d, flat, flat2)
-	_check(SkirmishEngine._forecast_cache.has(key), "an old-generation hit is promoted")
+	_check(SkirmishForecast._forecast_cache.has(key), "an old-generation hit is promoted")
 	_check(is_same(SkirmishEngine.forecast_shared(a, d, flat, flat2), f0), "promotion keeps the same cached Dictionary object")
 	SkirmishEngine.clear_forecast_cache()
 	_check(SkirmishForecast._forecast_old.is_empty() and SkirmishForecast._forecast_cache.is_empty(), "clear empties both generations")
@@ -2426,7 +2426,7 @@ func test_modal_input_gating() -> void:
 	var bf := await _spawn_iron_bridge()
 	var ov := bf.ui_overlay
 	var clicks: Array = []
-	bf.grid_map.tile_clicked.connect(func(c, _t): clicks.append(c))
+	bf.grid_map.tile_clicked.connect(func(c): clicks.append(c))
 	await _aim_mouse_at_tile(bf, Vector2i(3, 3))
 	ov.root_ctrl.queue_redraw()
 	await get_tree().process_frame
@@ -2775,12 +2775,11 @@ func test_strike_field_follows_occupancy_epoch() -> void:
 	bf._select_unit(lead)
 	var p1: StrikePlan = bf.strike_plan_for(Vector2i(6, 0))
 	_check(p1 != null and p1.launch == Vector2i(5, 0), "the far enemy's only launch tile is (5,0)")
-	var epoch_before: int = bf._strike_field_key[2]
-	wing.mech_data.grid_pos = Vector2i(5, 0)
-	bf.unit_container.note_unit_moved()
+	var epoch_before: int = bf._strike_cache.field_key()[2]
+	bf.unit_container.move_unit(wing, Vector2i(5, 0))
 	var p2: StrikePlan = bf.strike_plan_for(Vector2i(6, 0))
 	_check(p2 != null and p2.severity == StrikePlan.NO_APPROACH, "a friend on the launch tile leaves no approach")
-	_check(bf._strike_field_key[2] > epoch_before, "the cost field was rebuilt for the new occupancy epoch")
+	_check(bf._strike_cache.field_key()[2] > epoch_before, "the cost field was rebuilt for the new occupancy epoch")
 	var direct: StrikePlan = bf.grid_map.compute_strike_plan(lead.mech_data, Vector2i(6, 0), bf.unit_container.build_occupied_map(lead))
 	_check(_plan_diff(p2, direct) == "", "the cached-field plan equals a fresh targeted search")
 	bf.queue_free()
@@ -2939,3 +2938,14 @@ func test_hud_fuel_text_is_multiplied() -> void:
 	_check(("%+d FUEL OFF-ROAD" % (goliath.fuel_efficiency_mod * goliath.fuel_usage)) in ov._gear_note(goliath), "goliath gear note: %s" % ov._gear_note(goliath))
 	bf.queue_free()
 	await get_tree().process_frame
+
+## The river advisory formats its fuel figure and keeps its literal percent signs: a "%" inside a
+## format string must be escaped, or the operator raises a formatting error and the tip ships unformatted.
+func test_river_tip_formats_fuel_and_percentages() -> void:
+	var river_fuel: int = RulesContent.terrain_fuel(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.RIVER, 1), RulesContent.default_fuel_usage())
+	var expected := "Rivers cost %d Fuel and impose -15%% ATK / -15%% DEF / -10%% EVA" % river_fuel
+	var found := false
+	for m in GlobalState.maps:
+		if m.tactical_tip.contains(expected):
+			found = true
+	_check(found, "a briefing tip states the river fuel cost and its combat modifiers verbatim")

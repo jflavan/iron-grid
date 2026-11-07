@@ -24,7 +24,9 @@ const RULES_PAD := 10       # inner padding of the rules panels
 const RULES_BODY_TOP := 26  # first block's offset below the body panel's top (title row above it)
 const RULES_ROW := 14       # chapter list row pitch
 
-var selected_map_idx: int = 0
+## The theatre the cursor is on: GlobalState's selection, read through (Battlefield loads it from there).
+var selected_map_idx: int:
+	get: return GlobalState.selected_map_index
 var selected_chassis_idx: int = 0
 var _chassis_keys: Array[String] = ChassisCatalog.ORDER
 var _anim_time: float = 0.0
@@ -41,7 +43,6 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	selected_map_idx = GlobalState.selected_map_index
 	for key in _chassis_keys:
 		var m: MechData = GlobalState.chassis_catalog[key]
 		_stat_max["hull"] = maxi(_stat_max["hull"], m.max_armor)
@@ -141,7 +142,6 @@ func _select_map(i: int) -> void:
 	if i < 0 or i >= GlobalState.maps.size() or i == selected_map_idx:
 		return
 	SoundManager.play("ui_click")
-	selected_map_idx = i
 	GlobalState.selected_map_index = i
 
 func _select_chassis(i: int) -> void:
@@ -176,21 +176,22 @@ func _draw() -> void:
 	CrtUI.panel(self, Rect2(6, 6, v.x - 12, 30))
 	CrtUI.text(self, "OPERATION: IRON GRID", Vector2(16, 12), CrtUI.C_NAME)
 	CrtUI.text(self, "DIESELPUNK ISOMETRIC TACTICAL WARFARE // TURN-BASED RPG COMBAT ENGINE", Vector2(16, 23), CrtUI.C_LABEL_DIM)
-	var exit_r := Rect2(v.x - 66, 9, 54, 12)
-	CrtUI.text_right(self, "EXIT", v.x - 16, 12, _row_color("exit", false))
-	if hot.hovered == "exit":
-		CrtUI.cursor(self, Vector2(v.x - 16 - PixelFont.text_width("EXIT") - 10, 12))
-	hot.add("exit", exit_r)
+	_link("exit", "EXIT", v.x - 16, 12, Rect2(v.x - 66, 9, 54, 12))
 
 	var rules_lbl := "RULES OF ENGAGEMENT [R]"
 	var rules_right := v.x - 16 - PixelFont.text_width("EXIT") - 24
-	CrtUI.text_right(self, rules_lbl, rules_right, 12, _row_color("rules", false))
-	if hot.hovered == "rules":
-		CrtUI.cursor(self, Vector2(rules_right - PixelFont.text_width(rules_lbl) - 10, 12))
-	hot.add("rules", Rect2(rules_right - PixelFont.text_width(rules_lbl) - 12, 9, PixelFont.text_width(rules_lbl) + 16, 12))
+	_link("rules", rules_lbl, rules_right, 12, Rect2(rules_right - PixelFont.text_width(rules_lbl) - 12, 9, PixelFont.text_width(rules_lbl) + 16, 12))
 
 	_draw_theaters(Rect2(6, 40, v.x - 16 - HANGAR_W, v.y - 46))
 	_draw_hangar(Rect2(v.x - 6 - HANGAR_W, 40, HANGAR_W, v.y - 46))
+
+## A right-aligned header link: its label ending at `right_x`, the cursor beside it while hovered, and
+## `hit` registered as its hotspot.
+func _link(id: String, label: String, right_x: float, y: float, hit: Rect2) -> void:
+	CrtUI.text_right(self, label, right_x, y, _row_color(id, false))
+	if hot.hovered == id:
+		CrtUI.cursor(self, Vector2(right_x - PixelFont.text_width(label) - 10, y))
+	hot.add(id, hit)
 
 func _draw_theaters(p: Rect2) -> void:
 	CrtUI.panel(self, p)
@@ -335,10 +336,7 @@ func _draw_rules(v: Vector2) -> void:
 	CrtUI.text(self, "HOW THE BATTLE WORKS // FIELD TIPS", hdr.position + Vector2(10, 17), CrtUI.C_LABEL_DIM)
 	var back_lbl := "[ESC] COMMAND HQ"
 	var back_right := hdr.end.x - 10
-	CrtUI.text_right(self, back_lbl, back_right, hdr.position.y + 6, _row_color("rules_back", false))
-	if hot.hovered == "rules_back":
-		CrtUI.cursor(self, Vector2(back_right - PixelFont.text_width(back_lbl) - 10, hdr.position.y + 6))
-	hot.add("rules_back", Rect2(back_right - PixelFont.text_width(back_lbl) - 12, hdr.position.y + 3, PixelFont.text_width(back_lbl) + 14, 12))
+	_link("rules_back", back_lbl, back_right, hdr.position.y + 6, Rect2(back_right - PixelFont.text_width(back_lbl) - 12, hdr.position.y + 3, PixelFont.text_width(back_lbl) + 14, 12))
 
 	var lst: Rect2 = lay["list"]
 	CrtUI.panel(self, lst)

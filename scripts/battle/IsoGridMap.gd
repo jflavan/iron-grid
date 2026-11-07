@@ -5,8 +5,8 @@ extends Node2D
 ## Renders extruded terrain blocks, elevation cliffs, procedural terrain features (rivers, bridges,
 ## cities, trenches, mountains), fuel movement ranges, and path previews.
 
-signal tile_hovered(coords: Vector2i, tile: GridTileData)
-signal tile_clicked(coords: Vector2i, tile: GridTileData)
+signal tile_hovered(coords: Vector2i)
+signal tile_clicked(coords: Vector2i)
 
 const TILE_W: float = 118.0
 const TILE_H: float = 59.0
@@ -176,15 +176,12 @@ func is_valid_coords(coords: Vector2i) -> bool:
 func get_tile(coords: Vector2i) -> GridTileData:
 	return grid.get_tile(coords)
 
-func get_tile_elevation(coords: Vector2i) -> int:
-	return grid.get_tile_elevation(coords)
-
 ## Converts grid coordinates (x, y) into local 2D screen position (center of the tile's top diamond).
 func grid_to_screen(coords: Vector2i, include_elevation: bool = true) -> Vector2:
 	var sx: float = float(coords.x - coords.y) * (TILE_W * 0.5)
 	var sy: float = float(coords.x + coords.y) * (TILE_H * 0.5)
 	if include_elevation:
-		sy -= float(get_tile_elevation(coords)) * ELEV_STEP
+		sy -= float(grid.get_tile_elevation(coords)) * ELEV_STEP
 	return Vector2(sx, sy)
 
 ## Returns the 4 vertices of the top isometric diamond at `center`.
@@ -263,13 +260,13 @@ func update_hover(local_mouse_pos: Vector2) -> void:
 			current_path_preview = reachable_info[hovered_coords]["path"]
 		else:
 			current_path_preview = []
-		tile_hovered.emit(hovered_coords, get_tile(hovered_coords))
+		tile_hovered.emit(hovered_coords)
 		queue_redraw()
 
 func handle_click(local_mouse_pos: Vector2) -> void:
 	var clicked := screen_to_grid(local_mouse_pos)
 	if is_valid_coords(clicked):
-		tile_clicked.emit(clicked, get_tile(clicked))
+		tile_clicked.emit(clicked)
 
 func _on_terrain_draw() -> void:
 	if _terrain_mesh != null:
@@ -402,7 +399,7 @@ func _draw_static_tile(ci: CanvasMeshBuilder, coords: Vector2i, td: GridTileData
 	var outline := PackedVector2Array([p_left, p_left + drop, p_bottom + drop, p_right + drop, p_right])
 	var grid_outline := PackedVector2Array([p_top, p_right, p_bottom, p_left, p_top])
 
-	var top_color := _get_terrain_top_color(td.terrain_type, td.elevation)
+	var top_color := TerrainDefs.top_color(td.terrain_type, td.elevation)
 	var left_wall_color := top_color.darkened(0.34)
 	var right_wall_color := top_color.darkened(0.48)
 
@@ -461,9 +458,9 @@ func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, top_center: Vector2,
 		draw_rect(Rect2(top_center + Vector2(5, -7), Vector2(5, 2)), win_col, true)
 
 	# Reachable Fuel / Attack Target Highlights
-	if reachable_info.has(coords) and coords != selected_coords:
+	var info: Variant = reachable_info.get(coords) if coords != selected_coords else null
+	if info != null:
 		_anim_visible = true
-		var info: Dictionary = reachable_info[coords]
 		draw_set_transform(top_center)
 		if info["is_attack"]:
 			var atk_fill := Color(0.95, 0.22, 0.15, 0.28 + 0.18 * pulse)
@@ -504,9 +501,6 @@ func _inset_diamond(inset: float, closed: bool) -> PackedVector2Array:
 			pts.append(pts[0])
 		_inset_cache[key] = pts
 	return _inset_cache[key]
-
-func _get_terrain_top_color(t_type: GridTileData.TerrainType, elev: int) -> Color:
-	return TerrainDefs.top_color(t_type, elev)
 
 func _draw_static_terrain_details(ci: CanvasMeshBuilder, center: Vector2, td: GridTileData) -> void:
 	match td.terrain_type:

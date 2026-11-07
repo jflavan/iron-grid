@@ -7,7 +7,7 @@ extends Node
 ##   D  low-hull defender (destruction ending)    I  toggle interactive vs playback
 ##   S  1x/2x speed (BattleScreen)    A  Auto-Pilot    Space  skip / confirm
 
-const CHASSIS := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+const CHASSIS := ChassisCatalog.ORDER
 const TERRAINS := [
 	GridTileData.TerrainType.PLAIN, GridTileData.TerrainType.ROAD, GridTileData.TerrainType.RIVER,
 	GridTileData.TerrainType.FOREST, GridTileData.TerrainType.CITY, GridTileData.TerrainType.MOUNTAIN,

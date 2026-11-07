@@ -22,10 +22,7 @@ const FLASH_HALF_H := [5, 4, 2]
 const FLASH_SPARK_OFFSETS := [Vector2(4, -9), Vector2(9, -7), Vector2(4, 8), Vector2(10, 6), Vector2(16, -3), Vector2(17, 3)]
 const OUTLINE_OFFSETS := [Vector2(-0.5, 0), Vector2(0.5, 0), Vector2(0, -0.5), Vector2(0, 0.5)]
 
-const CRT_FILL := CrtUI.C_FILL
-const CRT_SCAN := CrtUI.C_SCAN
 const CRT_BORDER := CrtUI.C_BORDER
-const CRT_RULE := CrtUI.C_RULE
 
 static var _circle_tex: ImageTexture = null
 

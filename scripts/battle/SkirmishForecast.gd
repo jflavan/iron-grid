@@ -21,7 +21,7 @@ static func clear_forecast_cache() -> void:
 ## CombatAbility's numbers come from the catalog, so one id is one definition.
 ## NOTE: must list every MechData/GridTileData field BattleSession reads (see _forecast_key for the
 ## tile and formation side); a field the engine reads that is missing here serves stale forecasts.
-static func _mech_key(m: MechData) -> Array:
+static func mech_key(m: MechData) -> Array:
 	var ability_ids: Array = []
 	for ab in m.abilities:
 		ability_ids.append(ab.ability_id)
@@ -31,10 +31,13 @@ static func _mech_key(m: MechData) -> Array:
 		m.firepower, m.armor_rating, m.speed, m.evasion, m.crit_chance, ability_ids,
 	]
 
-static func _forecast_key(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}) -> Array:
+## `atk_key` / `def_key` are mech_key(attacker) / mech_key(defender) when the caller already built them
+## (the AI scores one attacker against each target from several launch tiles); empty builds them here.
+static func _forecast_key(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}, atk_key: Array = [], def_key: Array = []) -> Array:
 	var approach: Vector2i = target_tile.coords - from_tile.coords
 	return [
-		_mech_key(attacker), _mech_key(defender),
+		mech_key(attacker) if atk_key.is_empty() else atk_key,
+		mech_key(defender) if def_key.is_empty() else def_key,
 		int(from_tile.terrain_type), from_tile.elevation, int(target_tile.terrain_type), target_tile.elevation, target_tile.is_objective,
 		Rules.entrench_def_pct(int(defender.faction)),
 		approach, defender.facing,
@@ -69,9 +72,11 @@ static func forecast_shared(
 	defender: MechData,
 	from_tile: GridTileData,
 	target_tile: GridTileData,
-	formation_context: Dictionary = {}
+	formation_context: Dictionary = {},
+	atk_key: Array = [],
+	def_key: Array = []
 ) -> Dictionary:
-	var key: Array = _forecast_key(attacker, defender, from_tile, target_tile, formation_context)
+	var key: Array = _forecast_key(attacker, defender, from_tile, target_tile, formation_context, atk_key, def_key)
 	var cached: Variant = _forecast_cache.get(key)
 	if cached != null:
 		return cached

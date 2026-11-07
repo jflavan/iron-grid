@@ -100,7 +100,7 @@ func _synthetic_map(n: int) -> MapDefinition:
 		md.elevation_rows.append(" ".join(e))
 	for i in maxi(1, n / 8):
 		md.objectives.append({"pos": Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1)), "label": "OBJ", "owner": -1})
-	var chassis := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+	var chassis := ChassisCatalog.ORDER
 	var taken := {}
 	var count: int = clampi(n * n / 12, 4, MAX_UNITS)
 	while taken.size() < count:

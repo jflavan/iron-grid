@@ -59,18 +59,3 @@ func duplicate_ability() -> CombatAbility:
 			v = v.duplicate(true)
 		copy.set(n, v)
 	return copy
-
-func get_stats_summary() -> String:
-	if is_weapon():
-		var ap_txt := " | AP:%d%%" % int(round(armor_pierce * 100.0)) if armor_pierce > 0.0 else ""
-		return "EN:%d | PWR:%d%%+%d | HIT:%d%% CRIT:+%d%%%s" % [
-			energy_cost,
-			int(round(power_multiplier * 100.0)),
-			flat_power,
-			accuracy,
-			crit_bonus,
-			ap_txt
-		]
-	else:
-		return "EN:%d | %s SUPPORT TECH (NO SHOT)" % [energy_cost, category]
-

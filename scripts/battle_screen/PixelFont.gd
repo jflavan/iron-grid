@@ -87,16 +87,6 @@ static func mesh_glyphs(text: String) -> Array:
 			Rect2(Vector2(gi * ADVANCE, 0) * inv, Vector2(ADVANCE, HEIGHT) * inv)])
 	return out
 
-static func _glyph_index(ch: String) -> int:
-	_ensure()
-	if ch.is_empty():
-		return 0
-	var code: int = ch.unicode_at(0)
-	if code < 256:
-		return _ascii_table[code]
-	var up := ch.to_upper()
-	return _index.get(up, _index.get("?", 0))
-
 static func has_glyph(ch: String) -> bool:
 	_ensure()
 	return _index.has(ch.to_upper())

@@ -117,9 +117,6 @@ static func muzzle_name(weapon_id: String) -> String:
 static func cell_size(chassis: String) -> Vector2:
 	return _prep(chassis)["size"]
 
-static func has_pose(chassis: String, pose: String) -> bool:
-	return pose in meta_for(chassis).get("poses", [])
-
 static func frame_rect(chassis: String, pose: String) -> Rect2:
 	var pr := _prep(chassis)
 	return pr["rects"].get(pose, pr["rect0"])

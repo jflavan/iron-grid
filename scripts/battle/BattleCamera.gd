@@ -37,9 +37,6 @@ func _process(delta: float) -> void:
 	if pan_dir != Vector2.ZERO:
 		position += pan_dir.normalized() * (PAN_SPEED * delta / zoom.x)
 
-func is_dragging() -> bool:
-	return _dragging
-
 func stop_drag() -> void:
 	_dragging = false
 

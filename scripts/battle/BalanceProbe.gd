@@ -16,12 +16,6 @@ static var patch_healed: Array[int] = [0, 0]
 static var upkeep_healed: Array[int] = [0, 0]
 static var skirmishes: Array = []
 
-## Puts the knobs back to the shipped rules (reset() keeps them, so an experiment can span missions).
-static func restore_defaults() -> void:
-	def_pct = [Rules.ENTRENCH_DEF_PCT, Rules.ENTRENCH_DEF_PCT]
-	patch = [Rules.PATCH_ARMOR, Rules.PATCH_ARMOR]
-	upkeep = [Rules.UPKEEP_ARMOR, Rules.UPKEEP_ARMOR]
-
 static func reset() -> void:
 	entrench_actions = [0, 0]
 	patch_healed = [0, 0]

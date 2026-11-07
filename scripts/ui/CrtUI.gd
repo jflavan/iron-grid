@@ -87,8 +87,12 @@ static func fit(s: String, max_px: float) -> String:
 
 ## Draws wrapped lines from pos, stopping before max_y. Returns the y below the last line drawn.
 static func paragraph(ci: CanvasItem, s: String, pos: Vector2, max_px: float, col: Color, max_y: float = INF) -> float:
+	return paragraph_lines(ci, wrap_lines(s, max_px), pos, col, max_y)
+
+## paragraph for text already wrapped (a caller that measured the lines first draws the same ones).
+static func paragraph_lines(ci: CanvasItem, lines: PackedStringArray, pos: Vector2, col: Color, max_y: float = INF) -> float:
 	var y := pos.y
-	for line in wrap_lines(s, max_px):
+	for line in lines:
 		if y + PixelFont.HEIGHT > max_y:
 			break
 		text(ci, line, Vector2(pos.x, y), col)

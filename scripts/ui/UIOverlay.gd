@@ -24,11 +24,6 @@ const LOG_H := 64
 const TOP_H := 30
 const BLOCKER := "block"   # hotspot id of a plain panel: swallows the click, does nothing
 
-## The H Field Manual (content lives in RulesContent).
-static func manual_lines() -> Array[String]:
-	return RulesContent.manual_lines()
-
-
 var root_ctrl: CrtScreen
 var skirmish_modal: BattleScreen
 
@@ -160,19 +155,20 @@ func toggle_manual() -> bool:
 	return true
 
 func _is_player_command_time() -> bool:
-	return GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not skirmish_modal.visible and not show_game_over_modal and not commands_locked
+	return GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not modal_blocks_map() and not commands_locked
 
+## A player walker is selected at a time it may take orders (ROTATE is always one of them).
 func _can_turn() -> bool:
 	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER
 
 func _can_wait() -> bool:
-	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and not selected_mech.has_moved
+	return _can_turn() and not selected_mech.has_moved
 
 func _can_hold() -> bool:
-	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and selected_mech.has_moved and not selected_mech.has_attacked
+	return _can_turn() and selected_mech.has_moved and not selected_mech.has_attacked
 
 func _can_next_mech() -> bool:
-	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER and selected_mech.has_moved
+	return _can_turn() and selected_mech.has_moved
 
 # ---------------------------------------------------------------- input
 func _input(event: InputEvent) -> void:
@@ -356,9 +352,8 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	var accent := CrtUI.C_LABEL if is_player else CrtUI.C_HOSTILE
 	var cell := MechSpriteBank.cell_size(m.chassis_id)
 	var tech_h := 12 + m.abilities.size() * 20
-	var gear := _gear_note(m)
-	var gear_lines := CrtUI.wrap_lines("MOBILITY: " + gear, rect.size.x - 12).size()
-	rect.size.y = 6 + 40 + cell.y + 8 + 4 + 12 + 57 + gear_lines * CrtUI.LINE + 4 + tech_h + 2
+	var gear_lines := CrtUI.wrap_lines("MOBILITY: " + _gear_note(m), rect.size.x - 12)
+	rect.size.y = 6 + 40 + cell.y + 8 + 4 + 12 + 57 + gear_lines.size() * CrtUI.LINE + 4 + tech_h + 2
 	_panel(rect, accent)
 
 	var x := rect.position.x + 6
@@ -399,7 +394,7 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	_t("ATK %d  SPD %d" % [m.firepower, m.speed], Vector2(x, y), CrtUI.C_LABEL)
 	_tr("EVA %d%%" % m.evasion, x + w, y, CrtUI.C_NUM)
 	y += 12
-	y = CrtUI.paragraph(root_ctrl, "MOBILITY: " + gear, Vector2(x, y), w, CrtUI.C_LABEL_DIM) + 4
+	y = CrtUI.paragraph_lines(root_ctrl, gear_lines, Vector2(x, y), CrtUI.C_LABEL_DIM) + 4
 
 	_t("TECH SYSTEMS", Vector2(x, y), CrtUI.C_LABEL)
 	_tr("COST/CAT", x + w, y, CrtUI.C_LABEL_DIM)
@@ -593,7 +588,7 @@ func _draw_manual_modal(v: Vector2) -> void:
 ## Wraps the manual into [text, x offset, colour] rows for an `inner`-wide panel.
 func _layout_manual(inner: float) -> Array:
 	var lines: Array = []
-	for l: String in manual_lines():
+	for l: String in RulesContent.manual_lines():
 		if l == "":
 			lines.append(["", 0, CrtUI.C_NUM])
 		elif l.begins_with("   - "):
