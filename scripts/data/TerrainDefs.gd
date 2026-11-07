@@ -30,9 +30,6 @@ const FALLBACK_COLOR := Color(0.3, 0.35, 0.25)
 static var _code_to_type: Dictionary = {}
 static var _top_cache: Dictionary = {} # (type * 16 + elevation) -> Color
 
-static func row(t: int) -> Dictionary:
-	return TABLE.get(t, {})
-
 ## Letter code from a map file ("D", "R_D", "F"...) to a terrain type; unknown codes are PLAIN.
 static func parse_code(code: String) -> GridTileData.TerrainType:
 	if _code_to_type.is_empty():

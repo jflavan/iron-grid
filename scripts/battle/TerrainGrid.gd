@@ -13,8 +13,13 @@ const _SEQ_BITS: int = 24
 const TERRAIN_COUNT: int = 6   # GridTileData.TerrainType values
 const ELEV_COUNT: int = 5      # elevation 0..GridTileData.MAX_ELEVATION
 
-var width: int = 10
-var height: int = 8
+## Read-only outside load_from_definition (a resize without a reload would desync the flat arrays).
+var width: int:
+	get: return _width
+var height: int:
+	get: return _height
+var _width: int = 10
+var _height: int = 8
 var tiles: Dictionary = {} # Vector2i -> GridTileData
 var _flat: Array[GridTileData] = [] # same tiles, indexed y * width + x
 var _terrain_flat := PackedByteArray() # terrain type per flat index (search hot path)
@@ -27,7 +32,8 @@ func is_valid_coords(coords: Vector2i) -> bool:
 func get_tile(coords: Vector2i) -> GridTileData:
 	if coords.x < 0 or coords.x >= width or coords.y < 0 or coords.y >= height:
 		return null
-	return _flat[coords.y * width + coords.x] if not _flat.is_empty() else tiles.get(coords, null)
+	assert(_flat.size() == _width * _height, "TerrainGrid.get_tile before load_from_definition")
+	return _flat[coords.y * _width + coords.x]
 
 func get_tile_elevation(coords: Vector2i) -> int:
 	var td: GridTileData = get_tile(coords)
@@ -35,10 +41,12 @@ func get_tile_elevation(coords: Vector2i) -> int:
 
 ## Parses the map's terrain / elevation rows and objectives into tiles.
 func load_from_definition(map_def: MapDefinition) -> void:
-	width = map_def.width
-	height = map_def.height
+	for msg in map_def.validate():
+		push_error(msg)
+	_width = map_def.width
+	_height = map_def.height
 	tiles.clear()
-	assert(width * height < (1 << _SEQ_BITS), "map too large for the search's discovery-order key")
+	assert(_width * _height < (1 << _SEQ_BITS), "map too large for the search's discovery-order key")
 	_flat = []
 	_flat.resize(width * height)
 	_terrain_flat.resize(width * height)

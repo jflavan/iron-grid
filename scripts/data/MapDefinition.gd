@@ -84,12 +84,17 @@ func elevation_at(x: int, y: int) -> int:
 	return int(row[x])
 
 ## Data problems of this map, one message each; empty when the map is well-formed.
-func validate() -> PackedStringArray:
+## `known_chassis` lists the valid spawn chassis ids (default: ChassisCatalog.ORDER).
+func validate(known_chassis: Array = []) -> PackedStringArray:
 	var errs := PackedStringArray()
 	var label: String = map_id if map_id != "" else map_name
 	if width <= 0 or height <= 0:
 		errs.append("%s: size %dx%d" % [label, width, height])
 		return errs
+	if width * height >= (1 << 24):
+		errs.append("%s: %dx%d is too large (limit %d tiles)" % [label, width, height, (1 << 24) - 1])
+		return errs
+	var chassis_ids: Array = known_chassis if not known_chassis.is_empty() else ChassisCatalog.ORDER
 	if terrain_codes.size() != height:
 		errs.append("%s: %d terrain rows for height %d" % [label, terrain_codes.size(), height])
 	if elevation_rows.size() != height:
@@ -108,21 +113,41 @@ func validate() -> PackedStringArray:
 		for e in elevs:
 			if not e.is_valid_int() or int(e) < 0 or int(e) > GridTileData.MAX_ELEVATION:
 				errs.append("%s: elevation row %d has bad value '%s'" % [label, y, e])
+	var obj_seen: Dictionary = {}
 	for obj in objectives:
 		var p: Vector2i = obj.get("pos", Vector2i(-1, -1))
 		if not _in_bounds(p):
 			errs.append("%s: objective at %s out of bounds" % [label, p])
+		elif obj_seen.has(p):
+			errs.append("%s: duplicate objective at %s" % [label, p])
+		obj_seen[p] = true
+	if strategy_mode == StrategyMode.PITCHED_BATTLE and objectives.is_empty():
+		errs.append("%s: pitched battle has no objectives" % label)
+	if strategy_mode == StrategyMode.OFFENSE and hq_positions.is_empty():
+		errs.append("%s: offense map has no HQ" % label)
 	for p in hq_positions:
 		if not _in_bounds(p):
 			errs.append("%s: HQ at %s out of bounds" % [label, p])
 	var seen: Dictionary = {}
+	var per_faction: Array[int] = [0, 0]
 	for sp in spawns:
+		var fac: int = int(sp.get("faction", -1))
+		if fac == 0 or fac == 1:
+			per_faction[fac] += 1
+		else:
+			errs.append("%s: spawn faction %d is not 0 or 1" % [label, fac])
+		var cid: String = str(sp.get("chassis", ""))
+		if not chassis_ids.has(cid):
+			errs.append("%s: spawn chassis '%s' is unknown" % [label, cid])
 		var p: Vector2i = sp.get("pos", Vector2i(-1, -1))
 		if not _in_bounds(p):
 			errs.append("%s: spawn at %s out of bounds" % [label, p])
 		elif seen.has(p):
 			errs.append("%s: duplicate spawn at %s" % [label, p])
 		seen[p] = true
+	for fac in 2:
+		if per_faction[fac] == 0:
+			errs.append("%s: faction %d has no spawns" % [label, fac])
 	return errs
 
 func _in_bounds(p: Vector2i) -> bool:

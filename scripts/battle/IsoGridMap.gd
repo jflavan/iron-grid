@@ -17,10 +17,8 @@ const BASE_THICKNESS: float = 20.0
 var grid := TerrainGrid.new()
 var grid_width: int:
 	get: return grid.width
-	set(v): grid.width = v
 var grid_height: int:
 	get: return grid.height
-	set(v): grid.height = v
 var tiles: Dictionary: # Vector2i -> GridTileData
 	get: return grid.tiles
 
