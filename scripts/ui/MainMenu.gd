@@ -1,5 +1,5 @@
 class_name MainMenu
-extends Control
+extends CrtScreen
 
 ## Command HQ: theater select with briefing and recon map, plus the Hangar Codex (6 chassis), and
 ## the Rules of Engagement page (RulesContent) opened from the header.
@@ -19,8 +19,6 @@ var selected_map_idx: int = 0
 var selected_chassis_idx: int = 0
 var _chassis_keys: Array[String] = ChassisCatalog.ORDER
 var _anim_time: float = 0.0
-var _scale: int = 2
-var _hot := CrtHotspots.new()
 var _stat_max := {"hull": 1, "en": 1, "armor": 1, "fire": 1, "spd": 1, "fuel": 1}
 var show_rules: bool = false
 var rules_chapter: int = 0
@@ -28,7 +26,6 @@ var _rules: Array[Dictionary] = []
 var _rules_cache: Dictionary = {}   # "chapter:width" -> laid-out blocks (content is fixed while the menu lives)
 # Drawn on change, not every frame: input and selection set _dirty; the hangar's idle sprites and the
 # launch blink redraw when their frame actually steps (_anim_key).
-var _dirty: bool = true
 var _anim_key := Vector3i(-1, -1, -1)
 
 func _ready() -> void:
@@ -101,13 +98,9 @@ func _key_action(keycode: int) -> String:
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
-		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
-		if id != _hot.hovered:
-			_dirty = true
-		_hot.hovered = id
-		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if _hot.hovered != "" else Control.CURSOR_ARROW
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
+		track_pointer(event)
+	else:
+		var id := clicked_id(event)
 		if id != "":
 			_activate(id)
 			accept_event()

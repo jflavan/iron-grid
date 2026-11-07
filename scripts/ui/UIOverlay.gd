@@ -63,7 +63,7 @@ static func manual_lines() -> Array[String]:
 	return lines
 
 
-var root_ctrl: Control
+var root_ctrl: CrtScreen
 var skirmish_modal: BattleScreen
 
 # HUD state set by Battlefield. Every assignment queues a redraw: the HUD is drawn on change (plus
@@ -104,14 +104,22 @@ var show_game_over_modal: bool = false:
 var _banner_timer: float = 0.0
 var _banner_text: String = ""
 var _anim_time: float = 0.0
-var _scale: int = 2
-var _hot := CrtHotspots.new()
+# The CRT screen state lives on root_ctrl (a CrtScreen); these forward to it so the HUD code reads as before.
+var _scale: int:
+	get: return root_ctrl._scale if root_ctrl != null else 2
+	set(v): root_ctrl._scale = v
+var _hot: CrtHotspots:
+	get: return root_ctrl._hot
+var _dirty: bool:
+	get: return root_ctrl == null or root_ctrl._dirty
+	set(v):
+		if root_ctrl != null:
+			root_ctrl._dirty = v
 var _debrief_row: int = 0
 # Redraw scheduling: _dirty is set by HUD state changes, input and GlobalState signals; the idle
 # portrait redraws when its frame steps; the heartbeat picks up in-place MechData changes (fuel,
 # armor) that no setter sees.
 const REDRAW_HEARTBEAT := 0.25
-var _dirty: bool = true
 var _since_redraw: float = 0.0
 var _portraits: PackedStringArray = []   # chassis of the idle portraits in the last frame
 var _portrait_frame: int = -1
@@ -119,7 +127,8 @@ var _manual_cache: Array = []            # [inner width, laid-out lines] for the
 
 func _ready() -> void:
 	layer = 10
-	root_ctrl = Control.new()
+	root_ctrl = CrtScreen.new()
+	root_ctrl.passive_id = BLOCKER
 	root_ctrl.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root_ctrl.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -134,7 +143,8 @@ func _ready() -> void:
 	GlobalState.log_added.connect(func(_e): _mark_dirty())
 
 func _mark_dirty() -> void:
-	_dirty = true
+	if root_ctrl != null:
+		root_ctrl.mark_dirty()
 
 func _process(delta: float) -> void:
 	if skirmish_modal != null and skirmish_modal.visible:
@@ -193,15 +203,11 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey or event is InputEventMouseButton:
 		_dirty = true
 	if event is InputEventMouseMotion:
-		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
-		if id != _hot.hovered:
-			_dirty = true
-		_hot.hovered = id
+		var id := root_ctrl.track_pointer(event)
 		if id.begins_with("debrief:"):
 			_debrief_row = int(id.substr(8))
-		root_ctrl.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if id != "" and id != BLOCKER else Control.CURSOR_ARROW
 	elif event is InputEventMouseButton:
-		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
+		var id := root_ctrl.hit_id(event)
 		_hot.hovered = id   # keep pointer_over_hud() right for clicks that arrive without a motion event
 		if id != "" and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 			# Mark it handled first: MENU / debrief rows change scene and take this overlay out of the tree.
