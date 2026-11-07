@@ -17,7 +17,11 @@ var current_map_def: MapDefinition
 var _strike_plans: Dictionary = {}
 const STRIKE_PLAN_CACHE_MAX := 64
 var selected_unit: MechUnit = null
-var _is_animating_move: bool = false
+var _is_animating_move: bool = false:
+	set(v):
+		_is_animating_move = v
+		if ui_overlay != null:
+			ui_overlay.commands_locked = v   # END TURN / WAIT render disabled while a walker moves
 var _phase_before_resolution: GlobalState.TurnPhase = GlobalState.TurnPhase.PLAYER_PHASE
 
 # Pending collision context for Combat Resolution
@@ -50,6 +54,12 @@ func _ready() -> void:
 
 	start_mission(GlobalState.selected_map_index)
 
+func _exit_tree() -> void:
+	# A skirmish still open when the scene is left must not leave rendering suppressed for the next one
+	if grid_map != null:
+		grid_map.suppress_redraw = false
+	MechUnit.suppress_redraw = false
+
 func start_mission(map_idx: int) -> void:
 	_mission_token += 1
 	_auto_advance_token += 1   # a countdown from the previous run must not start this one's AI phase
@@ -62,6 +72,9 @@ func start_mission(map_idx: int) -> void:
 	_pending_defender = null
 	_pending_ai_target = null
 	_pending_ai_attack_fuel = 0
+	_phase_before_resolution = GlobalState.TurnPhase.PLAYER_PHASE
+	grid_map.suppress_redraw = false
+	MechUnit.suppress_redraw = false
 	var idx: int = clampi(map_idx, 0, GlobalState.maps.size() - 1)
 	current_map_def = GlobalState.maps[idx]
 	SkirmishEngine.clear_forecast_cache()
@@ -140,6 +153,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if event is InputEventMouseButton:
+		if ui_overlay.pointer_over_hud() and event.pressed:
+			return   # a click on a HUD panel is not a click on the map
 		if event.button_index == MOUSE_BUTTON_RIGHT or event.button_index == MOUSE_BUTTON_MIDDLE:
 			_is_dragging_cam = event.pressed
 			_drag_last_mouse = event.position
@@ -158,8 +173,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			var diff: Vector2 = event.position - _drag_last_mouse
 			_drag_last_mouse = event.position
 			camera.position -= diff / camera.zoom.x
-		var local_pos := grid_map.get_local_mouse_position()
-		grid_map.update_hover(local_pos)
+		if not ui_overlay.pointer_over_hud():
+			grid_map.update_hover(grid_map.get_local_mouse_position())
 
 # =============================================================================
 # TURN FLOW: PLAYER PHASE
@@ -294,6 +309,10 @@ func _refresh_hover_telemetry(coords: Vector2i) -> void:
 		ui_overlay.hovered_reach_info = {}
 		ui_overlay.current_forecast = {}
 
+## True while `selected_unit` still refers to a live walker (not freed, not wrecked).
+func _selected_is_valid() -> bool:
+	return selected_unit != null and is_instance_valid(selected_unit) and selected_unit.mech_data != null and selected_unit.mech_data.is_alive()
+
 func _can_rotate_selected_unit() -> bool:
 	return (GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and selected_unit != null
 		and is_instance_valid(selected_unit) and selected_unit.mech_data.faction == MechData.Faction.PLAYER
@@ -333,7 +352,7 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 	var clicked_unit := unit_container.get_unit_at(coords)
 
 	# 1. If a ready player unit is selected and player clicked a reachable destination (move to empty tile, or attack adjacent enemy!)
-	if selected_unit != null and selected_unit.mech_data.faction == MechData.Faction.PLAYER and not selected_unit.mech_data.is_order_complete():
+	if _selected_is_valid() and selected_unit.mech_data.faction == MechData.Faction.PLAYER and not selected_unit.mech_data.is_order_complete():
 		if grid_map.reachable_info.has(coords) and coords != selected_unit.mech_data.grid_pos:
 			var info: Dictionary = grid_map.reachable_info[coords]
 			var move_fuel: int = int(info["fuel_spent"])
@@ -346,7 +365,7 @@ func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
 				return
 
 	# 2. If a moved player unit is selected and player clicks an orthogonal neighbor empty tile -> reface toward it!
-	if selected_unit != null and selected_unit.mech_data.faction == MechData.Faction.PLAYER and selected_unit.mech_data.has_moved and clicked_unit == null:
+	if _selected_is_valid() and selected_unit.mech_data.faction == MechData.Faction.PLAYER and selected_unit.mech_data.has_moved and clicked_unit == null:
 		var diff := coords - selected_unit.mech_data.grid_pos
 		if diff in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 			_auto_advance_token += 1
@@ -602,6 +621,9 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 		GlobalState.add_log("%s WRECKED during assault!" % [_pending_attacker.mech_data.callsign])
 		unit_container.remove_destroyed_unit(_pending_attacker)
 
+	if selected_unit != null and not _selected_is_valid():
+		_deselect_unit()
+
 	# Both units remain on their respective tiles; defenders never auto-reface out of turn.
 	if atk_alive and _pending_attacker != null:
 		_pending_attacker.position = grid_map.grid_to_screen(_pending_attacker.mech_data.grid_pos, true)
@@ -634,6 +656,9 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 	if _phase_before_resolution == GlobalState.TurnPhase.PLAYER_PHASE:
 		if surviving_player_attacker != null:
 			_select_unit(surviving_player_attacker)
+		else:
+			_check_auto_advance_player_phase()
+			return
 		if not _has_unmoved_player_units():
 			_start_auto_advance_timer(0.45)
 	elif _phase_before_resolution == GlobalState.TurnPhase.AI_PHASE:
@@ -709,14 +734,16 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 				ai_unit.mech_data.callsign, ai_unit.mech_data.grid_pos.x, ai_unit.mech_data.grid_pos.y
 			])
 			ai_unit.queue_redraw()
-			var wait_t := get_tree().create_timer(0.32)
-			wait_t.timeout.connect(func():
-				if tok == _mission_token and GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
-					_process_next_ai_unit()
-			)
+			_continue_ai_after(0.32, tok)
 		elif action_type == "ENGAGE":
 			var target_pos: Vector2i = decision["target_pos"]
 			var target_unit := unit_container.get_unit_at(target_pos, ai_unit)
+			if target_unit == null:
+				# The decision's target is gone: skip this walker rather than stall the phase
+				_pending_ai_target = null
+				_pending_ai_attack_fuel = 0
+				_continue_ai_after(0.32, tok)
+				return
 			var move_pos: Vector2i = decision.get("move_pos", ai_unit.mech_data.grid_pos)
 			var move_path: Array[Vector2i] = decision.get("move_path", [ai_unit.mech_data.grid_pos]).duplicate()
 			var move_fuel: int = int(decision.get("move_fuel", 0))
@@ -736,6 +763,12 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			var path: Array[Vector2i] = decision["path"].duplicate()
 			var fuel_spent: int = int(decision["fuel_spent"])
 			_execute_unit_movement(ai_unit, target_pos, path, fuel_spent)
+	)
+
+func _continue_ai_after(delay: float, tok: int) -> void:
+	get_tree().create_timer(delay).timeout.connect(func():
+		if tok == _mission_token and GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
+			_process_next_ai_unit()
 	)
 
 func _finish_ai_phase() -> void:
