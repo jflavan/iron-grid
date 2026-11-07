@@ -1150,7 +1150,9 @@ func test_manual_numbers_come_from_data() -> void:
 	var manual := "\n".join(UIOverlay.manual_lines())
 	_check(("+%d Fuel" % MechData.WAIT_FUEL) in manual and ("+%d EN" % MechData.WAIT_ENERGY) in manual, "manual WAIT line reads the WAIT constants")
 	var mtn := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.MOUNTAIN, 1)
-	_check(("%d Fuel" % mtn.get_base_fuel_cost()) in manual and ("%+d%% DEF" % mtn.get_defense_modifier_pct()) in manual, "manual terrain chart reads GridTileData")
+	var mtn_row := "%s (%s): %d Fuel / %+d%% ATK / %+d%% DEF" % [mtn.get_terrain_name().to_upper(), mtn.get_terrain_short_code(),
+		mtn.get_base_fuel_cost() * RulesContent.default_fuel_usage(), mtn.get_attack_modifier_pct(), mtn.get_defense_modifier_pct()]
+	_check(mtn_row in manual, "manual terrain chart reads GridTileData with the fuel_usage multiplier (%s)" % mtn_row)
 	_check(("+%d SPD" % SkirmishEngine.ROUND1_ATTACKER_SPD_BONUS) in manual, "manual initiative line reads SkirmishEngine")
 
 func test_rules_render_is_cached() -> void:
@@ -1843,6 +1845,7 @@ func test_forecast_key_covers_every_engine_read_field() -> void:
 			var base_f := SkirmishEngine.compute_forecast(base_atk, base_def, flat, flat2)
 			var key_a := SkirmishEngine._forecast_key(base_atk, base_def, flat, flat2)
 			target.set(pname, changed)
+			SkirmishEngine.clear_forecast_cache()
 			var mut_f := SkirmishEngine.compute_forecast(mut_atk, mut_def, flat, flat2)
 			var key_b := SkirmishEngine._forecast_key(mut_atk, mut_def, flat, flat2)
 			if base_f != mut_f:
@@ -1865,7 +1868,7 @@ func test_forecast_cache_two_generations() -> void:
 	var flat2 := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.PLAIN, 1)
 	var a := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
 	var d := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
-	SkirmishEngine.compute_forecast(a, d, flat, flat2)
+	var f0 := SkirmishEngine.forecast_shared(a, d, flat, flat2)
 	var key := SkirmishEngine._forecast_key(a, d, flat, flat2)
 	# force a rotation: pretend the current generation is full
 	SkirmishForecast._forecast_old = SkirmishForecast._forecast_cache
@@ -1873,6 +1876,7 @@ func test_forecast_cache_two_generations() -> void:
 	_check(not SkirmishEngine._forecast_cache.has(key), "after a rotation the entry lives in the old generation")
 	SkirmishEngine.compute_forecast(a, d, flat, flat2)
 	_check(SkirmishEngine._forecast_cache.has(key), "an old-generation hit is promoted")
+	_check(is_same(SkirmishEngine.forecast_shared(a, d, flat, flat2), f0), "promotion keeps the same cached Dictionary object")
 	SkirmishEngine.clear_forecast_cache()
 	_check(SkirmishForecast._forecast_old.is_empty() and SkirmishForecast._forecast_cache.is_empty(), "clear empties both generations")
 
@@ -1910,8 +1914,8 @@ func test_replacing_a_finished_session_applies_it() -> void:
 	_check(dfn.current_armor == sess.result.def_armor_after and dfn.current_armor < start_def, "a concluded session replaced on screen is written back to the units first")
 	screen.queue_free()
 
-## A replaced finished session also reaches the listeners, once, whether or not it was fully played.
-func test_replaced_finished_session_emits_resolution() -> void:
+## A replaced finished session is applied to the units but does NOT emit (no re-entrant listeners).
+func test_replaced_finished_session_applies_without_emitting() -> void:
 	for played in [false, true]:
 		var screen := BattleScreen.new()
 		add_child(screen)
@@ -1920,13 +1924,15 @@ func test_replaced_finished_session_emits_resolution() -> void:
 		screen.resolution_confirmed.connect(func(r): emitted.append(r))
 		var sess := _flat_session("vanguard", "moloch")
 		sess.auto_resolve()
+		var res_def: MechData = sess.result.defender
 		screen.start_session(sess)
 		if played:
 			screen._on_skip_pressed()   # played out, waiting for the confirm
 		screen.start_showdown(_fight("falke", "goliath"))
-		_check(emitted.size() == 1 and emitted[0] == sess.result, "a replaced finished session emits resolution_confirmed once (fully played: %s)" % played)
+		_check(res_def.current_armor == sess.result.def_armor_after, "a replaced finished session is written back (fully played: %s)" % played)
+		_check(emitted.is_empty(), "a replaced finished session emits nothing (fully played: %s)" % played)
 		screen.start_showdown(_fight("falke", "goliath"))
-		_check(emitted.size() == 1, "replacing a showdown emits nothing")
+		_check(emitted.is_empty(), "replacing a showdown emits nothing")
 		screen.queue_free()
 
 func test_screen_only_processes_while_active() -> void:
@@ -2106,6 +2112,7 @@ func test_duplicate_mech_copies_every_field() -> void:
 			continue
 		_check(copy.get(prop["name"]) == src.get(prop["name"]), "duplicate_mech copies %s" % prop["name"])
 	_check(copy.abilities.size() == 1 and copy.abilities[0] != src.abilities[0], "abilities are copied, not shared")
+	_check(not is_same(copy.abilities, src.abilities), "the abilities array itself is not shared")
 	for prop in src.abilities[0].get_property_list():
 		if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE:
 			_check(copy.abilities[0].get(prop["name"]) == src.abilities[0].get(prop["name"]), "duplicate_ability copies %s" % prop["name"])
@@ -2839,3 +2846,96 @@ func test_strike_cost_field_matches_targeted_search_dense() -> void:
 		gm.queue_free()
 	_check(plans > 1000, "dense strike-field comparison covered plans (%d)" % plans)
 	_check(diffs.is_empty(), "dense occupancy: plan with a cost field equals the targeted search (%d diffs, first %s)" % [diffs.size(), diffs.slice(0, 1)])
+## record_presentation only adds presentation data: the fight itself is identical with and without it.
+func test_record_presentation_does_not_change_the_fight() -> void:
+	var pairs := [["vanguard", "moloch"], ["falke", "kommandant"], ["goliath", "donner"], ["kommandant", "falke"], ["donner", "vanguard"]]
+	var terrains := [GridTileData.TerrainType.PLAIN, GridTileData.TerrainType.MOUNTAIN]
+	var ctxs := [{}, {"atk_allies_adj": 1, "def_allies_adj": 1, "is_pincer": true, "atk_suppression": 1}]
+	var step_fields := ["actor_side", "ability_id", "damage_dealt", "is_miss", "is_crit", "escaped", "escape_failed",
+		"atk_hp_after", "def_hp_after", "atk_en_after", "def_en_after"]
+	for pair in pairs:
+		for terr in terrains:
+			for ci in ctxs.size():
+				var ctx: Dictionary = ctxs[ci]
+				var ft := GridTileData.new(Vector2i(3, 2), terr, 1)
+				var tt := GridTileData.new(Vector2i(4, 2), terr, 1)
+				var out: Array = []
+				for rec in [true, false]:
+					var a := GlobalState.create_mech_instance(pair[0], MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+					var d := GlobalState.create_mech_instance(pair[1], MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+					out.append(SkirmishEngine.resolve_skirmish(a, d, ft, tt, false, true, ctx, rec))
+				var r1: SkirmishEngine.SkirmishResult = out[0]
+				var r2: SkirmishEngine.SkirmishResult = out[1]
+				var label := "%s/%s terrain %d ctx %d" % [pair[0], pair[1], terr, ci]
+				_check(r1.total_dmg_to_defender == r2.total_dmg_to_defender and r1.total_dmg_to_attacker == r2.total_dmg_to_attacker, "totals equal: " + label)
+				_check(r1.attacker_won_clash == r2.attacker_won_clash and r1.attacker_destroyed == r2.attacker_destroyed
+					and r1.defender_destroyed == r2.defender_destroyed, "outcome flags equal: " + label)
+				_check(r1.first_striker == r2.first_striker and r1.atk_effective_speed == r2.atk_effective_speed
+					and r1.def_effective_speed == r2.def_effective_speed and r1.rounds_fought == r2.rounds_fought, "initiative equal: " + label)
+				_check(r1.tactical_tags == r2.tactical_tags, "tactical tags equal: " + label)
+				_check(r1.steps.size() == r2.steps.size(), "step count equal: " + label)
+				if r1.steps.size() == r2.steps.size():
+					for i in r1.steps.size():
+						for f in step_fields:
+							_check(r1.steps[i].get(f) == r2.steps[i].get(f), "step %d %s equal: %s" % [i, f, label])
+
+## The camera's centre request during the AI phase is ignored: the AI's pan is not killed and the phase completes.
+func test_center_request_during_ai_phase_does_not_stall() -> void:
+	var bf := await _spawn_iron_bridge()
+	bf._begin_ai_phase()
+	await get_tree().create_timer(0.7).timeout   # the first AI walker's camera pan is in flight
+	var turn_before := GlobalState.turn_number
+	bf._on_center_requested()
+	var modal: BattleScreen = bf.ui_overlay.skirmish_modal
+	var waited := 0.0
+	var done := false
+	while waited < 60.0:
+		if modal.visible:
+			if modal._all_steps_done:
+				modal._on_confirm_pressed()
+			else:
+				modal._on_skip_pressed()
+		var ph := GlobalState.current_phase
+		if ph == GlobalState.TurnPhase.PLAYER_PHASE or ph == GlobalState.TurnPhase.GAME_OVER:
+			done = true
+			break
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	_check(done, "the AI phase completes after a centre request mid-pan (waited %.2fs)" % waited)
+	_check(GlobalState.turn_number > turn_before or GlobalState.current_phase == GlobalState.TurnPhase.GAME_OVER, "the turn counter advanced or the mission ended (phase %d, turn %d)" % [GlobalState.current_phase, GlobalState.turn_number])
+	bf.queue_free()
+	await get_tree().process_frame
+
+## An ENGAGE whose target is gone continues through _after(); the continuation path advances the phase.
+func test_ai_continuation_advances_the_phase() -> void:
+	var bf := await _spawn_iron_bridge()
+	GlobalState.set_phase(GlobalState.TurnPhase.AI_PHASE)
+	bf._ai_queue.clear()
+	var turn_before := GlobalState.turn_number
+	bf._after(0.05, bf._process_next_ai_unit)
+	await get_tree().create_timer(0.3).timeout
+	_check(GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and GlobalState.turn_number == turn_before + 1, "an after()-scheduled continuation with an empty queue finishes the AI phase")
+	bf.queue_free()
+	await get_tree().process_frame
+
+## HUD fuel text quotes the real (fuel_usage-multiplied) numbers.
+func test_hud_fuel_text_is_multiplied() -> void:
+	var bf := await _spawn_iron_bridge()
+	var river := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.RIVER, 1)
+	var ov := bf.ui_overlay
+	ov.hovered_tile = river
+	ov.step_cost_mech = null
+	var fu := RulesContent.default_fuel_usage()
+	var row_text := ""
+	for r in ov._terrain_rows():
+		if r[0] == "FUEL COST":
+			row_text = r[1]
+	_check(row_text == "%d/TILE" % (river.get_base_fuel_cost() * fu), "river FUEL COST row is multiplied by fuel_usage (got %s)" % row_text)
+	var falke: MechData = GlobalState.chassis_catalog["falke"]
+	var goliath: MechData = GlobalState.chassis_catalog["goliath"]
+	var donner: MechData = GlobalState.chassis_catalog["donner"]
+	_check(("RIVER -%d" % (2 * falke.fuel_usage)) in ov._gear_note(falke), "falke gear note: %s" % ov._gear_note(falke))
+	_check(("MTN -%d" % (2 * donner.fuel_usage)) in ov._gear_note(donner) and ("CLIMB -%d" % donner.fuel_usage) in ov._gear_note(donner), "donner gear note: %s" % ov._gear_note(donner))
+	_check(("%+d FUEL OFF-ROAD" % (goliath.fuel_efficiency_mod * goliath.fuel_usage)) in ov._gear_note(goliath), "goliath gear note: %s" % ov._gear_note(goliath))
+	bf.queue_free()
+	await get_tree().process_frame

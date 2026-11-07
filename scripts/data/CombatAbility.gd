@@ -54,7 +54,10 @@ func duplicate_ability() -> CombatAbility:
 				_state_props.append(String(prop["name"]))
 	var copy := CombatAbility.new()
 	for n in _state_props:
-		copy.set(n, get(n))
+		var v: Variant = get(n)
+		if v is Array or v is Dictionary:
+			v = v.duplicate(true)
+		copy.set(n, v)
 	return copy
 
 func get_stats_summary() -> String:

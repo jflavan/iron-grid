@@ -77,6 +77,27 @@ static func table_width(rows: Array) -> float:
 static func _tile(t: GridTileData.TerrainType, elev: int = 1) -> GridTileData:
 	return GridTileData.new(Vector2i.ZERO, t, elev)
 
+## Real fuel for entering a tile of this terrain: base cost x the chassis fuel_usage (the HUD, the
+## Rules page and the manual all quote this; MechData.get_step_fuel_cost applies the same factor).
+static func terrain_fuel(tile: GridTileData, fuel_usage: int) -> int:
+	return tile.get_base_fuel_cost() * fuel_usage
+
+## fuel_usage every chassis shares (read from the catalog; 2 when it is not loaded).
+static func default_fuel_usage() -> int:
+	return GlobalState.chassis_catalog["vanguard"].fuel_usage if GlobalState.chassis_catalog.has("vanguard") else 2
+
+## Off-road surcharge in real fuel (negative = saving), 0 when none.
+static func offroad_fuel(m: MechData) -> int:
+	return m.fuel_efficiency_mod * m.fuel_usage
+
+## Terrain gear in real fuel ("" when the chassis has none): amphibious seals or climbing gear.
+static func gear_text(m: MechData) -> String:
+	if m.amphibious_gear:
+		return "AMPHIB: RIVER -%d" % (2 * m.fuel_usage)
+	if m.mountain_gear:
+		return "CLIMB GEAR: MTN -%d, CLIMB -%d" % [2 * m.fuel_usage, 1 * m.fuel_usage]
+	return ""
+
 static func _pct(v: int) -> String:
 	return "%+d%%" % v
 
@@ -110,12 +131,12 @@ static func _movement() -> Dictionary:
 	var fuel_rows: Array = [PackedStringArray(["TERRAIN", "FUEL"])]
 	for t in TERRAIN_ORDER:
 		var td := _tile(t)
-		fuel_rows.append(PackedStringArray([td.get_terrain_name(), str(td.get_base_fuel_cost() * dummy.fuel_usage)]))
+		fuel_rows.append(PackedStringArray([td.get_terrain_name(), str(terrain_fuel(td, dummy.fuel_usage))]))
 	var ch_rows: Array = [PackedStringArray(["CHASSIS", "TANK+REFUEL", "OFF-ROAD", "GEAR"])]
 	for id in CHASSIS_ORDER:
 		var m := _chassis(id)
-		var gear := "AMPHIB: RIVER -%d" % (2 * m.fuel_usage) if m.amphibious_gear else ("CLIMB GEAR: MTN -%d, CLIMB -%d" % [2 * m.fuel_usage, 1 * m.fuel_usage] if m.mountain_gear else "-")
-		var off := "%+d" % (m.fuel_efficiency_mod * m.fuel_usage) if m.fuel_efficiency_mod != 0 else "0"
+		var gear := gear_text(m) if gear_text(m) != "" else "-"
+		var off := "%+d" % offroad_fuel(m) if m.fuel_efficiency_mod != 0 else "0"
 		ch_rows.append(PackedStringArray([m.callsign, "%d+%d" % [m.max_fuel, m.passive_refuel], off, gear]))
 	var ex := _worked_example()
 	var g := _chassis("goliath")
@@ -213,11 +234,11 @@ static func manual_lines() -> Array[String]:
 		"",
 		"2. TERRAIN CHART (FUEL COST / ATTACK / DEFENSE / EVASION MOD):",
 	]
-	var fuel_mult: int = GlobalState.chassis_catalog["vanguard"].fuel_usage if GlobalState.chassis_catalog.has("vanguard") else 2
+	var fuel_mult: int = RulesContent.default_fuel_usage()
 	for t in RulesContent.TERRAIN_ORDER:
 		var td := GridTileData.new(Vector2i.ZERO, t, 1)
 		lines.append("   - %s (%s): %d Fuel / %+d%% ATK / %+d%% DEF / %+d%% EVA" % [
-			td.get_terrain_name().to_upper(), td.get_terrain_short_code(), td.get_base_fuel_cost() * fuel_mult, td.get_attack_modifier_pct(), td.get_defense_modifier_pct(), td.get_evasion_modifier_pct()])
+			td.get_terrain_name().to_upper(), td.get_terrain_short_code(), RulesContent.terrain_fuel(td, fuel_mult), td.get_attack_modifier_pct(), td.get_defense_modifier_pct(), td.get_evasion_modifier_pct()])
 	lines.append_array([
 		"",
 		"3. ELEVATION & HIGH GROUND ADVANTAGE:",
