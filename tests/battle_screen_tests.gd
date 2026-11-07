@@ -2708,3 +2708,134 @@ func test_visible_band_search_matches_brute_force() -> void:
 	_check(narrower, "the band search skips tiles outside the view")
 	gm.queue_free()
 	await get_tree().process_frame
+
+# ---------------------------------------------------------------- architecture review pass 3: grid
+## The step-cost table is a process-lifetime static keyed on the walker's build. If a MechData field
+## changes the fuel rule, it must change the key, or every later search would read stale costs.
+func test_step_table_key_covers_fuel_rule_inputs() -> void:
+	var pairs: Array = []
+	for t in GridTileData.TerrainType.size():
+		pairs.append([GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 1), GridTileData.new(Vector2i.ONE, t as GridTileData.TerrainType, 3)])
+		pairs.append([GridTileData.new(Vector2i.ZERO, t as GridTileData.TerrainType, 2), GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.ROAD, 0)])
+	var covered := 0
+	for prop in MechData.new().get_property_list():
+		if not (int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE):
+			continue
+		var pname: String = prop["name"]
+		var base := _unit("goliath", MechData.Faction.PLAYER, Vector2i.ZERO, "k")
+		var mut := base.duplicate_mech()
+		var cur: Variant = mut.get(pname)
+		var changed: Variant = cur
+		match typeof(cur):
+			TYPE_INT: changed = cur + 1
+			TYPE_BOOL: changed = not cur
+		if changed == cur:
+			continue
+		mut.set(pname, changed)
+		var rule_changed := false
+		for pr in pairs:
+			if base.get_step_fuel_cost(pr[0], pr[1]) != mut.get_step_fuel_cost(pr[0], pr[1]):
+				rule_changed = true
+				break
+		if rule_changed:
+			covered += 1
+			_check(TerrainGrid.step_table_key(base) != TerrainGrid.step_table_key(mut), "MechData.%s changes step fuel, so it must be in the step-table key" % pname)
+	_check(covered >= 4, "the fuel rule reads at least fuel_usage, efficiency and both gears (%d found)" % covered)
+
+## A 7x1 corridor: the enemy at the far end has exactly one launch tile. Moving a friend onto it must
+## invalidate the selected walker's cached cost field (via the occupancy epoch), not just the plan.
+func test_strike_field_follows_occupancy_epoch() -> void:
+	var md := MapDefinition.new()
+	md.map_name = "CORRIDOR"
+	md.width = 7
+	md.height = 1
+	md.terrain_codes.append("P P P P P P P")
+	md.elevation_rows.append("0 0 0 0 0 0 0")
+	md.objectives.append({"pos": Vector2i(3, 0), "label": "MID", "owner": -1})
+	md.spawns = [
+		{"chassis": "vanguard", "callsign": "LEAD-1", "pos": Vector2i(0, 0), "faction": 0},
+		{"chassis": "vanguard", "callsign": "WING-2", "pos": Vector2i(1, 0), "faction": 0},
+		{"chassis": "vanguard", "callsign": "FOE-3", "pos": Vector2i(6, 0), "faction": 1},
+	]
+	GlobalState.maps.append(md)
+	GlobalState.selected_map_index = GlobalState.maps.size() - 1
+	var bf: Battlefield = load("res://scenes/Battlefield.tscn").instantiate()
+	add_child(bf)
+	await get_tree().process_frame
+	var lead := _unit_by_callsign(bf, "LEAD-1")
+	var wing := _unit_by_callsign(bf, "WING-2")
+	lead.mech_data.current_fuel = 2
+	bf._select_unit(lead)
+	var p1: StrikePlan = bf.strike_plan_for(Vector2i(6, 0))
+	_check(p1 != null and p1.launch == Vector2i(5, 0), "the far enemy's only launch tile is (5,0)")
+	var epoch_before: int = bf._strike_field_key[2]
+	wing.mech_data.grid_pos = Vector2i(5, 0)
+	bf.unit_container.note_unit_moved()
+	var p2: StrikePlan = bf.strike_plan_for(Vector2i(6, 0))
+	_check(p2 != null and p2.severity == StrikePlan.NO_APPROACH, "a friend on the launch tile leaves no approach")
+	_check(bf._strike_field_key[2] > epoch_before, "the cost field was rebuilt for the new occupancy epoch")
+	var direct: StrikePlan = bf.grid_map.compute_strike_plan(lead.mech_data, Vector2i(6, 0), bf.unit_container.build_occupied_map(lead))
+	_check(_plan_diff(p2, direct) == "", "the cached-field plan equals a fresh targeted search")
+	bf.queue_free()
+	await get_tree().process_frame
+	GlobalState.maps.pop_back()
+	GlobalState.selected_map_index = 0
+
+## Dense random occupancy: launch tiles are often occupied, which the shipped spawn layouts rarely
+## exercise. The plan from a cost field must still equal the targeted search.
+func test_strike_cost_field_matches_targeted_search_dense() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	var codes := ["P", "P", "D", "F", "R", "C", "M"]
+	var diffs: Array = []
+	var plans := 0
+	for mi in 6:
+		var md := MapDefinition.new()
+		md.map_name = "DENSE %d" % mi
+		md.width = 14
+		md.height = 12
+		for y in 12:
+			var t := PackedStringArray()
+			var e := PackedStringArray()
+			for x in 14:
+				t.append(codes[rng.randi_range(0, codes.size() - 1)])
+				e.append(str(rng.randi_range(0, 3)))
+			md.terrain_codes.append(" ".join(t))
+			md.elevation_rows.append(" ".join(e))
+		md.objectives.append({"pos": Vector2i(7, 6), "label": "OBJ", "owner": -1})
+		var gm := IsoGridMap.new()
+		add_child(gm)
+		gm.load_from_definition(md)
+		var occ: Dictionary = {}
+		var mechs: Array[MechData] = []
+		var n := 0
+		while n < 40:
+			var pos := Vector2i(rng.randi_range(0, 13), rng.randi_range(0, 11))
+			if occ.has(pos):
+				continue
+			var m := _unit(ALL_CHASSIS[n % ALL_CHASSIS.size()], MechData.Faction.PLAYER if n % 2 == 0 else MechData.Faction.AI, pos, "d%d" % n)
+			occ[pos] = m
+			mechs.append(m)
+			n += 1
+		for u in mechs:
+			if u.faction != MechData.Faction.PLAYER:
+				continue
+			var others: Dictionary = occ.duplicate()
+			others.erase(u.grid_pos)
+			for fuel in [u.max_fuel, 3]:
+				for moved in [false, true]:
+					u.current_fuel = fuel
+					u.has_moved = moved
+					var field: Dictionary = gm.strike_cost_field(u, others)
+					for t in mechs:
+						if t.faction == u.faction:
+							continue
+						var p1: StrikePlan = gm.compute_strike_plan(u, t.grid_pos, others)
+						var p2: StrikePlan = gm.compute_strike_plan(u, t.grid_pos, others, field)
+						plans += 1
+						var d := _plan_diff(p1, p2)
+						if d != "":
+							diffs.append([mi, u.grid_pos, t.grid_pos, d])
+		gm.queue_free()
+	_check(plans > 1000, "dense strike-field comparison covered plans (%d)" % plans)
+	_check(diffs.is_empty(), "dense occupancy: plan with a cost field equals the targeted search (%d diffs, first %s)" % [diffs.size(), diffs.slice(0, 1)])

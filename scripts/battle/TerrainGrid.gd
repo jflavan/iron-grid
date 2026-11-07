@@ -10,16 +10,19 @@ const DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), 
 
 const _NO_FUEL_CAP: int = 1 << 30
 const _SEQ_BITS: int = 24
-const TERRAIN_COUNT: int = 6   # GridTileData.TerrainType values
-const ELEV_COUNT: int = 5      # elevation 0..GridTileData.MAX_ELEVATION
+## Step-cost table dimensions, derived from the data so a new terrain row or a higher MAX_ELEVATION
+## cannot index past the table or into the next terrain's block.
+static var TERRAIN_COUNT: int = GridTileData.TerrainType.size()
+const ELEV_COUNT: int = GridTileData.MAX_ELEVATION + 1
+const ELEV_SQ: int = ELEV_COUNT * ELEV_COUNT
 
 ## Read-only outside load_from_definition (a resize without a reload would desync the flat arrays).
 var width: int:
 	get: return _width
 var height: int:
 	get: return _height
-var _width: int = 10
-var _height: int = 8
+var _width: int = 0   # 0x0 until load_from_definition
+var _height: int = 0
 var tiles: Dictionary = {} # Vector2i -> GridTileData
 var _flat: Array[GridTileData] = [] # same tiles, indexed y * width + x
 var _terrain_flat := PackedByteArray() # terrain type per flat index (search hot path)
@@ -198,7 +201,7 @@ func _search(unit: MechData, occupied_units: Dictionary, budget: int, settle: Ar
 		var cur_cost: int = cost[cur]
 		var cx: int = cur % w
 		var cy: int = cur / w
-		var from_e: int = elev[cur] * 5
+		var from_e: int = elev[cur] * ELEV_COUNT
 		# Neighbours in DIRS order: +x, -x, +y, -y.
 		for k in 4:
 			var ni: int
@@ -221,7 +224,7 @@ func _search(unit: MechData, occupied_units: Dictionary, budget: int, settle: Ar
 					ni = cur - w
 			if closed[ni] != 0 or blocked[ni] != 0:
 				continue
-			var new_cost: int = cur_cost + steps[terr[ni] * 25 + from_e + elev[ni]]
+			var new_cost: int = cur_cost + steps[terr[ni] * ELEV_SQ + from_e + elev[ni]]
 			if new_cost > budget:
 				continue
 			var old: int = cost[ni]
@@ -237,9 +240,13 @@ func _search(unit: MechData, occupied_units: Dictionary, budget: int, settle: Ar
 ## [to_terrain][from_elev][to_elev] -> fuel, filled from the unit's own step rule. The rule reads
 ## only the four stats in the key, so one table per stat tuple serves every walker of that build
 ## (filling it costs 150 rule calls, as much as a whole capped reach search).
+## The key must list every MechData field MechData._step_terms reads (test_step_table_key_covers_fuel_rule_inputs).
 static var _step_tables: Dictionary = {}   # [fuel_usage, fuel_efficiency_mod, amphibious, mountain] -> table
+static func step_table_key(unit: MechData) -> Array:
+	return [unit.fuel_usage, unit.fuel_efficiency_mod, unit.amphibious_gear, unit.mountain_gear]
+
 func _step_cost_table(unit: MechData) -> PackedInt32Array:
-	var key := [unit.fuel_usage, unit.fuel_efficiency_mod, unit.amphibious_gear, unit.mountain_gear]
+	var key := step_table_key(unit)
 	var cached: Variant = _step_tables.get(key)
 	if cached != null:
 		return cached
@@ -252,7 +259,7 @@ func _step_cost_table(unit: MechData) -> PackedInt32Array:
 	for t in TERRAIN_COUNT:
 		for fe in ELEV_COUNT:
 			for te in ELEV_COUNT:
-				table[t * 25 + fe * 5 + te] = unit.get_step_fuel_cost(_probe_tiles[fe], _probe_tiles[t * ELEV_COUNT + te])
+				table[t * ELEV_SQ + fe * ELEV_COUNT + te] = unit.get_step_fuel_cost(_probe_tiles[fe], _probe_tiles[t * ELEV_COUNT + te])
 	_step_tables[key] = table
 	return table
 
@@ -265,23 +272,6 @@ func _costs_dict(res: Array) -> Dictionary:
 	for i in order:
 		d[Vector2i(i % w, i / w)] = cost[i]
 	return d
-
-## Dictionary view of shortest paths: returns [best_cost, came_from] (Vector2i -> int / Vector2i),
-## best_cost in discovery order. Same search as movement ranges and strike plans.
-func shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
-	var res: Array = _search(unit, occupied_units, budget, settle)
-	var cost: PackedInt32Array = res[0]
-	var came: PackedInt32Array = res[1]
-	var order: Array[int] = res[2]
-	var w: int = width
-	var best_cost: Dictionary = {}
-	var came_from: Dictionary = {}
-	for i in order:
-		var p := Vector2i(i % w, i / w)
-		best_cost[p] = cost[i]
-		var f: int = came[i]
-		came_from[p] = Vector2i(f % w, f / w)
-	return [best_cost, came_from]
 
 static func _heap_push(heap: Array[int], heap_pos: Array[int], key: int, pos: int) -> void:
 	var i: int = heap.size()

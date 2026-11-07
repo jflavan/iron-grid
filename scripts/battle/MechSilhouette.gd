@@ -1,14 +1,11 @@
 class_name MechSilhouette
 extends RefCounted
 
-## Procedural walker renderer shared by the battlefield, HUD portrait, Skirmish Showdown and the
-## Mech Hangar. MechUnit.draw_mech_silhouette forwards here.
-
-const CHASSIS_IDS: Array[String] = ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+## Procedural walker renderer for the isometric battlefield (MechUnit). Node-free so any canvas can
+## draw a walker; the HUD portrait, Showdown and Hangar use the pixel-art sprite sheets instead.
 
 static var _warned: Dictionary = {} # unknown chassis ids already reported
 
-## Static procedural renderer used on the battlefield, HUD portrait, Skirmish Showdown, and Mech Hangar.
 static func draw(
 	ci: CanvasItem,
 	origin: Vector2,
@@ -19,7 +16,7 @@ static func draw(
 	dim: float = 1.0,
 	flash_white: bool = false
 ) -> void:
-	if not CHASSIS_IDS.has(chassis_id) and not _warned.has(chassis_id):
+	if not ChassisCatalog.ORDER.has(chassis_id) and not _warned.has(chassis_id):
 		_warned[chassis_id] = true
 		push_warning("MechSilhouette: unknown chassis '%s', drawing the vanguard silhouette" % chassis_id)
 	var bob: float = sin(anim_t * 3.2) * 1.4 * scale_f

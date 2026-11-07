@@ -40,9 +40,13 @@ func _process(delta: float) -> void:
 	_since_redraw += delta
 	if _hit_flash > 0.0:
 		_hit_flash = maxf(0.0, _hit_flash - delta * 3.0)
-	elif _since_redraw < 1.0 / AMBIENT_FPS or not _on_screen():
+	elif _since_redraw < 1.0 / AMBIENT_FPS:
 		return
-	_since_redraw = 0.0
+	# Keep the remainder so the per-walker stagger survives; an off-screen walker waits a whole tick
+	# before testing visibility again instead of every frame.
+	_since_redraw = fmod(_since_redraw, 1.0 / AMBIENT_FPS)
+	if not _on_screen():
+		return
 	queue_redraw()
 
 func _on_screen() -> bool:
@@ -132,7 +136,7 @@ func _draw() -> void:
 	var flip_h: bool = ((mech_data.facing.x - mech_data.facing.y) < 0)
 	if flip_h:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2(-1.0, 1.0))
-	draw_mech_silhouette(self, Vector2(0, 6), mech_data.chassis_id, mech_data.faction, 0.78, _anim_time, dim_factor, _hit_flash > 0.0)
+	MechSilhouette.draw(self, Vector2(0, 6), mech_data.chassis_id, mech_data.faction, 0.78, _anim_time, dim_factor, _hit_flash > 0.0)
 	if flip_h:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, 1.0))
 
@@ -182,16 +186,3 @@ func _draw() -> void:
 	draw_rect(Rect2(gx, plate_y + 14, gw, 2), CrtUI.C_GAUGE_BG, true)
 	draw_rect(Rect2(gx, plate_y + 14, roundf(gw * fuel_ratio), 2), CrtUI.C_FUEL, true)
 
-## Static procedural renderer used on the battlefield, HUD portrait, Skirmish Showdown, and Mech Hangar
-## (see MechSilhouette).
-static func draw_mech_silhouette(
-	canvas: CanvasItem,
-	origin: Vector2,
-	chassis_id: String,
-	faction: int,
-	scale_f: float = 1.0,
-	anim_t: float = 0.0,
-	dim: float = 1.0,
-	flash_white: bool = false
-) -> void:
-	MechSilhouette.draw(canvas, origin, chassis_id, faction, scale_f, anim_t, dim, flash_white)

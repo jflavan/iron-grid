@@ -307,11 +307,16 @@ func strike_plan_for(coords: Vector2i) -> StrikePlan:
 	if _strike_plans.size() >= STRIKE_PLAN_CACHE_MAX:
 		_strike_plans.clear()
 	var occ := unit_container.build_occupied_map(selected_unit)
-	var field_key := [m, m.grid_pos, unit_container.occupancy_epoch]
-	if field_key != _strike_field_key:
-		_strike_field = grid_map.strike_cost_field(m, occ)
-		_strike_field_key = field_key
-	var plan := grid_map.compute_strike_plan(m, coords, occ, _strike_field)
+	var plan: StrikePlan
+	if m.has_moved:
+		# Only the start tile can launch now, so the targeted search settles after one pop: no field.
+		plan = grid_map.compute_strike_plan(m, coords, occ)
+	else:
+		var field_key := [m, m.grid_pos, unit_container.occupancy_epoch]
+		if field_key != _strike_field_key:
+			_strike_field = grid_map.strike_cost_field(m, occ)
+			_strike_field_key = field_key
+		plan = grid_map.compute_strike_plan(m, coords, occ, _strike_field)
 	_strike_plans[key] = plan
 	return plan
 
