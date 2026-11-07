@@ -17,7 +17,7 @@ const RULES_ROW := 14       # chapter list row pitch
 
 var selected_map_idx: int = 0
 var selected_chassis_idx: int = 0
-var _chassis_keys: Array[String] = ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+var _chassis_keys: Array[String] = ChassisCatalog.ORDER
 var _anim_time: float = 0.0
 var _scale: int = 2
 var _hot := CrtHotspots.new()
@@ -85,8 +85,6 @@ func _key_action(keycode: int) -> String:
 	match keycode:
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 			return "launch"
-		KEY_1, KEY_2, KEY_3:
-			return "map:%d" % (keycode - KEY_1)
 		KEY_UP:
 			return "map:%d" % (selected_map_idx - 1)
 		KEY_DOWN:
@@ -97,6 +95,8 @@ func _key_action(keycode: int) -> String:
 			return "chassis:%d" % (selected_chassis_idx + 1)
 		KEY_R:
 			return "rules"
+	if keycode >= KEY_1 and keycode < KEY_1 + GlobalState.maps.size():
+		return "map:%d" % (keycode - KEY_1)
 	return ""
 
 func _gui_input(event: InputEvent) -> void:
@@ -152,7 +152,7 @@ func _select_chassis(i: int) -> void:
 func _on_launch_pressed() -> void:
 	SoundManager.play("ui_confirm")
 	GlobalState.selected_map_index = selected_map_idx
-	get_tree().change_scene_to_file("res://scenes/Battlefield.tscn")
+	get_tree().change_scene_to_file(GlobalState.BATTLEFIELD_SCENE)
 
 # ---------------------------------------------------------------- drawing
 func _row_color(id: String, selected: bool) -> Color:
