@@ -322,7 +322,7 @@ Before the architecture pass a strike plan re-ran a map-wide Dijkstra for every 
 - **Data is table-driven and validated.** Chassis, abilities and maps are built by `ChassisCatalog`, `AbilityCatalog` and `MapCatalog`; `ChassisCatalog.ORDER` is the one chassis list. `MapDefinition.validate()` runs on every load and reports a broken map with `push_error`.
 - **Modals own the screen.** A `CrtScreen` registers blocker hotspots for its panels so clicks and hover never fall through to the map; when a modal is up only its own controls are registered. Use `UIOverlay.toggle_manual()` and `modal_open()` rather than flipping the flags.
 - **Deferred work carries a token.** Timers go through `Battlefield._after(delay, fn, phase)`, which drops the callback if the mission restarted or the phase moved on. Any new countdown must use it.
-- **Tests are discovered, and refactors are proven.** `tests/battle_screen_tests.gd` runs every `test_*` method in source order. Pathfinding changes are pinned by a Bellman-Ford oracle and the pre-heap linear scan; `tests/run_all.sh` runs the suite and the seeded playtest, whose per-mission outcome lines must not change for a behaviour-identical refactor.
+- **Tests are discovered, and refactors are proven.** `tests/battle_screen_tests.gd` runs every `test_*` method in source order. Pathfinding changes are pinned by a Bellman-Ford oracle and the pre-heap linear scan; `tests/run_all.sh` runs the suite, a script-mode compile check (scripts run with `godot -s` compile before the autoloads exist, so rule and data classes must not reference `GlobalState`) and the seeded playtest, whose per-mission outcome lines must not change for a behaviour-identical refactor.
 
 ### Rendering & Performance Conventions
 - **Static scenery is baked, not redrawn.** `IsoGridMap` records the terrain into `CanvasMeshBuilder` meshes once per map load. The meshes are textured with `PixelFont.mesh_atlas()`: solid geometry samples its white band, and the elevation labels sample their glyphs exactly as `PixelFont.draw_text` does. The GL Compatibility canvas renderer cannot batch polygons or polylines, so command-by-command drawing costs one draw call each. Anything static and solid-coloured should go through the builder.
@@ -354,7 +354,7 @@ python3 tools/battle_sprites/generate.py           # regenerate assets/battle
 python3 tools/battle_sprites/generate.py --check   # exit 1 if committed art differs from the generator
 python3 -m unittest discover -s tools/battle_sprites
 tests/run_battle_tests.sh                          # battle screen, grid, AI & rules unit tests (headless; TEST_VERBOSE=1 prints names)
-tests/run_all.sh                                   # the unit tests plus the full seeded playtest (SCALE=1 adds ScaleBench)
+tests/run_all.sh                                   # unit tests, script-mode compile check, full seeded playtest (SCALE=1 adds ScaleBench)
 godot --path . res://scenes/dev/BattlePreview.tscn # browse chassis, abilities, terrains and endings
 ```
 
