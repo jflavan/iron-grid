@@ -10,6 +10,20 @@ status=0
 echo "== battle unit tests =="
 tests/run_battle_tests.sh || status=1
 
+echo "== script-mode compile check =="
+# Scripts run with `godot -s` (the screenshot tool, matrix.gd, backfire.gd) compile before the
+# autoloads exist, so a rule or data class that references GlobalState breaks them while every
+# scene-based test stays green. Loading the snapshot tool with no arguments compiles its whole
+# dependency graph (SkirmishEngine, Rules, the grids and catalogs) and must report no compile error.
+compile_log="$("$GODOT" --headless --path . -s tools/ui_snapshot/snapshot.gd 2>&1)"
+if grep -q "Compile Error" <<< "$compile_log"; then
+	grep -E "Compile Error|at: " <<< "$compile_log" | head -10
+	echo "[SCRIPT MODE] FAILED: a script run with -s no longer compiles"
+	status=1
+else
+	echo "[SCRIPT MODE] ok"
+fi
+
 echo "== playtest =="
 log="$(mktemp)"
 "$GODOT" --headless --path . res://tests/Playtest.tscn > "$log" 2>&1

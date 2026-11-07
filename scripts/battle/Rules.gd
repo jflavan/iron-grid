@@ -26,24 +26,25 @@ static func upkeep_armor(faction: int) -> int:
 
 ## Start-of-phase upkeep for one walker on `tile`: clears last turn's orders, then (optionally)
 ## applies passive diesel refuel, reactor energy regen, plus City Depot resupply (+CITY_ENERGY) and
-## repairs (+UPKEEP_ARMOR).
-static func apply_upkeep(m: MechData, tile: GridTileData, include_refuel: bool) -> void:
+## repairs (+UPKEEP_ARMOR). Returns the armor repaired so the caller can log it: this class must
+## stay free of autoload references (scripts run with `godot -s` compile before autoloads exist).
+static func apply_upkeep(m: MechData, tile: GridTileData, include_refuel: bool) -> int:
 	m.has_moved = false
 	m.has_attacked = false
 	m.is_entrenched = false
 	if not include_refuel:
-		return
+		return 0
 	var refuel_amt: int = m.upkeep_refuel(tile)
 	var energy_amt: int = m.passive_energy_regen
+	var healed: int = 0
 	if tile != null and tile.terrain_type == GridTileData.TerrainType.CITY:
 		energy_amt += MechData.CITY_ENERGY
-		var healed: int = mini(upkeep_armor(int(m.faction)), m.max_armor - m.current_armor)
+		healed = mini(upkeep_armor(int(m.faction)), m.max_armor - m.current_armor)
 		m.current_armor += healed
 		BalanceProbe.upkeep_healed[int(m.faction)] += healed
-		if healed > 0:
-			GlobalState.add_log("%s repaired +%d Armor at City Depot." % [m.callsign, healed])
 	m.current_fuel = mini(m.max_fuel, m.current_fuel + refuel_amt)
 	m.current_energy = mini(m.max_energy, m.current_energy + energy_amt)
+	return healed
 
 ## WAIT / REFUEL order shared by both factions: ends the walker's turn entrenched (+ENTRENCH_DEF_PCT
 ## DEF), restores up to WAIT_FUEL Fuel and WAIT_ENERGY Energy, and patches +PATCH_ARMOR when holding

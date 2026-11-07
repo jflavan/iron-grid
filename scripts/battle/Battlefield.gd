@@ -192,7 +192,9 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 	for u in units:
 		var m := u.mech_data
 		u.position = grid_map.grid_to_screen(m.grid_pos, true)
-		Rules.apply_upkeep(m, grid_map.get_tile(m.grid_pos), include_refuel)
+		var healed: int = Rules.apply_upkeep(m, grid_map.get_tile(m.grid_pos), include_refuel)
+		if healed > 0:
+			GlobalState.add_log("%s repaired +%d Armor at City Depot." % [m.callsign, healed])
 
 ## WAIT / REFUEL order shared by both factions (see Rules.entrench). Returns fuel gained.
 func _entrench_unit(m: MechData) -> int:
