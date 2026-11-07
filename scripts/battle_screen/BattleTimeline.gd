@@ -13,6 +13,7 @@ var beats: Array[Dictionary] = []
 var start_hull: Dictionary = {}
 var end_hull: Dictionary = {}
 var start_energy: Dictionary = {}
+var start_status: Dictionary = {}   # badges/spd/eva before beat 0, same shape as a beat's snapshot
 var end_energy: Dictionary = {}
 var coalition_side: String = "atk"
 var headline: String = ""
@@ -35,6 +36,7 @@ static func build(result: SkirmishEngine.SkirmishResult) -> BattleTimeline:
 	tl.coalition_side = "atk" if result.attacker.faction == MechData.Faction.PLAYER else "def"
 	tl.start_hull = {"atk": result.atk_armor_before, "def": result.def_armor_before}
 	tl.start_energy = {"atk": result.atk_energy_before, "def": result.def_energy_before}
+	tl.start_status = result.start_status
 	for step in result.steps:
 		tl.append_step(step)
 	tl.sync_ending_from_result(result)
@@ -70,6 +72,10 @@ func append_step(step: SkirmishEngine.TurnStep) -> Dictionary:
 			"def": step.def_en_after
 		},
 		"soften_from": step.soften_from,
+		# combatant status right after this step (see TurnStep), for the HUD panels
+		"badges": {"atk": step.atk_badges, "def": step.def_badges},
+		"spd": {"atk": step.atk_spd_after, "def": step.def_spd_after},
+		"eva": {"atk": step.atk_eva_after, "def": step.def_eva_after},
 	}
 	beats.append(beat)
 	return beat

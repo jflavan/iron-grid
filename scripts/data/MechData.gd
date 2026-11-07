@@ -26,7 +26,6 @@ var chassis_class: String = "Medium Assault Walker"
 var faction: Faction = Faction.PLAYER
 
 var grid_pos: Vector2i = Vector2i.ZERO
-var prev_grid_pos: Vector2i = Vector2i.ZERO
 var facing: Vector2i = Vector2i(1, 0) # Cardinal isometric facing: (1,0)=SE, (0,1)=SW, (-1,0)=NW, (0,-1)=NE
 
 # Core RPG Combat & Engineering Ratings
@@ -48,7 +47,9 @@ var max_fuel: int = 14         # Maximum diesel-turbine fuel capacity
 var current_fuel: int = 14     # Remaining fuel for movement
 var fuel_efficiency_mod: int = 0 # -1 = Light All-Terrain, 0 = Standard, +1 = Heavy Surcharge on rough ground
 var passive_refuel: int = 4    # Diesel generator recharge at start of each turn
-var fuel_usage: int = 2        # Diesel fuel usage multiplier (doubled from 1 to 2)
+## Diesel fuel usage multiplier every chassis shares (real fuel = base terrain fuel x this).
+const DEFAULT_FUEL_USAGE: int = 2
+var fuel_usage: int = DEFAULT_FUEL_USAGE
 var amphibious_gear: bool = false # Reduces River fuel penalty
 var mountain_gear: bool = false   # Reduces Mountain climb fuel penalty
 
@@ -92,7 +93,6 @@ func _init(
 	chassis_class = p_class
 	faction = p_faction
 	grid_pos = p_pos
-	prev_grid_pos = p_pos
 	max_armor = p_max_armor
 	current_armor = p_max_armor
 	armor_rating = p_armor_rating
@@ -187,23 +187,26 @@ func get_fuel_ratio() -> float:
 func get_energy_ratio() -> float:
 	return clampf(float(current_energy) / float(maxi(1, max_energy)), 0.0, 1.0)
 
+## Script variable names (everything declared with `var` above), read once from the property list so
+## a field added to MechData is copied by duplicate_mech() without anyone remembering to update it.
+static var _state_props: PackedStringArray = PackedStringArray()
+
+static func _state_prop_names() -> PackedStringArray:
+	if _state_props.is_empty():
+		for prop in MechData.new().get_property_list():
+			if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE and prop["name"] != "_state_props":
+				_state_props.append(String(prop["name"]))
+	return _state_props
+
+## Independent copy of every field; the abilities are copied too (not shared).
 func duplicate_mech() -> MechData:
-	var copy := MechData.new(
-		unit_id, unit_name, callsign, chassis_id, chassis_class, faction,
-		grid_pos, max_armor, armor_rating, firepower, max_fuel,
-		fuel_efficiency_mod, passive_refuel, lore_blurb,
-		speed, evasion, crit_chance, max_energy, passive_energy_regen, basic_weapon_id
-	)
-	copy.current_armor = current_armor
-	copy.current_fuel = current_fuel
-	copy.current_energy = current_energy
-	copy.amphibious_gear = amphibious_gear
-	copy.mountain_gear = mountain_gear
-	copy.fuel_usage = fuel_usage
-	copy.has_moved = has_moved
-	copy.has_attacked = has_attacked
-	copy.is_entrenched = is_entrenched
-	copy.facing = facing
+	var copy := MechData.new()
+	for n in _state_prop_names():
+		if n != "abilities":
+			var v: Variant = get(n)
+			if v is Array or v is Dictionary:
+				v = v.duplicate(true)
+			copy.set(n, v)
 	for a in abilities:
 		copy.abilities.append(a.duplicate_ability())
 	return copy
@@ -224,10 +227,26 @@ func get_facing_arrow() -> String:
 		Vector2i(0, -1): return "NE ^"
 	return "SE >"
 
+## The cardinal direction closest to `diff` (ties go to the x axis); ZERO stays ZERO.
+static func cardinal_of(diff: Vector2i) -> Vector2i:
+	if diff == Vector2i.ZERO:
+		return Vector2i.ZERO
+	if absi(diff.x) >= absi(diff.y):
+		return Vector2i(1 if diff.x > 0 else -1, 0)
+	return Vector2i(0, 1 if diff.y > 0 else -1)
+
 func set_facing(dir: Vector2i) -> void:
 	if dir == Vector2i.ZERO:
 		return
-	if absi(dir.x) >= absi(dir.y):
-		facing = Vector2i(1 if dir.x > 0 else -1, 0)
-	else:
-		facing = Vector2i(0, 1 if dir.y > 0 else -1)
+	facing = cardinal_of(dir)
+
+## Clockwise facing order of the ROTATE order: SE, SW, NW, NE (see get_facing_name).
+const FACING_CYCLE: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
+
+## The facing one ROTATE step clockwise from the current one.
+func next_facing() -> Vector2i:
+	return FACING_CYCLE[(FACING_CYCLE.find(facing) + 1) % FACING_CYCLE.size()]
+
+## Burns `amount` fuel for a move or a strike; the tank never reads below zero.
+func spend_fuel(amount: int) -> void:
+	current_fuel = maxi(0, current_fuel - amount)

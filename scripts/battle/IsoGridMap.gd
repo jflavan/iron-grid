@@ -5,17 +5,22 @@ extends Node2D
 ## Renders extruded terrain blocks, elevation cliffs, procedural terrain features (rivers, bridges,
 ## cities, trenches, mountains), fuel movement ranges, and path previews.
 
-signal tile_hovered(coords: Vector2i, tile: GridTileData)
-signal tile_clicked(coords: Vector2i, tile: GridTileData)
+signal tile_hovered(coords: Vector2i)
+signal tile_clicked(coords: Vector2i)
 
 const TILE_W: float = 118.0
 const TILE_H: float = 59.0
 const ELEV_STEP: float = 12.0
 const BASE_THICKNESS: float = 20.0
 
-var grid_width: int = 10
-var grid_height: int = 8
-var tiles: Dictionary = {} # Vector2i -> GridTileData
+## The pure grid (tiles, bounds, pathfinding, strike plans); everything below is rendering on top.
+var grid := TerrainGrid.new()
+var grid_width: int:
+	get: return grid.width
+var grid_height: int:
+	get: return grid.height
+var tiles: Dictionary: # Vector2i -> GridTileData
+	get: return grid.tiles
 
 var hovered_coords: Vector2i = Vector2i(-1, -1):
 	set(v):
@@ -34,6 +39,7 @@ var selected_coords: Vector2i = Vector2i(-1, -1):
 var reachable_info: Dictionary = {}:
 	set(v):
 		reachable_info = v
+		_base_dirty = true
 		_overlay_dirty = true
 		_path_dirty = true
 var current_path_preview: Array[Vector2i] = []:
@@ -55,10 +61,27 @@ var _tile_top: Dictionary = {} # Vector2i -> top-diamond centre (grid_to_screen 
 var _terrain_mesh: CanvasMeshBuilder = null
 # Tiles with per-frame ambient animation or badges (rivers, cities, objectives), as iso sort keys.
 var _ambient_keys := PackedInt32Array()
-# Every tile the dynamic overlay draws this frame, decoded in iso back-to-front order. Rebuilt only
-# when the hover, selection or reachable set changes, so a frame walks the active tiles, not the map.
-var _overlay_coords: Array[Vector2i] = []
+# The sorted, de-duplicated iso keys of the ambient + reachable tiles and their decoded coords. Rebuilt
+# only when the reachable set or the map changes (_base_dirty); a hover or selection change only
+# re-derives the few extra keys below, so moving the mouse never re-sorts the whole list.
+var _base_keys := PackedInt32Array()
+var _base_coords: Array[Vector2i] = []
+var _base_dirty: bool = true
+# The (at most two) selected / hovered tiles that are not already in the base list, ascending.
+var _extra_keys: Array[int] = []
 var _overlay_dirty: bool = true
+# Canvas transform and viewport size the overlay was last culled against.
+var _view_xform := Transform2D()
+var _view_size := Vector2.ZERO
+# Overlay level of detail: below this canvas scale a river / city tile is one flat static tint
+# instead of animated ripples / window lights (invisible at that size, and each costs 2-5 commands).
+const LOD_SCALE: float = 0.5
+var _lod: bool = false
+# True when the last recording contained something animated (pulsing range highlight, river ripple,
+# city lights); only then does the 30 Hz re-record have any visible effect.
+var _anim_visible: bool = true
+var _sel_loop := PackedVector2Array()
+var _hov_loop := PackedVector2Array()
 # Path preview polyline + fuel tag, rebuilt only when the preview or reachable set changes.
 var _path_dirty: bool = true
 var _path_pts := PackedVector2Array()
@@ -86,38 +109,28 @@ func _process(delta: float) -> void:
 		return
 	_anim_time += delta
 	_since_redraw += delta
+	# The overlay only records tiles inside the view, so a pan, zoom or resize re-records it.
+	var xf: Transform2D = get_global_transform_with_canvas()
+	var vs: Vector2 = get_viewport_rect().size
+	if xf != _view_xform or vs != _view_size:
+		_view_xform = xf
+		_view_size = vs
+		queue_redraw()
+	# State changes record at once; the 30 Hz tick is only for ambient motion that is in view.
+	if _base_dirty or _overlay_dirty or _path_dirty:
+		queue_redraw()
 	if _since_redraw < 1.0 / AMBIENT_FPS:
 		return
-	if not reachable_info.is_empty() or not current_path_preview.is_empty() or hovered_coords != Vector2i(-1, -1) or selected_coords != Vector2i(-1, -1):
+	if _anim_visible:
 		_since_redraw = 0.0
 		queue_redraw()
 
 func load_from_definition(map_def: MapDefinition) -> void:
-	grid_width = map_def.width
-	grid_height = map_def.height
-	tiles.clear()
+	grid.load_from_definition(map_def)
 	reachable_info = {}
 	current_path_preview = []
 	hovered_coords = Vector2i(-1, -1)
 	selected_coords = Vector2i(-1, -1)
-
-	for y in range(grid_height):
-		var t_row: PackedStringArray = map_def.terrain_codes[y].split(" ", false)
-		var e_row: PackedStringArray = map_def.elevation_rows[y].split(" ", false)
-		for x in range(grid_width):
-			var code: String = t_row[x] if x < t_row.size() else "P"
-			var elev: int = int(e_row[x]) if x < e_row.size() else 1
-			var t_type := _parse_terrain_code(code)
-			var c := Vector2i(x, y)
-			tiles[c] = GridTileData.new(c, t_type, elev, false, "")
-
-	for obj in map_def.objectives:
-		var pos: Vector2i = obj["pos"]
-		if tiles.has(pos):
-			var td: GridTileData = tiles[pos]
-			td.is_objective = true
-			td.objective_label = str(obj.get("label", "Objective"))
-			td.controlled_by = int(obj.get("owner", -1))
 
 	_tile_top.clear()
 	for c: Vector2i in tiles.keys():
@@ -129,6 +142,7 @@ func load_from_definition(map_def: MapDefinition) -> void:
 		if td.is_objective or td.terrain_type == GridTileData.TerrainType.RIVER or td.terrain_type == GridTileData.TerrainType.CITY:
 			_ambient_keys.append(_iso_key(c))
 	_ambient_keys.sort()
+	_base_dirty = true
 	_overlay_dirty = true
 
 	_rebuild_terrain_mesh()
@@ -156,37 +170,18 @@ func _rebuild_terrain_mesh() -> void:
 func _iso_key(c: Vector2i) -> int:
 	return (c.x + c.y) * grid_width + c.x
 
-func _parse_terrain_code(code: String) -> GridTileData.TerrainType:
-	match code.to_upper():
-		"D", "R_D":
-			return GridTileData.TerrainType.ROAD
-		"R":
-			return GridTileData.TerrainType.RIVER
-		"F":
-			return GridTileData.TerrainType.FOREST
-		"C":
-			return GridTileData.TerrainType.CITY
-		"M":
-			return GridTileData.TerrainType.MOUNTAIN
-		_:
-			return GridTileData.TerrainType.PLAIN
-
 func is_valid_coords(coords: Vector2i) -> bool:
-	return coords.x >= 0 and coords.x < grid_width and coords.y >= 0 and coords.y < grid_height
+	return grid.is_valid_coords(coords)
 
 func get_tile(coords: Vector2i) -> GridTileData:
-	return tiles.get(coords, null)
-
-func get_tile_elevation(coords: Vector2i) -> int:
-	var td: GridTileData = tiles.get(coords, null)
-	return td.elevation if td != null else 0
+	return grid.get_tile(coords)
 
 ## Converts grid coordinates (x, y) into local 2D screen position (center of the tile's top diamond).
 func grid_to_screen(coords: Vector2i, include_elevation: bool = true) -> Vector2:
 	var sx: float = float(coords.x - coords.y) * (TILE_W * 0.5)
 	var sy: float = float(coords.x + coords.y) * (TILE_H * 0.5)
 	if include_elevation:
-		sy -= float(get_tile_elevation(coords)) * ELEV_STEP
+		sy -= float(grid.get_tile_elevation(coords)) * ELEV_STEP
 	return Vector2(sx, sy)
 
 ## Returns the 4 vertices of the top isometric diamond at `center`.
@@ -208,8 +203,8 @@ func screen_to_grid(local_pos: Vector2) -> Vector2i:
 	var best_c := Vector2i(-1, -1)
 	var best_depth: int = -1
 
-	# Check elevations 0..4 (max supported elevation is 400m = level 4)
-	for elev in range(0, 5):
+	# Check elevations 0..MAX_ELEVATION (400m = level 4)
+	for elev in range(0, GridTileData.MAX_ELEVATION + 1):
 		var v: float = (local_pos.y + float(elev) * ELEV_STEP) / hh
 		var cx_f: float = (u + v) * 0.5
 		var cy_f: float = (v - u) * 0.5
@@ -233,257 +228,23 @@ func screen_to_grid(local_pos: Vector2) -> Vector2i:
 
 ## Pure data query: computes all reachable tiles for `unit` given `occupied_units` without modifying UI state.
 func find_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dictionary:
-	var reachable := {}
-	if unit == null or unit.is_order_complete():
-		return reachable
+	return grid.find_reachable_tiles(unit, occupied_units)
 
-	var start: Vector2i = unit.grid_pos
-	var max_budget: int = unit.current_fuel
-
-	if not unit.has_moved:
-		var search: Array = _shortest_costs(unit, occupied_units, max_budget)
-		var best_cost: Dictionary = search[0]
-		var came_from: Dictionary = search[1]
-
-		# Build reachable dictionary for unoccupied tiles only
-		for pos_key in best_cost.keys():
-			var pos: Vector2i = pos_key
-			if pos != start and occupied_units.has(pos):
-				continue # Cannot end move on any occupied tile (friendly or enemy)
-
-			# Reconstruct path in O(N) using append + reverse
-			var path: Array[Vector2i] = []
-			var curr: Vector2i = pos
-			while curr != start:
-				path.append(curr)
-				curr = came_from[curr]
-			path.append(start)
-			path.reverse()
-
-			var spent: int = best_cost[pos]
-			reachable[pos] = {
-				"fuel_spent": spent,
-				"fuel_left": max_budget - spent,
-				"path": path,
-				"is_attack": false
-			}
-
-	if not unit.has_attacked:
-		var start_tile: GridTileData = get_tile(start)
-		for d in _DIRS:
-			var adj: Vector2i = start + d
-			if not is_valid_coords(adj):
-				continue
-			if occupied_units.has(adj):
-				var occ: MechData = occupied_units[adj]
-				if occ.faction != unit.faction:
-					var strike_fuel: int = unit.get_step_fuel_cost(start_tile, get_tile(adj))
-					if strike_fuel <= max_budget:
-						var atk_path: Array[Vector2i] = [start, adj]
-						reachable[adj] = {
-							"fuel_spent": strike_fuel,
-							"fuel_left": max_budget - strike_fuel,
-							"path": atk_path,
-							"is_attack": true
-						}
-	return reachable
-
-## Computes all reachable tiles for `unit` given `occupied_units` (Dictionary: Vector2i -> MechData).
-## Movement tiles are unoccupied tiles within fuel budget (when not unit.has_moved).
-## Attack tiles are orthogonally adjacent enemy tiles within step fuel budget (when not unit.has_attacked).
+## Computes all reachable tiles for `unit` given `occupied_units` (Dictionary: Vector2i -> MechData)
+## and shows them on the overlay (find_reachable_tiles is the pure query).
 func compute_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Dictionary:
 	current_path_preview = []
 	reachable_info = find_reachable_tiles(unit, occupied_units)
 	queue_redraw()
 	return reachable_info
 
-const _NO_FUEL_CAP: int = 1 << 30
-const _DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+## See TerrainGrid.compute_strike_plan. Never touches reachable_info.
+func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dictionary, cost_field: Dictionary = {}) -> StrikePlan:
+	return grid.compute_strike_plan(unit, target, occupied_units, cost_field)
 
-## Dijkstra over fuel cost from unit.grid_pos, shared by movement ranges and strike plans so both
-## always agree. Returns [best_cost, came_from] (Vector2i -> int / Vector2i). Rules: never step onto
-## an enemy node, and drop any step whose running cost would exceed `budget`.
-## `settle`, when given, stops the search once every listed node has been popped (its cost is final).
-func _shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
-	var start: Vector2i = unit.grid_pos
-	var best_cost: Dictionary = { start: 0 }
-	var came_from: Dictionary = { start: start }
-	var pending: Dictionary = {}
-	for p in settle:
-		pending[p] = true
-
-	# Binary min-heap of (cost, discovery order) packed into one int; a node pushed again after a
-	# cheaper path was found leaves a stale entry behind that is skipped when popped. Ties pop in
-	# discovery order, so paths (and the facing they produce) stay deterministic.
-	var heap: Array[int] = []
-	var heap_pos: Array[Vector2i] = []
-	var seq_of: Dictionary = { start: 0 }   # Vector2i -> discovery order
-	var closed: Dictionary = {}
-	_heap_push(heap, heap_pos, 0, start)
-
-	while not heap.is_empty():
-		var top: int = heap[0]
-		var current: Vector2i = heap_pos[0]
-		_heap_pop(heap, heap_pos)
-		if closed.has(current) or (top >> _SEQ_BITS) != best_cost[current]:
-			continue # stale entry
-		closed[current] = true
-		if not pending.is_empty():
-			pending.erase(current)
-			if pending.is_empty():
-				break
-
-		var cur_cost: int = best_cost[current]
-		var cur_tile: GridTileData = get_tile(current)
-
-		for d in _DIRS:
-			var next_pos: Vector2i = current + d
-			if not is_valid_coords(next_pos) or closed.has(next_pos):
-				continue
-			# Never step onto an enemy-occupied tile during movement
-			if occupied_units.has(next_pos) and occupied_units[next_pos].faction != unit.faction:
-				continue
-			var next_tile: GridTileData = get_tile(next_pos)
-			var step_fuel: int = unit.get_step_fuel_cost(cur_tile, next_tile)
-			var new_cost: int = cur_cost + step_fuel
-			if new_cost > budget:
-				continue
-
-			if not best_cost.has(next_pos) or new_cost < best_cost[next_pos]:
-				best_cost[next_pos] = new_cost
-				came_from[next_pos] = current
-				if not seq_of.has(next_pos):
-					seq_of[next_pos] = seq_of.size()
-				_heap_push(heap, heap_pos, (new_cost << _SEQ_BITS) | int(seq_of[next_pos]), next_pos)
-	return [best_cost, came_from]
-
-const _SEQ_BITS: int = 24
-
-static func _heap_push(heap: Array[int], heap_pos: Array[Vector2i], key: int, pos: Vector2i) -> void:
-	var i: int = heap.size()
-	heap.append(key)
-	heap_pos.append(pos)
-	while i > 0:
-		var parent: int = (i - 1) >> 1
-		if heap[parent] <= key:
-			break
-		heap[i] = heap[parent]
-		heap_pos[i] = heap_pos[parent]
-		i = parent
-	heap[i] = key
-	heap_pos[i] = pos
-
-static func _heap_pop(heap: Array[int], heap_pos: Array[Vector2i]) -> void:
-	var last: int = heap.size() - 1
-	var key: int = heap[last]
-	var pos: Vector2i = heap_pos[last]
-	heap.resize(last)
-	heap_pos.resize(last)
-	if last == 0:
-		return
-	var i: int = 0
-	while true:
-		var child: int = 2 * i + 1
-		if child >= last:
-			break
-		if child + 1 < last and heap[child + 1] < heap[child]:
-			child += 1
-		if heap[child] >= key:
-			break
-		heap[i] = heap[child]
-		heap_pos[i] = heap_pos[child]
-		i = child
-	heap[i] = key
-	heap_pos[i] = pos
-
-## Explains whether `unit` can strike the enemy at `target` this turn, and if not, why and what to
-## do (see StrikePlan). Uses the same search and costs as compute_reachable_tiles, without its fuel
-## cap, and never touches reachable_info. The advice replays next turn under the real WAIT and
-## upkeep rules, assuming the enemy holds its tile.
-func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dictionary) -> StrikePlan:
-	var plan := StrikePlan.new()
-	plan.have = unit.current_fuel
-	var start: Vector2i = unit.grid_pos
-	# Only the usable launch tiles' costs matter (the filter below drops the rest): stop as soon as
-	# they are all final. An occupied neighbour is never entered, so waiting for it would flood
-	# the whole map.
-	var neighbours: Array[Vector2i] = []
-	for d in _DIRS:
-		var l: Vector2i = target + d
-		if not is_valid_coords(l) or (unit.has_moved and l != start) or (l != start and occupied_units.has(l)):
-			continue
-		neighbours.append(l)
-	var costs: Dictionary = {}
-	if not neighbours.is_empty():
-		costs = _shortest_costs(unit, occupied_units, _NO_FUEL_CAP, neighbours)[0]
-	var target_tile := get_tile(target)
-
-	# Launch tiles: enemy neighbours the search reached that the attacker may stand on and fire from.
-	var launches: Array[Dictionary] = []   # {pos, path, step: breakdown}
-	for d in _DIRS:
-		var l: Vector2i = target + d
-		if unit.has_moved and l != start:
-			continue
-		if not costs.has(l):
-			continue
-		if l != start and occupied_units.has(l):
-			continue
-		launches.append({"pos": l, "path": int(costs[l]), "step": unit.get_step_fuel_breakdown(get_tile(l), target_tile)})
-	if launches.is_empty():
-		plan.severity = StrikePlan.NO_APPROACH
-		return plan
-
-	# Cheapest strike; ties go to the start tile, then to the cheaper final step.
-	var best: Dictionary = launches[0]
-	for c in launches:
-		var c_total: int = c["path"] + int(c["step"]["total"])
-		var b_total: int = best["path"] + int(best["step"]["total"])
-		if c_total < b_total or (c_total == b_total and (
-				(c["pos"] == start and best["pos"] != start) or
-				(best["pos"] != start and int(c["step"]["total"]) < int(best["step"]["total"])))):
-			best = c
-	plan.launch = best["pos"]
-	plan.path_fuel = best["path"]
-	plan.step = best["step"]
-	plan.needs = plan.path_fuel + int(plan.step["total"])
-
-	if plan.needs <= plan.have:
-		plan.severity = StrikePlan.REACHABLE
-		return plan
-	var in_reach: Array[Dictionary] = launches.filter(func(c): return int(c["path"]) <= plan.have)
-	if in_reach.is_empty():
-		plan.severity = StrikePlan.BEYOND_RANGE
-		return plan
-	plan.severity = StrikePlan.IN_STRIKING_DISTANCE
-
-	# Advice ladder (the first that holds wins).
-	var max_f: int = unit.max_fuel
-	var cheapest_step: int = launches.map(func(c): return int(c["step"]["total"])).min()
-	var fuel_after_wait: int = unit.next_turn_fuel(plan.have, get_tile(start), true)
-	if cheapest_step > max_f:
-		plan.advice = StrikePlan.ADV_IMPOSSIBLE
-		return plan
-	for c in in_reach:
-		if c["pos"] == start and fuel_after_wait >= int(c["step"]["total"]):
-			plan.advice = StrikePlan.ADV_WAIT_HERE
-			return plan
-	var best_spare: int = -1
-	for c in in_reach:
-		if c["pos"] == start:
-			continue
-		var next_fuel: int = unit.next_turn_fuel(plan.have - int(c["path"]), get_tile(c["pos"]), false)
-		var spare: int = next_fuel - int(c["step"]["total"])
-		if spare >= 0 and spare > best_spare:
-			best_spare = spare
-			plan.move_to = c["pos"]
-	if best_spare >= 0:
-		plan.advice = StrikePlan.ADV_MOVE_TO
-		return plan
-	if fuel_after_wait >= plan.needs:
-		plan.advice = StrikePlan.ADV_WAIT
-		return plan
-	plan.advice = StrikePlan.ADV_MULTI_TURN
-	return plan
+## See TerrainGrid.strike_cost_field: compute once per selection, pass to compute_strike_plan.
+func strike_cost_field(unit: MechData, occupied_units: Dictionary) -> Dictionary:
+	return grid.strike_cost_field(unit, occupied_units)
 
 func clear_highlights() -> void:
 	reachable_info = {}
@@ -499,13 +260,13 @@ func update_hover(local_mouse_pos: Vector2) -> void:
 			current_path_preview = reachable_info[hovered_coords]["path"]
 		else:
 			current_path_preview = []
-		tile_hovered.emit(hovered_coords, get_tile(hovered_coords))
+		tile_hovered.emit(hovered_coords)
 		queue_redraw()
 
 func handle_click(local_mouse_pos: Vector2) -> void:
 	var clicked := screen_to_grid(local_mouse_pos)
 	if is_valid_coords(clicked):
-		tile_clicked.emit(clicked, get_tile(clicked))
+		tile_clicked.emit(clicked)
 
 func _on_terrain_draw() -> void:
 	if _terrain_mesh != null:
@@ -514,11 +275,32 @@ func _on_terrain_draw() -> void:
 func _draw() -> void:
 	var pulse: float = 0.5 + 0.5 * sin(_anim_time * 4.5)
 
-	# Dynamic overlay on the active tiles only, in isometric back-to-front order (x + y ascending)
+	# Dynamic overlay on the active tiles only, in isometric back-to-front order (x + y ascending),
+	# skipping tiles outside the view.
+	if _base_dirty:
+		_rebuild_base()
 	if _overlay_dirty:
-		_rebuild_overlay_coords()
-	for coords in _overlay_coords:
-		_draw_dynamic_tile(coords, tiles[coords], pulse)
+		_rebuild_extras()
+	_view_xform = get_global_transform_with_canvas()
+	_view_size = get_viewport_rect().size
+	_lod = _view_xform.get_scale().x < LOD_SCALE
+	_anim_visible = false
+	var view: Rect2 = (_view_xform.affine_inverse() * get_viewport_rect()).grow(maxf(TILE_W, TILE_H * 2.0))
+	var inset_poly: PackedVector2Array = _inset_diamond(4.0, false)
+	var inset_loop: PackedVector2Array = _inset_diamond(4.0, true)
+	_sel_loop = _inset_diamond(3.0, true)
+	_hov_loop = _inset_diamond(2.0, true)
+	var ei: int = 0
+	var band: Vector2i = _visible_base_range(view)
+	for i in range(band.x, band.y):
+		var k: int = _base_keys[i]
+		while ei < _extra_keys.size() and _extra_keys[ei] < k:
+			_draw_overlay_at(_decode_key(_extra_keys[ei]), view, pulse, inset_poly, inset_loop)
+			ei += 1
+		_draw_overlay_at(_base_coords[i], view, pulse, inset_poly, inset_loop)
+	while ei < _extra_keys.size():
+		_draw_overlay_at(_decode_key(_extra_keys[ei]), view, pulse, inset_poly, inset_loop)
+		ei += 1
 
 	# Draw movement path preview arrow & fuel waypoints on top
 	if _path_dirty:
@@ -538,26 +320,55 @@ func _draw() -> void:
 		draw_rect(tag_rect, line_col, false, 1.2)
 		PixelFont.draw_text(self, _path_tag, (dest_pos + Vector2(6, 3)).round(), line_col)
 
-## Merges the ambient tiles with the reachable / selected / hovered tiles into one iso-ordered list.
-func _rebuild_overlay_coords() -> void:
-	_overlay_dirty = false
+## Index range [lo, hi) of _base_keys whose tiles can lie inside `view` (local coordinates). Keys sort
+## by x + y, and a tile's top-centre y is (x + y) * TILE_H / 2 minus its elevation lift, so a
+## vertical window of the view is a contiguous key range found by two binary searches. Conservative:
+## the per-tile has_point test in _draw_overlay_at stays the exact filter.
+func _visible_base_range(view: Rect2) -> Vector2i:
+	var hh: float = TILE_H * 0.5
+	var s_lo: int = maxi(0, int(floor(view.position.y / hh)))
+	var s_hi: int = int(ceil((view.end.y + float(GridTileData.MAX_ELEVATION) * ELEV_STEP) / hh))
+	if s_hi < s_lo:
+		return Vector2i.ZERO
+	var lo: int = _base_keys.bsearch(s_lo * grid_width)
+	var hi: int = _base_keys.bsearch((s_hi + 1) * grid_width)
+	return Vector2i(lo, maxi(lo, hi))
+
+func _decode_key(k: int) -> Vector2i:
+	var x: int = k % grid_width
+	return Vector2i(x, k / grid_width - x)
+
+## Sorted ambient + reachable tiles (the part of the overlay that does not change on hover).
+func _rebuild_base() -> void:
+	_base_dirty = false
 	var keys := _ambient_keys.duplicate()
 	for c: Vector2i in reachable_info.keys():
 		if tiles.has(c):
 			keys.append(_iso_key(c))
-	for c in [selected_coords, hovered_coords]:
-		if tiles.has(c):
-			keys.append(_iso_key(c))
 	keys.sort()
-	_overlay_coords.clear()
+	_base_keys = PackedInt32Array()
+	_base_coords.clear()
 	var last: int = -1
 	for k in keys:
 		if k == last:
 			continue
 		last = k
-		var s: int = k / grid_width
-		var x: int = k % grid_width
-		_overlay_coords.append(Vector2i(x, s - x))
+		_base_keys.append(k)
+		_base_coords.append(_decode_key(k))
+
+## The selected / hovered tiles missing from the base list: at most two keys, merged while drawing.
+func _rebuild_extras() -> void:
+	_overlay_dirty = false
+	_extra_keys.clear()
+	for c in [selected_coords, hovered_coords]:
+		if not tiles.has(c):
+			continue
+		var k: int = _iso_key(c)
+		var at: int = _base_keys.bsearch(k)
+		if (at < _base_keys.size() and _base_keys[at] == k) or _extra_keys.has(k):
+			continue
+		_extra_keys.append(k)
+	_extra_keys.sort()
 
 func _rebuild_path_preview() -> void:
 	_path_dirty = false
@@ -588,7 +399,7 @@ func _draw_static_tile(ci: CanvasMeshBuilder, coords: Vector2i, td: GridTileData
 	var outline := PackedVector2Array([p_left, p_left + drop, p_bottom + drop, p_right + drop, p_right])
 	var grid_outline := PackedVector2Array([p_top, p_right, p_bottom, p_left, p_top])
 
-	var top_color := _get_terrain_top_color(td.terrain_type, td.elevation)
+	var top_color := TerrainDefs.top_color(td.terrain_type, td.elevation)
 	var left_wall_color := top_color.darkened(0.34)
 	var right_wall_color := top_color.darkened(0.48)
 
@@ -620,25 +431,36 @@ func _draw_static_tile(ci: CanvasMeshBuilder, coords: Vector2i, td: GridTileData
 		var ew: int = PixelFont.text_width(elev_str)
 		ci.add_text(elev_str, (top_center + Vector2(-roundf(float(ew) * 0.5), 18)).round(), Color(0.85, 0.86, 0.78, 0.65))
 
-func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, pulse: float) -> void:
+func _draw_overlay_at(coords: Vector2i, view: Rect2, pulse: float, inner_poly: PackedVector2Array, inner_loop: PackedVector2Array) -> void:
 	var top_center: Vector2 = _tile_top[coords]
+	if not view.has_point(top_center):
+		return
+	_draw_dynamic_tile(coords, tiles[coords], top_center, pulse, inner_poly, inner_loop)
 
+func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, top_center: Vector2, pulse: float, inner_poly: PackedVector2Array, inner_loop: PackedVector2Array) -> void:
 	# River animated ripples & city pulsating bunker slits
-	if td.terrain_type == GridTileData.TerrainType.RIVER:
+	if _lod:
+		# Zoomed out: one static tint command per river / city tile.
+		if td.terrain_type == GridTileData.TerrainType.RIVER:
+			draw_rect(Rect2(top_center + Vector2(-18, -5), Vector2(36, 10)), Color(0.38, 0.65, 0.72, 0.35), true)
+		elif td.terrain_type == GridTileData.TerrainType.CITY:
+			draw_rect(Rect2(top_center + Vector2(-13, -10), Vector2(23, 5)), Color(0.95, 0.72, 0.22, 0.6), true)
+	elif td.terrain_type == GridTileData.TerrainType.RIVER:
+		_anim_visible = true
 		var wave_offset: float = sin(_anim_time * 2.5 + float(td.coords.x + td.coords.y)) * 4.0
 		draw_line(top_center + Vector2(-18 + wave_offset, -4), top_center + Vector2(6 + wave_offset, -4), Color(0.38, 0.65, 0.72, 0.55), 2.0)
 		draw_line(top_center + Vector2(-8 - wave_offset, 5), top_center + Vector2(18 - wave_offset, 5), Color(0.38, 0.65, 0.72, 0.55), 2.0)
 	elif td.terrain_type == GridTileData.TerrainType.CITY:
+		_anim_visible = true
 		var win_col := Color(0.95, 0.72, 0.22, 0.7 + 0.3 * pulse)
 		draw_rect(Rect2(top_center + Vector2(-13, -10), Vector2(4, 2)), win_col, true)
 		draw_rect(Rect2(top_center + Vector2(-6, -10), Vector2(4, 2)), win_col, true)
 		draw_rect(Rect2(top_center + Vector2(5, -7), Vector2(5, 2)), win_col, true)
 
 	# Reachable Fuel / Attack Target Highlights
-	if reachable_info.has(coords) and coords != selected_coords:
-		var info: Dictionary = reachable_info[coords]
-		var inner_poly: PackedVector2Array = _inset_diamond(4.0, false)
-		var inner_loop: PackedVector2Array = _inset_diamond(4.0, true)
+	var info: Variant = reachable_info.get(coords) if coords != selected_coords else null
+	if info != null:
+		_anim_visible = true
 		draw_set_transform(top_center)
 		if info["is_attack"]:
 			var atk_fill := Color(0.95, 0.22, 0.15, 0.28 + 0.18 * pulse)
@@ -655,13 +477,13 @@ func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, pulse: float) -> voi
 	# Selected Unit Tile Highlight
 	if coords == selected_coords:
 		draw_set_transform(top_center)
-		draw_polyline(_inset_diamond(3.0, true), Color(1.0, 0.84, 0.32, 0.95), 2.8)
+		draw_polyline(_sel_loop, Color(1.0, 0.84, 0.32, 0.95), 2.8)
 		draw_set_transform(Vector2.ZERO)
 
 	# Hovered Tile Cursor Outline
 	if coords == hovered_coords:
 		draw_set_transform(top_center)
-		draw_polyline(_inset_diamond(2.0, true), Color(1.0, 0.95, 0.75, 0.95), 2.5)
+		draw_polyline(_hov_loop, Color(1.0, 0.95, 0.75, 0.95), 2.5)
 		draw_set_transform(Vector2.ZERO)
 
 	# Objective Badges
@@ -679,23 +501,6 @@ func _inset_diamond(inset: float, closed: bool) -> PackedVector2Array:
 			pts.append(pts[0])
 		_inset_cache[key] = pts
 	return _inset_cache[key]
-
-func _get_terrain_top_color(t_type: GridTileData.TerrainType, elev: int) -> Color:
-	var elev_tint: float = float(elev - 1) * 0.045
-	match t_type:
-		GridTileData.TerrainType.PLAIN:
-			return Color(0.31 + elev_tint, 0.37 + elev_tint, 0.24 + elev_tint)
-		GridTileData.TerrainType.ROAD:
-			return Color(0.36 + elev_tint, 0.35 + elev_tint, 0.32 + elev_tint)
-		GridTileData.TerrainType.RIVER:
-			return Color(0.16, 0.33, 0.38)
-		GridTileData.TerrainType.FOREST:
-			return Color(0.22 + elev_tint, 0.30 + elev_tint, 0.19 + elev_tint)
-		GridTileData.TerrainType.CITY:
-			return Color(0.42 + elev_tint, 0.40 + elev_tint, 0.36 + elev_tint)
-		GridTileData.TerrainType.MOUNTAIN:
-			return Color(0.45 + elev_tint, 0.43 + elev_tint, 0.39 + elev_tint)
-	return Color(0.3, 0.35, 0.25)
 
 func _draw_static_terrain_details(ci: CanvasMeshBuilder, center: Vector2, td: GridTileData) -> void:
 	match td.terrain_type:

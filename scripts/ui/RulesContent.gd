@@ -22,7 +22,7 @@ const ROLES := {
 	"kommandant": "COMMAND: UPLINK BUFFS AND ECM JAMMING",
 	"moloch": "BRAWLER: BREAKS CITY AND BUNKER DEFENDERS",
 }
-const CHASSIS_ORDER := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+const CHASSIS_ORDER := ChassisCatalog.ORDER
 const TERRAIN_ORDER := [
 	GridTileData.TerrainType.ROAD, GridTileData.TerrainType.PLAIN, GridTileData.TerrainType.CITY,
 	GridTileData.TerrainType.FOREST, GridTileData.TerrainType.RIVER, GridTileData.TerrainType.MOUNTAIN,
@@ -77,6 +77,27 @@ static func table_width(rows: Array) -> float:
 static func _tile(t: GridTileData.TerrainType, elev: int = 1) -> GridTileData:
 	return GridTileData.new(Vector2i.ZERO, t, elev)
 
+## Real fuel for entering a tile of this terrain: base cost x the chassis fuel_usage (the HUD, the
+## Rules page and the manual all quote this; MechData.get_step_fuel_cost applies the same factor).
+static func terrain_fuel(tile: GridTileData, fuel_usage: int) -> int:
+	return tile.get_base_fuel_cost() * fuel_usage
+
+## fuel_usage every chassis shares (read from the catalog; 2 when it is not loaded).
+static func default_fuel_usage() -> int:
+	return GlobalState.chassis_catalog["vanguard"].fuel_usage if GlobalState.chassis_catalog.has("vanguard") else 2
+
+## Off-road surcharge in real fuel (negative = saving), 0 when none.
+static func offroad_fuel(m: MechData) -> int:
+	return m.fuel_efficiency_mod * m.fuel_usage
+
+## Terrain gear in real fuel ("" when the chassis has none): amphibious seals or climbing gear.
+static func gear_text(m: MechData) -> String:
+	if m.amphibious_gear:
+		return "AMPHIB: RIVER -%d" % (2 * m.fuel_usage)
+	if m.mountain_gear:
+		return "CLIMB GEAR: MTN -%d, CLIMB -%d" % [2 * m.fuel_usage, 1 * m.fuel_usage]
+	return ""
+
 static func _pct(v: int) -> String:
 	return "%+d%%" % v
 
@@ -110,12 +131,14 @@ static func _movement() -> Dictionary:
 	var fuel_rows: Array = [PackedStringArray(["TERRAIN", "FUEL"])]
 	for t in TERRAIN_ORDER:
 		var td := _tile(t)
-		fuel_rows.append(PackedStringArray([td.get_terrain_name(), str(td.get_base_fuel_cost() * dummy.fuel_usage)]))
+		fuel_rows.append(PackedStringArray([td.get_terrain_name(), str(terrain_fuel(td, dummy.fuel_usage))]))
 	var ch_rows: Array = [PackedStringArray(["CHASSIS", "TANK+REFUEL", "OFF-ROAD", "GEAR"])]
 	for id in CHASSIS_ORDER:
 		var m := _chassis(id)
-		var gear := "AMPHIB: RIVER -%d" % (2 * m.fuel_usage) if m.amphibious_gear else ("CLIMB GEAR: MTN -%d, CLIMB -%d" % [2 * m.fuel_usage, 1 * m.fuel_usage] if m.mountain_gear else "-")
-		var off := "%+d" % (m.fuel_efficiency_mod * m.fuel_usage) if m.fuel_efficiency_mod != 0 else "0"
+		var gear := gear_text(m)
+		if gear == "":
+			gear = "-"
+		var off := "%+d" % offroad_fuel(m) if m.fuel_efficiency_mod != 0 else "0"
 		ch_rows.append(PackedStringArray([m.callsign, "%d+%d" % [m.max_fuel, m.passive_refuel], off, gear]))
 	var ex := _worked_example()
 	var g := _chassis("goliath")
@@ -143,7 +166,7 @@ static func _terrain() -> Dictionary:
 		{"p": "ATTACKING UPHILL, per level: %s firepower and %s hit for you, while the defender above gains %s firepower and armor plus its own high-ground hit, EVA and crit." % [
 			_pct(-S.ELEV_CLIMB_FP_PCT), _pct(-S.ELEV_ACC_PER_LEVEL), _pct(S.ELEV_CLIMB_ENEMY_FP_PCT)]},
 		{"p": "CITIES repair +%d hull and add +%d fuel and +%d EN at the start of each of your turns. WAIT/REFUEL in a city patches +%d hull more." % [
-			BalanceProbe.upkeep[0], MechData.CITY_FUEL, MechData.CITY_ENERGY, BalanceProbe.patch[0]]},
+			Rules.upkeep_armor(0), MechData.CITY_FUEL, MechData.CITY_ENERGY, Rules.patch_armor(0)]},
 		{"p": "RIVERS are a trap: expensive to wade, and a walker standing in one fights at a penalty."},
 	]}
 
@@ -156,7 +179,7 @@ static func _clash() -> Dictionary:
 		{"p": "FORMATIONS: Each adjacent ally adds +%d%% ATK crossfire (opposite = +%d%% pincer). Each defender ally adds +%d%% DEF escort. Press T to turn in place." % [
 			S.ADJ_CROSSFIRE_FP_PER_ALLY, S.PINCER_CROSSFIRE_FP_BONUS, S.ADJ_ESCORT_DEF_PER_ALLY]},
 		{"p": "ENTRENCHED (the defender used WAIT/REFUEL): %s DEF, +%d SPD in round 1 and +%d after, %s EVA and %s hit." % [
-			_pct(BalanceProbe.def_pct[0]), S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS, S.ENTRENCHED_SPD_BONUS, _pct(S.ENTRENCHED_EVA_BONUS), _pct(S.ENTRENCHED_ACC_BONUS)]},
+			_pct(Rules.entrench_def_pct(0)), S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS, S.ENTRENCHED_SPD_BONUS, _pct(S.ENTRENCHED_EVA_BONUS), _pct(S.ENTRENCHED_ACC_BONUS)]},
 		{"key": "ATTACK: basic gun (0 EN). TECH: special systems (uses EN). DEFEND: next hit %d%% (+%d EN)." % [
 			int(round(S.GUARD_DAMAGE_MULT * 100.0)), S.DEFEND_EN_GAIN]},
 		{"key": "RETREAT: break off (%d%% %+d%%/SPD lead, between %d%%-%d%%) and end the clash on your current tile." % [
@@ -196,3 +219,43 @@ static func _tips() -> Dictionary:
 		{"p": "WAIT/REFUEL when the enemy is coming to you: the entrenched defender often shoots first."},
 		{"p": "Send Falke and Donner to the flanking ridges early. They spend the least fuel getting there."},
 	]}
+
+## The H Field Manual. Numbers are read from the game data (GridTileData, MechData, SkirmishEngine,
+## BalanceProbe defaults) so it agrees with the Rules of Engagement page after a balance change.
+static func manual_lines() -> Array[String]:
+	var S := SkirmishEngine
+	var lines: Array[String] = [
+		"1. TURN FLOW & FUEL MOBILITY:",
+		"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
+		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+2 Fuel per 100m climbed).",
+		"   - On its turn, a walker can face & entrench, move and then face or attack, or face and attack in place. Attacking an adjacent enemy costs its tile's step fuel (terrain + chassis surcharge + climb) and never moves onto its tile.",
+		"   - [WAIT / REFUEL] entrenches (%+d%% DEF, %+d%% EVA, %+d%% Hit, +%d SPD) & restores +%d Fuel / +%d EN (+%d Hull in a City). Cities repair +%d Hull, +%d Fuel, +%d EN each turn." % [
+			Rules.entrench_def_pct(0), S.ENTRENCHED_EVA_BONUS, S.ENTRENCHED_ACC_BONUS, S.ENTRENCHED_SPD_BONUS,
+			MechData.WAIT_FUEL, MechData.WAIT_ENERGY, Rules.patch_armor(0), Rules.upkeep_armor(0), MechData.CITY_FUEL, MechData.CITY_ENERGY],
+		"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
+		"",
+		"2. TERRAIN CHART (FUEL COST / ATTACK / DEFENSE / EVASION MOD):",
+	]
+	var fuel_mult: int = RulesContent.default_fuel_usage()
+	for t in RulesContent.TERRAIN_ORDER:
+		var td := GridTileData.new(Vector2i.ZERO, t, 1)
+		lines.append("   - %s (%s): %d Fuel / %+d%% ATK / %+d%% DEF / %+d%% EVA" % [
+			td.get_terrain_name().to_upper(), td.get_terrain_short_code(), RulesContent.terrain_fuel(td, fuel_mult), td.get_attack_modifier_pct(), td.get_defense_modifier_pct(), td.get_evasion_modifier_pct()])
+	lines.append_array([
+		"",
+		"3. ELEVATION & HIGH GROUND ADVANTAGE:",
+		"   - Attacking from higher elevation down onto an enemy grants +%d%% Firepower, +%d%% Armor, +%d%% Hit, +%d%% EVA and +%d%% Crit per level!" % [
+			S.ELEV_HIGH_FP_PCT, S.ELEV_HIGH_ARMOR_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_EVA_PER_LEVEL, S.ELEV_CRIT_PER_LEVEL],
+		"   - Attacking uphill suffers -%d%% Firepower and -%d%% Hit Accuracy per elevation level (the defender above gains +%d%% Firepower & Armor)." % [
+			S.ELEV_CLIMB_FP_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_CLIMB_ENEMY_FP_PCT],
+		"",
+		"4. TURN-BASED RPG COMBAT (ATTACK / TECH / DEFEND / RETREAT):",
+		"   - Attacking an adjacent enemy triggers a classic Final Fantasy turn-based battle; both walkers remain on their own tiles.",
+		"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +%d SPD; an Entrenched Defender answers with +%d." % [
+			S.ROUND1_ATTACKER_SPD_BONUS, S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS],
+		"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-%d%% DMG on the enemy's next hit, +%d EN), or RETREAT." % [
+			100 - int(round(S.GUARD_DAMAGE_MULT * 100.0)), S.DEFEND_EN_GAIN],
+		"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands; it cannot be stacked.",
+		"   - Full rules: RULES OF ENGAGEMENT on the Command HQ screen (press R there).",
+	])
+	return lines

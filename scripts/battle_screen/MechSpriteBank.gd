@@ -28,8 +28,8 @@ static func meta_for(chassis: String) -> Dictionary:
 
 static func get_sheet(chassis: String, faction: int) -> Texture2D:
 	var f := clampi(faction, 0, 1)
-	var pair: Array = _sheet_cache.get(chassis, [])
-	if pair.is_empty():
+	var pair = _sheet_cache.get(chassis)
+	if pair == null:
 		pair = [null, null, false, false]   # sheets per faction, then "load attempted" flags
 		_sheet_cache[chassis] = pair
 	if not pair[2 + f]:
@@ -85,18 +85,37 @@ static func _prep(chassis: String) -> Dictionary:
 	var idle: Array[String] = []
 	for i in frames:
 		idle.append("idle%d" % i)
+	var anchors: Dictionary = m.get("anchors", {})
+	var bricks = anchors.get("bricks", null)
 	pr = {
+		"n_stacks": (anchors.get("stacks", []) as Array).size(),
+		"bricks": Vector2(bricks[0], bricks[1]) if bricks != null else null,
 		"size": size, "rects": rects, "rect0": Rect2(Vector2.ZERO, size), "off": offs, "gun": guns,
 		"idle": idle, "idle_step": maxf(1.0, float(m.get("idle_ms", 150))), "anch": {},
 	}
 	_prep_cache[chassis] = pr
 	return pr
 
+## Number of exhaust stack anchors of a sheet (precomputed: read every frame).
+static func stack_count(chassis: String) -> int:
+	return _prep(chassis)["n_stacks"]
+
+## Top-left of the reactive-bricks rectangle in the rest pose, or null when the chassis has none.
+static func bricks_anchor(chassis: String) -> Variant:
+	return _prep(chassis)["bricks"]
+
+static var _muzzle_names: Dictionary = {}
+
+## "muzzles/<weapon_id>", built once per weapon id instead of per frame.
+static func muzzle_name(weapon_id: String) -> String:
+	var n = _muzzle_names.get(weapon_id)
+	if n == null:
+		n = "muzzles/" + weapon_id
+		_muzzle_names[weapon_id] = n
+	return n
+
 static func cell_size(chassis: String) -> Vector2:
 	return _prep(chassis)["size"]
-
-static func has_pose(chassis: String, pose: String) -> bool:
-	return pose in meta_for(chassis).get("poses", [])
 
 static func frame_rect(chassis: String, pose: String) -> Rect2:
 	var pr := _prep(chassis)

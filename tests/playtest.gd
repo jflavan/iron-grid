@@ -87,13 +87,13 @@ func _check_pathfinding_matches_bruteforce() -> void:
 		grid.load_from_definition(map_def)
 		for chassis in ["vanguard", "goliath", "falke", "donner"]:
 			var m := GlobalState.create_mech_instance(chassis, MechData.Faction.PLAYER, "T", Vector2i(1, 2))
-			var reach: Dictionary = grid.compute_reachable_tiles(m, {}).duplicate(true)
+			var reach: Dictionary = grid.find_reachable_tiles(m, {}).duplicate(true)
 			var best: Dictionary = { m.grid_pos: 0 }
 			var changed := true
 			while changed:
 				changed = false
 				for pos in best.keys():
-					for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					for d in TerrainGrid.DIRS:
 						var nxt: Vector2i = pos + d
 						if not grid.is_valid_coords(nxt):
 							continue
@@ -374,7 +374,7 @@ func _holdout_policy_step(bf: Battlefield, policy: String, stats: Dictionary) ->
 	var info: Dictionary = bf.grid_map.reachable_info.get(post, {})
 	if post != m.grid_pos and not info.is_empty() and not info["is_attack"]:
 		stats["moves"] += 1
-		bf._on_tile_clicked(post, null)
+		bf._on_tile_clicked(post)
 	else:
 		stats["waits"] += 1
 		bf._on_wait_refuel_requested()
@@ -394,7 +394,7 @@ func _random_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.is_order_complete():
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
 			if not u.mech_data.is_order_complete():
-				bf._on_tile_clicked(u.mech_data.grid_pos, null)
+				bf._on_tile_clicked(u.mech_data.grid_pos)
 				return
 		return
 	var options: Array = bf.grid_map.reachable_info.keys()
@@ -404,14 +404,14 @@ func _random_policy_step(bf: Battlefield, stats: Dictionary) -> void:
 		bf._on_wait_refuel_requested()
 		return
 	stats["moves"] += 1
-	bf._on_tile_clicked(options[_rng.randi_range(0, options.size() - 1)], null)
+	bf._on_tile_clicked(options[_rng.randi_range(0, options.size() - 1)])
 
 func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Dictionary) -> void:
 	var sel: MechUnit = bf.selected_unit
 	if sel == null or sel.mech_data.faction != MechData.Faction.PLAYER or sel.mech_data.is_order_complete():
 		for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
 			if not u.mech_data.is_order_complete():
-				bf._on_tile_clicked(u.mech_data.grid_pos, null)
+				bf._on_tile_clicked(u.mech_data.grid_pos)
 				return
 		return
 
@@ -462,7 +462,7 @@ func _player_policy_step(bf: Battlefield, map_def: MapDefinition, stats: Diction
 
 	if best_pos != Vector2i(-1, -1) and best_score > 0.0:
 		stats["moves"] += 1
-		bf._on_tile_clicked(best_pos, null)
+		bf._on_tile_clicked(best_pos)
 	else:
 		stats["waits"] += 1
 		bf._on_wait_refuel_requested()

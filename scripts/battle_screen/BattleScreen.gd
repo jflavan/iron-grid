@@ -35,6 +35,7 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
+	set_process(false)   # nothing to advance until a fight starts
 	var bg := ColorRect.new()
 	bg.color = Color.BLACK
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -74,8 +75,27 @@ func _screen_to_stage(screen_pos: Vector2) -> Vector2:
 	var rel := screen_pos - _view.position
 	return Vector2(rel.x * float(NATIVE.x) / _view.size.x, rel.y * float(NATIVE.y) / _view.size.y)
 
+## A live session that is replaced while still on screen must not lose its result: a concluded one
+## (finished in the engine, or fully played and waiting for the confirm) is written back to the units
+## and applied without confirmation. No signal is emitted: this runs inside start_session/start_showdown
+## and an emit would re-enter listeners (BattlePreview replays on it).
+## An unfinished one cannot be applied, so say so. A replaced showdown is only a preview: no signal.
+func _flush_active_session() -> void:
+	if not _is_active or current_session == null:
+		return
+	if not (current_session.is_finished or _all_steps_done):
+		push_warning("BattleScreen: replacing an unfinished battle session; its progress is discarded")
+		return
+	if not _all_steps_done:
+		_finish()
+	push_warning("BattleScreen: a concluded session was replaced and applied without confirmation")
+	_is_active = false
+	current_result = null
+	current_session = null
+
 ## Starts a live interactive turn-based BattleSession.
 func start_session(session: SkirmishEngine.BattleSession) -> void:
+	_flush_active_session()
 	current_session = session
 	current_result = session.result
 	_is_active = true
@@ -85,11 +105,13 @@ func start_session(session: SkirmishEngine.BattleSession) -> void:
 	stage.auto_pilot = _auto_pilot
 	stage.setup(session.result, tl, session)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	set_process(true)
 	stage.speed_label = "2X" if _fast_mode else ""
 	SoundManager.play("radar_lock")
 
 ## Plays back a pre-resolved SkirmishResult (used by BattlePreview and unit tests).
 func start_showdown(result: SkirmishEngine.SkirmishResult) -> void:
+	_flush_active_session()
 	current_session = null
 	current_result = result
 	_is_active = true
@@ -98,6 +120,7 @@ func start_showdown(result: SkirmishEngine.SkirmishResult) -> void:
 	stage.auto_pilot = _auto_pilot
 	stage.setup(result, BattleTimeline.build(result), null)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	set_process(true)
 	stage.speed_label = "2X" if _fast_mode else ""
 	SoundManager.play("radar_lock")
 
@@ -130,7 +153,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
-		if stage.phase == "command_select":
+		if stage.phase == BattleStage.PHASE_COMMAND_SELECT:
 			if event.keycode == KEY_UP or event.keycode == KEY_W:
 				stage.move_cursor(-1)
 				get_viewport().set_input_as_handled()
@@ -156,10 +179,10 @@ func _gui_input(event: InputEvent) -> void:
 	if not visible or not _is_active:
 		return
 	if event is InputEventMouseMotion:
-		if stage.phase == "command_select":
+		if stage.phase == BattleStage.PHASE_COMMAND_SELECT:
 			stage.handle_mouse_motion(_screen_to_stage(event.position))
 	elif event is InputEventMouseButton and event.pressed:
-		if stage.phase == "command_select":
+		if stage.phase == BattleStage.PHASE_COMMAND_SELECT:
 			if event.button_index == MOUSE_BUTTON_RIGHT:
 				stage.cancel_submenu()
 				accept_event()
@@ -211,6 +234,7 @@ func _on_confirm_pressed() -> void:
 	SoundManager.play("ui_confirm")
 	_is_active = false
 	visible = false
+	set_process(false)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	var res := current_result
 	current_result = null

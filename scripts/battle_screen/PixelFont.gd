@@ -14,13 +14,21 @@ static var _attempted: bool = false
 static var _index: Dictionary = {}
 static var _ascii_table: PackedInt32Array = PackedInt32Array()
 
+## Loads the glyph atlas and index now instead of on the first text draw.
+static func warm() -> void:
+	_ensure()
+
 static func _ensure() -> void:
 	if _attempted:
 		return
 	_attempted = true
 	_tex = load(FONT_PNG) as Texture2D
 	var meta = JSON.parse_string(FileAccess.get_file_as_string(FONT_JSON))
-	var chars: String = meta["chars"] if meta != null else ""
+	var chars: String = ""
+	if meta is Dictionary and meta.has("chars"):
+		chars = String(meta["chars"])
+	else:
+		push_error("PixelFont: could not read the glyph index from %s; text will draw as '?'" % FONT_JSON)
 	for i in chars.length():
 		_index[chars[i]] = i
 
@@ -78,16 +86,6 @@ static func mesh_glyphs(text: String) -> Array:
 		out.append([Rect2(Vector2(i * ADVANCE, 0), Vector2(ADVANCE, HEIGHT)),
 			Rect2(Vector2(gi * ADVANCE, 0) * inv, Vector2(ADVANCE, HEIGHT) * inv)])
 	return out
-
-static func _glyph_index(ch: String) -> int:
-	_ensure()
-	if ch.is_empty():
-		return 0
-	var code: int = ch.unicode_at(0)
-	if code < 256:
-		return _ascii_table[code]
-	var up := ch.to_upper()
-	return _index.get(up, _index.get("?", 0))
 
 static func has_glyph(ch: String) -> bool:
 	_ensure()

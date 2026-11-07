@@ -83,7 +83,7 @@ func _benchmark_map_view(sample_frames: int) -> Array[float]:
 		if bf.grid_map != null:
 			var hx := (f / 5) % bf.grid_map.grid_width
 			var hy := (f / 7) % bf.grid_map.grid_height
-			bf._on_tile_hovered(Vector2i(hx, hy), bf.grid_map.get_tile(Vector2i(hx, hy)))
+			bf._on_tile_hovered(Vector2i(hx, hy))
 		if f % 2 == 0:
 			bf.camera.position += Vector2(sin(f * 0.1) * 2.5, cos(f * 0.1) * 2.5)
 

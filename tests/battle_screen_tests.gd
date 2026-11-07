@@ -4,46 +4,19 @@ extends Node
 ## Run headless:  godot --headless --path . res://tests/BattleScreenTests.tscn
 ## Exit code is the number of failures (0 = all checks passed).
 
-const CHASSIS: Array[String] = ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+const CHASSIS: Array[String] = ChassisCatalog.ORDER
 
 var failures: Array[String] = []
 var _checks: int = 0
 
 func _ready() -> void:
-	for t in [
-		"test_sprite_bank_loads", "test_anchor_mirrors", "test_recoil_moves_muzzle",
-		"test_side_from_approach", "test_elevation_offsets", "test_wrap_long_headline",
-		"test_damage_sums", "test_hold_at_one", "test_ai_attacker_panels", "test_pure_support_turns", "test_status_text",
-		"test_skip_confirm_reuse", "test_full_playback_finishes", "test_interactive_session_menu",
-		"test_every_weapon_has_anim", "test_every_support_has_anim", "test_persistent_effects_after_skip",
-		"test_pairings_play_to_result", "test_attachment_textures_cached",
-		"test_mouse_click_skips_then_confirms", "test_viewport_renders_only_while_active",
-		"test_white_sheets_are_pregenerated", "test_support_run_is_pure",
-		"test_crt_pixel_scale", "test_crt_glyph_coverage", "test_menu_mechs_never_overlap",
-		"test_menu_header_click_is_inert", "test_basic_weapon_single_source", "test_guard_survives_initiative_flip",
-		"test_forecast_initiative_matches_queue", "test_seeded_sessions_replay", "test_support_tech_is_single_use",
-		"test_guard_survives_miss", "test_auto_pilot_uses_command_select", "test_repelled_attacker_leaves_entrenchment",
-		"test_forecast_damage_matches_ai_estimate", "test_forecast_cache", "test_status_badges",
-		"test_miss_plays_no_impact", "test_seed_counter_resets_per_mission", "test_sure_kill_allows_for_variance",
-		"test_guard_cannot_stack", "test_status_text_lists_every_effect", "test_identical_walkers_share_forecast",
-		"test_apply_before_conclusion_is_ignored", "test_fast_forward_is_quiet",
-		"test_step_breakdown_sums", "test_strike_plan_goliath_mountain", "test_strike_plan_matches_reachable",
-		"test_strike_plan_beyond_range", "test_strike_plan_skips_occupied_launch_tiles", "test_strike_plan_advice_is_true",
-		"test_out_of_reach_hover_and_click", "test_terrain_panel_draws_plan",
-		"test_rules_chapters_fit", "test_rules_numbers_come_from_data", "test_rules_navigation",
-		"test_hud_plan_clears_after_order", "test_rules_offense_final_turn", "test_rules_example_follows_chassis_data",
-		"test_next_turn_fuel_matches_upkeep", "test_manual_numbers_come_from_data", "test_rules_render_is_cached",
-		"test_strike_plan_reused_until_state_changes", "test_overlay_click_that_leaves_scene",
-		"test_facing_direction_vectors", "test_back_attack_combat_modifiers", "test_flanking_combat_modifiers",
-		"test_adjacent_formation_crossfire_and_escort", "test_forecast_matches_directional_resolution",
-		"test_unit_container_formation_context", "test_in_place_rotation_and_movement_facing",
-		"test_ai_prefers_flank_and_rear_attacks",
-		"test_player_and_ai_reface_after_movement",
-		"test_decoupled_movement_and_combat",
-		"test_rules_page_draws_on_open", "test_ai_launch_context_excludes_mover", "test_redeploy_cancels_auto_advance",
-		"test_dijkstra_matches_bellman_ford_on_large_map", "test_terrain_is_baked_into_few_draws",
-		"test_hud_state_changes_queue_redraw",
-	]:
+	# Every `test_*` method of this script, in source order (some tests share static state).
+	for m: Dictionary in (get_script() as Script).get_script_method_list():
+		var t: String = m["name"]
+		if not t.begins_with("test_"):
+			continue
+		if OS.get_environment("TEST_VERBOSE") != "":
+			print("[TEST] ", t)
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
 	for f in failures:
@@ -293,13 +266,13 @@ func test_persistent_effects_after_skip() -> void:
 	s1.start_session(sess1)
 	await get_tree().process_frame
 	s1._on_skip_pressed()
-	_check(s1.stage.mechs["atk"]["sheet"] == "donner_braced", "Spinne ends braced after Anchor Struts + skip")
+	_check(s1.stage.mechs["atk"].sheet == "donner_braced", "Spinne ends braced after Anchor Struts + skip")
 	s1.queue_free()
 
 	var s2 := _screen_for(_fight("goliath", "falke"))
 	await get_tree().process_frame
 	s2._on_skip_pressed()
-	_check(s2.stage.mechs["atk"]["slab"] == true, "Siegebreaker slab stays up after skip")
+	_check(s2.stage.mechs["atk"].slab == true, "Siegebreaker slab stays up after skip")
 	s2.queue_free()
 
 	var atk_m := GlobalState.create_mech_instance("moloch", MechData.Faction.PLAYER, "A", Vector2i(3, 2))
@@ -312,13 +285,13 @@ func test_persistent_effects_after_skip() -> void:
 	s3.start_session(sess3)
 	await get_tree().process_frame
 	s3._on_skip_pressed()
-	_check(s3.stage.mechs["atk"]["sheet"] == "moloch_spent", "Brenner bricks are spent after absorbing a hit")
+	_check(s3.stage.mechs["atk"].sheet == "moloch_spent", "Brenner bricks are spent after absorbing a hit")
 	s3.queue_free()
 
 	var s4 := _screen_for(_fight("goliath", "falke", 0, 5))
 	await get_tree().process_frame
 	s4._on_skip_pressed()
-	_check(s4.stage.mechs["def"]["dark"] == true, "destroyed defender is shown as a wreck")
+	_check(s4.stage.mechs["def"].dark == true, "destroyed defender is shown as a wreck")
 	s4.queue_free()
 
 func test_pairings_play_to_result() -> void:
@@ -337,7 +310,7 @@ func test_pairings_play_to_result() -> void:
 	Engine.time_scale = 1.0
 
 func test_attachment_textures_cached() -> void:
-	var m := {"faction": 0}
+	var m := MechView.new()
 	for att in ["slab", "mast", "rangefinder"]:
 		_check(SupportAnims._attach_tex(att, m) != null, "%s attachment texture loads" % att)
 	_check(SupportAnims._attach_cache.size() >= 3, "attachment textures are retained across frames")
@@ -378,12 +351,12 @@ func test_support_run_is_pure() -> void:
 	await get_tree().process_frame
 	var st := screen.stage
 	for ab_id in ["anchor_strut", "ferro_bulkhead", "ablative_shield"]:
-		var a: Dictionary = st.mechs["atk"]
-		var d: Dictionary = st.mechs["def"]
-		var before := [a["sheet"], a["slab"], a["armed"]]
+		var a: MechView = st.mechs["atk"]
+		var d: MechView = st.mechs["def"]
+		var before := [a.sheet, a.slab, a.armed]
 		for t in [0.2, 0.5, 0.9]:
 			SupportAnims.run(st, a, d, ab_id, t)
-		_check([a["sheet"], a["slab"], a["armed"]] == before, "%s animation does not mutate lasting state" % ab_id)
+		_check([a.sheet, a.slab, a.armed] == before, "%s animation does not mutate lasting state" % ab_id)
 	screen.queue_free()
 
 # ---------------------------------------------------------------- shared CRT menu style (main menu / HUD)
@@ -407,7 +380,7 @@ func test_crt_glyph_coverage() -> void:
 		strings.append_array([ch.callsign, ch.unit_name, ch.chassis_class, ch.lore_blurb])
 		for ab: CombatAbility in ch.abilities:
 			strings.append_array([ab.ability_name, ab.category, ab.description])
-	strings.append_array(UIOverlay.manual_lines())
+	strings.append_array(RulesContent.manual_lines())
 	var missing := {}
 	for s in strings:
 		for ch in CrtUI.sanitize(s):
@@ -664,20 +637,20 @@ func test_forecast_cache() -> void:
 	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
 	var f1 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
 	var f2 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
-	_check(f1 == f2 and SkirmishEngine._forecast_cache.size() == 1, "identical inputs are served from one cache entry")
+	_check(f1 == f2 and SkirmishForecast._forecast_cache.size() == 1, "identical inputs are served from one cache entry")
 	f2["est_dmg_to_def"] = -1
 	_check(SkirmishEngine.compute_forecast(atk, dfn, flat, flat)["est_dmg_to_def"] == f1["est_dmg_to_def"], "callers get a copy, not the cached dictionary")
 	dfn.current_armor -= 20
 	var f3 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
-	_check(SkirmishEngine._forecast_cache.size() == 2 and f3["est_dmg_to_def"] <= f1["est_dmg_to_def"], "changed hull is a different key")
+	_check(SkirmishForecast._forecast_cache.size() == 2 and f3["est_dmg_to_def"] <= f1["est_dmg_to_def"], "changed hull is a different key")
 	dfn.is_entrenched = true
 	SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
-	_check(SkirmishEngine._forecast_cache.size() == 3, "entrenchment is part of the key")
+	_check(SkirmishForecast._forecast_cache.size() == 3, "entrenchment is part of the key")
 	atk.firepower += 10
 	var f4 := SkirmishEngine.compute_forecast(atk, dfn, flat, flat)
-	_check(SkirmishEngine._forecast_cache.size() == 4 and f4["atk_eff_fp"] > f1["atk_eff_fp"], "a per-unit stat change is a different key")
+	_check(SkirmishForecast._forecast_cache.size() == 4 and f4["atk_eff_fp"] > f1["atk_eff_fp"], "a per-unit stat change is a different key")
 	SkirmishEngine.clear_forecast_cache()
-	_check(SkirmishEngine._forecast_cache.is_empty(), "cache clears")
+	_check(SkirmishForecast._forecast_cache.is_empty(), "cache clears")
 
 func test_status_badges() -> void:
 	var sess := _flat_session("falke", "goliath")
@@ -696,24 +669,24 @@ func test_miss_plays_no_impact() -> void:
 	await get_tree().process_frame
 	var st := screen.stage
 	for id in WeaponAnims.PROFILES:
-		var a: Dictionary = st.mechs["atk"]
-		var d: Dictionary = st.mechs["def"]
+		var a: MechView = st.mechs["atk"]
+		var d: MechView = st.mechs["def"]
 		var imp := WeaponAnims.impact_time(id)
 		var dur := WeaponAnims.duration(id)
 		var reacted := false
 		for t in [imp + 0.02, imp + 0.2, (imp + dur) * 0.5, dur - 0.05]:
-			d["pose"] = ""
-			d["white"] = false
-			d["offset"] = Vector2.ZERO
+			d.pose = ""
+			d.white = false
+			d.offset = Vector2.ZERO
 			WeaponAnims.run(st, a, d, id, t, false)
-			if d["pose"] != "" or d["white"] or d["offset"] != Vector2.ZERO:
+			if d.pose != "" or d.white or d.offset != Vector2.ZERO:
 				reacted = true
 		_check(not reacted, "%s MISS leaves the target untouched after impact time" % id)
-		d["pose"] = ""
-		d["white"] = false
-		d["offset"] = Vector2.ZERO
+		d.pose = ""
+		d.white = false
+		d.offset = Vector2.ZERO
 		WeaponAnims.run(st, a, d, id, imp + 0.02, true)
-		_check(d["pose"] != "" or d["white"] or d["offset"] != Vector2.ZERO, "%s hit still reacts on impact" % id)
+		_check(d.pose != "" or d.white or d.offset != Vector2.ZERO, "%s hit still reacts on impact" % id)
 	screen.queue_free()
 
 func test_seed_counter_resets_per_mission() -> void:
@@ -788,7 +761,7 @@ func test_identical_walkers_share_forecast() -> void:
 	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
 	var f1 := SkirmishEngine.compute_forecast(a1, dfn, flat, flat)
 	var f2 := SkirmishEngine.compute_forecast(a2, dfn, flat, flat)
-	_check(f1 == f2 and SkirmishEngine._forecast_cache.size() == 1, "two identical walkers share one forecast entry")
+	_check(f1 == f2 and SkirmishForecast._forecast_cache.size() == 1, "two identical walkers share one forecast entry")
 	SkirmishEngine.clear_forecast_cache()
 
 func test_apply_before_conclusion_is_ignored() -> void:
@@ -813,7 +786,7 @@ func test_fast_forward_is_quiet() -> void:
 	screen.queue_free()
 
 # ---------------------------------------------------------------- strike plan (out-of-reach feedback)
-const ALL_CHASSIS := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+const ALL_CHASSIS := ChassisCatalog.ORDER
 
 func _grid(map_idx: int) -> IsoGridMap:
 	var gm := IsoGridMap.new()
@@ -984,7 +957,7 @@ func test_out_of_reach_hover_and_click() -> void:
 	_check(bf.ui_overlay.strike_plan == null, "hovering an empty tile clears the strike plan")
 
 	var log_before: int = GlobalState.combat_log.size()
-	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
+	bf._on_tile_clicked(Vector2i(8, 7))
 	var new_lines: Array = GlobalState.combat_log.slice(log_before)
 	var logged := new_lines.any(func(l): return "CANNOT REACH" in l and "STRIKE NEEDS 14F" in l)
 	_check(logged, "clicking the unreachable enemy logs why (got %s)" % [new_lines])
@@ -997,7 +970,7 @@ func test_out_of_reach_hover_and_click() -> void:
 	var far: StrikePlan = bf.strike_plan_for(Vector2i(8, 7))
 	_check(far != null and far.severity == StrikePlan.BEYOND_RANGE, "SPINNE-4 is beyond IRON-1's range (got %s)" % [far.severity if far else null])
 	log_before = GlobalState.combat_log.size()
-	bf._on_tile_clicked(Vector2i(8, 7), bf.grid_map.get_tile(Vector2i(8, 7)))
+	bf._on_tile_clicked(Vector2i(8, 7))
 	_check(GlobalState.combat_log.size() == log_before, "clicking a beyond-range enemy adds no log line")
 	bf.queue_free()
 	await get_tree().process_frame
@@ -1174,10 +1147,12 @@ func test_next_turn_fuel_matches_upkeep() -> void:
 	await get_tree().process_frame
 
 func test_manual_numbers_come_from_data() -> void:
-	var manual := "\n".join(UIOverlay.manual_lines())
+	var manual := "\n".join(RulesContent.manual_lines())
 	_check(("+%d Fuel" % MechData.WAIT_FUEL) in manual and ("+%d EN" % MechData.WAIT_ENERGY) in manual, "manual WAIT line reads the WAIT constants")
 	var mtn := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.MOUNTAIN, 1)
-	_check(("%d Fuel" % mtn.get_base_fuel_cost()) in manual and ("%+d%% DEF" % mtn.get_defense_modifier_pct()) in manual, "manual terrain chart reads GridTileData")
+	var mtn_row := "%s (%s): %d Fuel / %+d%% ATK / %+d%% DEF" % [mtn.get_terrain_name().to_upper(), mtn.get_terrain_short_code(),
+		mtn.get_base_fuel_cost() * RulesContent.default_fuel_usage(), mtn.get_attack_modifier_pct(), mtn.get_defense_modifier_pct()]
+	_check(mtn_row in manual, "manual terrain chart reads GridTileData with the fuel_usage multiplier (%s)" % mtn_row)
 	_check(("+%d SPD" % SkirmishEngine.ROUND1_ATTACKER_SPD_BONUS) in manual, "manual initiative line reads SkirmishEngine")
 
 func test_rules_render_is_cached() -> void:
@@ -1218,14 +1193,14 @@ func test_overlay_click_that_leaves_scene() -> void:
 	ov.root_ctrl.queue_redraw()
 	await get_tree().process_frame
 	var rect := Rect2()
-	for sp in ov._hot._spots:
+	for sp in ov.root_ctrl.hot._spots:
 		if sp["id"] == "menu":
 			rect = sp["rect"]
 	_check(rect.size != Vector2.ZERO, "precondition: MENU hotspot exists")
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
 	ev.pressed = true
-	ev.position = rect.get_center() * ov._scale
+	ev.position = rect.get_center() * ov.root_ctrl.px_scale
 	ov._input(ev)
 	_check(not bf.is_inside_tree(), "the click took the battlefield out of the tree")
 	bf.queue_free()
@@ -1473,17 +1448,17 @@ func test_player_and_ai_reface_after_movement() -> void:
 	_check(iron1.mech_data.facing != initial_facing, "IRON-1 facing changed via _rotate_selected_unit")
 
 	# Reface by clicking an orthogonal neighbor empty tile (North: (2, 1))
-	bf._on_tile_clicked(Vector2i(2, 1), null)
+	bf._on_tile_clicked(Vector2i(2, 1))
 	_check(iron1.mech_data.facing == Vector2i(0, -1), "IRON-1 refaced to North (0, -1) by clicking neighbor tile")
 
 	# Reface by clicking East neighbor: (3, 2)
-	bf._on_tile_clicked(Vector2i(3, 2), null)
+	bf._on_tile_clicked(Vector2i(3, 2))
 	_check(iron1.mech_data.facing == Vector2i(1, 0), "IRON-1 refaced to East (1, 0) by clicking neighbor tile")
 
 	# Deselect and re-select moved unit: player can still reface it
 	bf._deselect_unit()
 	_check(bf.selected_unit == null, "deselected")
-	bf._on_tile_clicked(Vector2i(2, 2), null)
+	bf._on_tile_clicked(Vector2i(2, 2))
 	_check(bf.selected_unit == iron1, "re-selected IRON-1")
 	_check(bf._can_rotate_selected_unit(), "can still rotate re-selected moved unit")
 	bf._rotate_selected_unit()
@@ -1540,7 +1515,7 @@ func test_decoupled_movement_and_combat() -> void:
 	bf._select_unit(iron)
 	_check(bf.grid_map.reachable_info.has(Vector2i(5, 4)) and bool(bf.grid_map.reachable_info[Vector2i(5, 4)]["is_attack"]), "adjacent enemy is highlighted as an attack target")
 	var expected_atk_fuel: int = iron.mech_data.get_step_fuel_cost(bf.grid_map.get_tile(Vector2i(4, 4)), bf.grid_map.get_tile(Vector2i(5, 4)))
-	bf._on_tile_clicked(Vector2i(5, 4), bf.grid_map.get_tile(Vector2i(5, 4)))
+	bf._on_tile_clicked(Vector2i(5, 4))
 	while bf._is_animating_move or modal.visible:
 		if modal.visible:
 			if modal._all_steps_done:
@@ -1574,7 +1549,7 @@ func test_decoupled_movement_and_combat() -> void:
 	_check(bf.grid_map.reachable_info.has(Vector2i(4, 5)) and not bool(bf.grid_map.reachable_info[Vector2i(4, 5)]["is_attack"]), "empty launch tile (4, 5) is reachable for movement")
 
 	# Step 1: Click empty tile (4, 5) to move adjacent to GLUT-2
-	bf._on_tile_clicked(Vector2i(4, 5), bf.grid_map.get_tile(Vector2i(4, 5)))
+	bf._on_tile_clicked(Vector2i(4, 5))
 	for i in 60:
 		await get_tree().process_frame
 
@@ -1588,7 +1563,7 @@ func test_decoupled_movement_and_combat() -> void:
 	_check(not falke.mech_data.has_attacked and bf.grid_map.reachable_info.has(Vector2i(5, 5)), "rotating after moving keeps adjacent attack target available")
 
 	# Step 2: Click adjacent GLUT-2 at (5, 5) to attack after moving
-	bf._on_tile_clicked(Vector2i(5, 5), bf.grid_map.get_tile(Vector2i(5, 5)))
+	bf._on_tile_clicked(Vector2i(5, 5))
 	while bf._is_animating_move or modal.visible:
 		if modal.visible:
 			if modal._all_steps_done:
@@ -1657,14 +1632,14 @@ func test_ai_launch_context_excludes_mover() -> void:
 			if launch != Vector2i(-1, -1):
 				break
 			var t := Vector2i(x, y)
-			for sd in UnitContainer._DIRS:
+			for sd in TerrainGrid.DIRS:
 				var st: Vector2i = t + sd
 				if not gm0.is_valid_coords(st) or st.y >= 7 or launch != Vector2i(-1, -1):
 					continue
 				iron.mech_data.grid_pos = t
 				rote.mech_data.grid_pos = st
 				var reach := gm0.find_reachable_tiles(rote.mech_data, uc.build_occupied_map(rote))
-				for ld in UnitContainer._DIRS:
+				for ld in TerrainGrid.DIRS:
 					var l: Vector2i = t + ld
 					if l != st and l.y < 7 and reach.has(l) and not reach[l]["is_attack"]:
 						target = t
@@ -1683,10 +1658,10 @@ func test_ai_launch_context_excludes_mover() -> void:
 	SkirmishEngine.clear_forecast_cache()
 	AIController.choose_best_action(rote, bf.grid_map, uc, bf.current_map_def)
 	var gm := bf.grid_map
-	var key_ok := SkirmishEngine._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), after_move)
-	var key_bad := SkirmishEngine._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), self_counted)
-	_check(SkirmishEngine._forecast_cache.has(key_ok), "AI scored the launch with the post-move formation context")
-	_check(not SkirmishEngine._forecast_cache.has(key_bad), "AI did not count itself as its own adjacent ally")
+	var key_ok := SkirmishForecast._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), after_move)
+	var key_bad := SkirmishForecast._forecast_key(rote.mech_data, iron.mech_data, gm.get_tile(launch), gm.get_tile(target), self_counted)
+	_check(SkirmishForecast._forecast_cache.has(key_ok), "AI scored the launch with the post-move formation context")
+	_check(not SkirmishForecast._forecast_cache.has(key_bad), "AI did not count itself as its own adjacent ally")
 	bf.queue_free()
 	await get_tree().process_frame
 
@@ -1716,6 +1691,8 @@ func test_dijkstra_matches_bellman_ford_on_large_map() -> void:
 			e.append(str(rng.randi_range(0, 4)))
 		md.terrain_codes.append(" ".join(t))
 		md.elevation_rows.append(" ".join(e))
+	md.objectives.append({"pos": Vector2i(0, 0)})
+	md.spawns = [{"chassis": "vanguard", "pos": Vector2i(1, 1), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(2, 2), "faction": 1}]
 	var gm := IsoGridMap.new()
 	add_child(gm)
 	gm.load_from_definition(md)
@@ -1735,7 +1712,7 @@ func test_dijkstra_matches_bellman_ford_on_large_map() -> void:
 	while changed:
 		changed = false
 		for c: Vector2i in best.keys():
-			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			for d in TerrainGrid.DIRS:
 				var n: Vector2i = c + d
 				if not gm.is_valid_coords(n) or (occ.has(n) and occ[n].faction != m.faction):
 					continue
@@ -1802,12 +1779,12 @@ func test_hud_state_changes_queue_redraw() -> void:
 	for prop in ["selected_mech", "hovered_mech", "hovered_tile", "hovered_reach_info", "current_forecast",
 			"strike_plan", "step_cost_mech", "map_def", "player_unit_count", "ai_unit_count", "player_obj_count",
 			"total_obj_count", "show_manual_modal", "show_game_over_modal"]:
-		ui._dirty = false
+		ui.root_ctrl.dirty = false
 		ui.set(prop, ui.get(prop))
-		_check(ui._dirty, "assigning UIOverlay.%s marks the HUD dirty" % prop)
-	ui._dirty = false
+		_check(ui.root_ctrl.dirty, "assigning UIOverlay.%s marks the HUD dirty" % prop)
+	ui.root_ctrl.dirty = false
 	GlobalState.add_log("redraw probe")
-	_check(ui._dirty, "a new log line marks the HUD dirty")
+	_check(ui.root_ctrl.dirty, "a new log line marks the HUD dirty")
 	bf.queue_free()
 	await get_tree().process_frame
 
@@ -1824,7 +1801,7 @@ func _linear_scan_came_from(gm: IsoGridMap, unit: MechData, occ: Dictionary, bud
 				bi = i
 		var cur: Vector2i = queue[bi]
 		queue.remove_at(bi)
-		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		for d in TerrainGrid.DIRS:
 			var n: Vector2i = cur + d
 			if not gm.is_valid_coords(n) or (occ.has(n) and occ[n].faction != unit.faction):
 				continue
@@ -1837,3 +1814,1142 @@ func _linear_scan_came_from(gm: IsoGridMap, unit: MechData, occ: Dictionary, bud
 				if not queue.has(n):
 					queue.append(n)
 	return from
+
+## The forecast cache must never serve a stale answer: for every MechData field, if changing it
+## changes the real (uncached) forecast, it must also change the cache key. Walks the script
+## variables, so a field added to MechData later is covered automatically.
+func test_forecast_key_covers_every_engine_read_field() -> void:
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var flat2 := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.PLAIN, 1)
+	var must_differ: Array[String] = ["current_armor", "current_energy", "facing", "is_entrenched", "firepower",
+			"armor_rating", "speed", "evasion", "crit_chance", "max_armor", "max_energy"]
+	for side in ["atk", "def"]:
+		for prop in MechData.new().get_property_list():
+			if not (int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE):
+				continue
+			var pname: String = prop["name"]
+			var base_atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+			var base_def := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+			var mut_atk := base_atk.duplicate_mech()
+			var mut_def := base_def.duplicate_mech()
+			var target: MechData = mut_atk if side == "atk" else mut_def
+			var cur: Variant = target.get(pname)
+			var changed: Variant = cur
+			match typeof(cur):
+				TYPE_INT: changed = (1 - cur) if pname == "faction" else cur + 7
+				TYPE_BOOL: changed = not cur
+				TYPE_VECTOR2I: changed = Vector2i(cur.y, cur.x) if cur.x != cur.y else Vector2i(cur.x, -cur.y)
+			if changed == cur:
+				continue
+			SkirmishEngine.clear_forecast_cache()
+			var base_f := SkirmishEngine.compute_forecast(base_atk, base_def, flat, flat2)
+			var key_a := SkirmishForecast._forecast_key(base_atk, base_def, flat, flat2)
+			target.set(pname, changed)
+			SkirmishEngine.clear_forecast_cache()
+			var mut_f := SkirmishEngine.compute_forecast(mut_atk, mut_def, flat, flat2)
+			var key_b := SkirmishForecast._forecast_key(mut_atk, mut_def, flat, flat2)
+			if base_f != mut_f:
+				_check(key_a != key_b, "%s.%s changes the forecast, so it must change the cache key" % [side, pname])
+			elif pname in must_differ and side == "def" or (pname in ["current_armor", "firepower", "speed"] and side == "atk"):
+				_check(key_a != key_b, "%s.%s is part of the cache key" % [side, pname])
+	# the cached tactical_tags array is not shared with callers
+	SkirmishEngine.clear_forecast_cache()
+	var a := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var d := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	var f := SkirmishEngine.compute_forecast(a, d, flat, flat2)
+	(f["tactical_tags"] as Array).append("X")
+	_check(not (SkirmishEngine.compute_forecast(a, d, flat, flat2)["tactical_tags"] as Array).has("X"), "forecast tags are a deep copy")
+
+## Two-generation cache: filling past the limit rotates instead of dropping everything, and a
+## hit in the old generation is promoted.
+func test_forecast_cache_two_generations() -> void:
+	SkirmishEngine.clear_forecast_cache()
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var flat2 := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.PLAIN, 1)
+	var a := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var d := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	var f0 := SkirmishEngine.forecast_shared(a, d, flat, flat2)
+	var key := SkirmishForecast._forecast_key(a, d, flat, flat2)
+	# force a rotation: pretend the current generation is full
+	SkirmishForecast._forecast_old = SkirmishForecast._forecast_cache
+	SkirmishForecast._forecast_cache = {}
+	_check(not SkirmishForecast._forecast_cache.has(key), "after a rotation the entry lives in the old generation")
+	SkirmishEngine.compute_forecast(a, d, flat, flat2)
+	_check(SkirmishForecast._forecast_cache.has(key), "an old-generation hit is promoted")
+	_check(is_same(SkirmishEngine.forecast_shared(a, d, flat, flat2), f0), "promotion keeps the same cached Dictionary object")
+	SkirmishEngine.clear_forecast_cache()
+	_check(SkirmishForecast._forecast_old.is_empty() and SkirmishForecast._forecast_cache.is_empty(), "clear empties both generations")
+
+# ---------------------------------------------------------------- architecture review pass: battle screen
+func test_phase_names_are_stable() -> void:
+	_check(BattleStage.PHASE_INTRO == "intro" and BattleStage.PHASE_MENU == "menu" and BattleStage.PHASE_SUPPORT == "support"
+		and BattleStage.PHASE_ATTACK == "attack" and BattleStage.PHASE_SETTLE == "settle" and BattleStage.PHASE_ENDING == "ending"
+		and BattleStage.PHASE_RESULT == "result" and BattleStage.PHASE_COMMAND_SELECT == "command_select" and BattleStage.PHASE_IDLE == "idle",
+		"phase constants keep their string values")
+	var screen := _screen_for(_fight("vanguard", "moloch"))
+	_check(screen.stage.phase == BattleStage.PHASE_INTRO, "a fresh showdown starts in the intro phase")
+	screen.queue_free()
+
+func test_advance_without_progress_does_not_hang() -> void:
+	var st := BattleStage.new()
+	add_child(st)
+	st.result = _fight("vanguard", "moloch")   # never set up: phase stays idle, which has no duration
+	st.timeline = BattleTimeline.build(st.result)
+	st.advance(0.5)   # would spin forever without the progress guard
+	_check(st.phase == BattleStage.PHASE_IDLE, "a stuck zero-length phase is abandoned instead of hanging")
+	st.queue_free()
+
+func test_replacing_a_finished_session_applies_it() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var sess := SkirmishEngine.create_deterministic_session(atk, dfn, flat, flat)
+	sess.auto_resolve()
+	var start_def := dfn.current_armor
+	screen.start_session(sess)
+	screen.start_showdown(_fight("falke", "goliath"))
+	_check(dfn.current_armor == sess.result.def_armor_after and dfn.current_armor < start_def, "a concluded session replaced on screen is written back to the units first")
+	screen.queue_free()
+
+## A replaced finished session is applied to the units but does NOT emit (no re-entrant listeners).
+func test_replaced_finished_session_applies_without_emitting() -> void:
+	for played in [false, true]:
+		var screen := BattleScreen.new()
+		add_child(screen)
+		await get_tree().process_frame
+		var emitted: Array = []
+		screen.resolution_confirmed.connect(func(r): emitted.append(r))
+		var sess := _flat_session("vanguard", "moloch")
+		sess.auto_resolve()
+		var res_def: MechData = sess.result.defender
+		screen.start_session(sess)
+		if played:
+			screen._on_skip_pressed()   # played out, waiting for the confirm
+		screen.start_showdown(_fight("falke", "goliath"))
+		_check(res_def.current_armor == sess.result.def_armor_after, "a replaced finished session is written back (fully played: %s)" % played)
+		_check(emitted.is_empty(), "a replaced finished session emits nothing (fully played: %s)" % played)
+		screen.start_showdown(_fight("falke", "goliath"))
+		_check(emitted.is_empty(), "replacing a showdown emits nothing")
+		screen.queue_free()
+
+func test_screen_only_processes_while_active() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	_check(not screen.is_processing(), "an idle battle screen does not process")
+	screen.start_showdown(_fight("vanguard", "moloch"))
+	_check(screen.is_processing(), "a running fight processes")
+	screen._on_skip_pressed()
+	screen._on_confirm_pressed()
+	_check(not screen.is_processing(), "a confirmed fight stops processing")
+	screen.queue_free()
+
+func test_hud_status_follows_the_animation() -> void:
+	var sess := _flat_session("falke", "goliath")
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "gyro_thruster")   # atk gets HASTE
+	sess.auto_resolve()
+	var tl := BattleTimeline.build(sess.result)
+	_check(not tl.start_status.is_empty() and tl.start_status["badges"]["atk"].is_empty(), "the timeline carries a start status with no badges")
+	var st := BattleStage.new()
+	add_child(st)
+	st.setup(sess.result, tl, null)
+	_check(st._status_src() == tl.start_status, "an intro shows the start status (SPD/EVA row) even for a showdown")
+	var first: Dictionary = tl.beats[0]
+	_check(first["badges"]["atk"].has("HASTE") or first["badges"]["def"].has("HASTE"), "beat 0 snapshots the haste its step grants")
+	st.beat_idx = 0
+	for p in [BattleStage.PHASE_MENU, BattleStage.PHASE_SUPPORT]:
+		st.phase = p
+		_check(st._status_src() == tl.start_status, "during %s the previous beat's status (the start) is shown" % p)
+	st.phase = BattleStage.PHASE_ATTACK
+	st._impact_done = false
+	_check(st._status_src() == tl.start_status, "an attack before impact still shows the previous status")
+	st._impact_done = true
+	_check(st._status_src() == first, "after impact the beat's own snapshot is shown")
+	st.phase = BattleStage.PHASE_SETTLE
+	_check(st._status_src() == first, "settling shows the beat's snapshot")
+	st.beat_idx = 1
+	st.phase = BattleStage.PHASE_MENU
+	_check(st._status_src() == first, "beat 1's menu cue shows beat 0's snapshot")
+	st.beat_idx = tl.beats.size()
+	st.phase = BattleStage.PHASE_RESULT
+	_check(st._status_src() == tl.beats.back(), "the result screen shows the last recorded beat")
+	# the joined badge text is cached per side until the array changes
+	var b1: Array = ["A", "B", "C"]
+	_check(st._badge_text("atk", b1) == "A B", "badge text shows the first two badges")
+	var cached: Array = st._badge_cache["atk"]
+	_check(st._badge_text("atk", b1) == "A B" and is_same(st._badge_cache["atk"], cached), "an unchanged badge array is served from the cache")
+	var b2: Array = ["X"]
+	_check(st._badge_text("atk", b2) == "X", "a new badge array rebuilds the text")
+	st.queue_free()
+
+func test_static_phases_redraw_only_when_something_moves() -> void:
+	var screen := _screen_for(_fight("vanguard", "moloch"))
+	var st: BattleStage = screen.stage
+	st.skip_to_end()
+	_check(st.phase == BattleStage.PHASE_RESULT, "a skipped fight rests on the result screen")
+	st.numbers.clear()
+	st._redraw_key = []
+	st._redraw_if_animated()
+	var key: Array = st._redraw_key
+	_check(not key.is_empty(), "the first static tick records what it drew")
+	# a tiny step inside the same blink / idle / smoke slot changes nothing
+	st.clock = floorf(st.clock / 1.0) + 0.011
+	st._redraw_if_animated()
+	var base: Array = st._redraw_key.duplicate()
+	st.clock += 0.001
+	st._redraw_if_animated()
+	_check(st._redraw_key == base, "no repaint key change inside one slot")
+	st.clock += 0.06   # past one smoke tick
+	st._redraw_if_animated()
+	_check(st._redraw_key != base, "crossing a tick changes the key and repaints")
+	screen.queue_free()
+
+func test_pixel_font_loads_its_index() -> void:
+	PixelFont.warm()
+	_check(PixelFont.has_glyph("A") and PixelFont.has_glyph("?"), "the font index loaded (a failed meta load would leave every glyph a '?')")
+	_check(BattleLayout.W == BattleStage.W and BattleLayout.H == BattleStage.H and BattleLayout.GROUND_Y == BattleStage.GROUND_Y and BattleLayout.FEET_X == BattleStage.FEET_X,
+		"BattleStage geometry constants alias BattleLayout's")
+
+func test_backdrop_cache_never_holds_null() -> void:
+	for t in BattleLayout.BACKDROP_BY_TERRAIN:
+		_check(BattleLayout.get_backdrop(t) != null, "backdrop for terrain %d loads" % t)
+	_check(not BattleLayout._backdrop_cache.values().has(null), "no null is cached as a backdrop")
+	# a missing file returns null and leaves the cache untouched (key 999 is no real terrain)
+	var before := BattleLayout._backdrop_cache.size()
+	_check(BattleLayout.get_backdrop(999, "res://assets/battle/backdrops/__missing__.png") == null, "a nonexistent backdrop path yields null")
+	_check(not BattleLayout._backdrop_cache.has(999) and BattleLayout._backdrop_cache.size() == before and not BattleLayout._backdrop_cache.values().has(null),
+		"a failed load caches nothing (not even null)")
+	_check(BattleLayout.get_backdrop(999, BattleLayout.backdrop_path(GridTileData.TerrainType.PLAIN)) != null and BattleLayout._backdrop_cache.has(999),
+		"a good override path loads and is cached")
+	BattleLayout._backdrop_cache.erase(999)
+
+func test_hud_status_comes_from_the_beat() -> void:
+	var sess := _flat_session("falke", "goliath")
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "gyro_thruster")
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "ferro_bulkhead")
+	sess.auto_resolve()
+	var step0: SkirmishEngine.TurnStep = sess.result.steps[0]
+	_check(step0.atk_badges.has("HASTE") or step0.def_badges.has("HASTE"), "the first step snapshots its own badges")
+	# showdown (no live session) shows the same badges and SPD/EVA as the session's final state
+	var screen := _screen_for(sess.result)
+	screen.stage.skip_to_end()
+	for side in ["atk", "def"]:
+		var live := sess.get_combatant(side)
+		var shown: Dictionary = screen.stage._status_src()
+		_check(shown["badges"][side] == live.get_status_badges() and shown["spd"][side] == live.get_effective_speed() and shown["eva"][side] == live.get_effective_evasion(),
+			"showdown HUD status for %s matches the live fight" % side)
+	# a step keeps the status it had, even once the session has moved on
+	var early: SkirmishEngine.TurnStep = sess.result.steps[0]
+	_check(early.atk_spd_after > 0 and early.def_spd_after > 0, "steps carry SPD snapshots")
+	screen.queue_free()
+
+func test_warm_assets_and_circle_texture() -> void:
+	BattleStage.warm_assets(CHASSIS, BattleLayout.BACKDROP_BY_TERRAIN.keys())
+	_check(MechSpriteBank._warmed.has("goliath") and BattleFX._circle_tex != null and PixelFont._attempted, "warm_assets loads sheets, circle and font")
+	_check(BattleLayout._backdrop_cache.size() == BattleLayout.BACKDROP_BY_TERRAIN.size(), "warm_assets loads every requested backdrop")
+	# the span-filled disc equals the per-pixel original
+	var size := 32
+	var ref := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var center := Vector2(size * 0.5 - 0.5, size * 0.5 - 0.5)
+	for y in size:
+		for x in size:
+			ref.set_pixel(x, y, Color.WHITE if (Vector2(x, y) - center).length() <= size * 0.5 else Color(1, 1, 1, 0))
+	_check(BattleFX._get_circle_texture().get_image().get_data() == ref.get_data(), "circle texture pixels are unchanged")
+
+func test_support_effect_table_and_text() -> void:
+	# every catalog TECH has an animation; every support effect_type is in the table
+	for id in GlobalState.ability_catalog:
+		var ab: CombatAbility = GlobalState.ability_catalog[id]
+		_check(WeaponAnims.has_anim(id) or SupportAnims.has_anim(id), "%s has a weapon or support animation" % id)
+		if not ab.is_weapon():
+			_check(SkirmishEngine.SUPPORT_EFFECTS.has(ab.effect_type), "%s effect %s is in SUPPORT_EFFECTS" % [id, ab.effect_type])
+	for et in SkirmishEngine.SUPPORT_EFFECTS:
+		var fx: Dictionary = SkirmishEngine.SUPPORT_EFFECTS[et]
+		if fx.has("soften"):
+			_check(SupportAnims.has_anim(fx["soften"]), "soften token %s is known to SupportAnims" % fx["soften"])
+	# caps and floors survive the table: stacking the same buff never passes its cap
+	var sess := _flat_session("vanguard", "moloch")
+	var bulk := CombatAbility.new("t_bulk", "T", "ARMOR", 0, 1.0, 0, 95, 0, 0.0, "BULKHEAD_WALL")
+	var ecm := CombatAbility.new("t_ecm", "T", "TACTIC", 0, 1.0, 0, 95, 0, 0.0, "ECM_JAM")
+	var plot := CombatAbility.new("t_plot", "T", "TACTIC", 0, 1.0, 0, 95, 0, 0.0, "BALLISTIC_PLOT")
+	for i in 3:
+		sess._resolve_support_tech(SkirmishEngine.TurnStep.new(), sess.atk_state, sess.def_state, bulk)
+		sess._resolve_support_tech(SkirmishEngine.TurnStep.new(), sess.atk_state, sess.def_state, ecm)
+		sess._resolve_support_tech(SkirmishEngine.TurnStep.new(), sess.atk_state, sess.def_state, plot)
+	_check(sess.atk_state.def_buff_pct == 85, "bulkhead stacks to its 85 cap (got %d)" % sess.atk_state.def_buff_pct)
+	_check(sess.def_state.acc_buff_pct == -45 and sess.def_state.spd_buff_pct == -45 and sess.def_state.def_buff_pct == -40, "ECM stops at its floors")
+	_check(sess.atk_state.atk_buff_pct == 65 and is_equal_approx(sess.atk_state.armor_pierce_bonus, 0.45) and sess.atk_state.crit_buff_pct == 75, "fire plot caps ATK and pierce, crit uncapped")
+	var step := SkirmishEngine.TurnStep.new()
+	sess._resolve_support_tech(step, sess.atk_state, sess.def_state, ecm)
+	_check(step.status_text == "ENEMY JAMMED (-ACC/-SPD/-DEF)" and step.description.contains("ENEMY JAMMED"), "status text comes from the table")
+	# DEFEND / guard text is formatted from the constants and reads as before
+	var dsess := _flat_session("vanguard", "moloch")
+	var dstep := dsess.execute_next_turn(SkirmishEngine.CommandType.DEFEND)
+	if dstep == null:
+		dstep = dsess.execute_next_turn(SkirmishEngine.CommandType.DEFEND)
+	_check(dstep.status_text == "GUARD +50% // +2 EN" and dstep.description.contains("(+50% Guard, +2 EN)"), "DEFEND text unchanged (got '%s')" % dstep.status_text)
+	_check(BattleStage._command_prompts()[2] == "BRACE HULL PLATING (-50% DMG TAKEN, +2 EN)", "DEFEND prompt formatted from the constants")
+
+func test_duplicate_mech_copies_every_field() -> void:
+	var src := MechData.new()
+	for prop in src.get_property_list():
+		if not (int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE):
+			continue
+		var n: String = prop["name"]
+		var cur: Variant = src.get(n)
+		match typeof(cur):
+			TYPE_INT: src.set(n, (1 - cur) if n == "faction" else cur + 3)
+			TYPE_BOOL: src.set(n, not cur)
+			TYPE_STRING: src.set(n, "x_" + n)
+			TYPE_VECTOR2I: src.set(n, Vector2i(cur.x + 5, cur.y - 2))
+	src.abilities.append(CombatAbility.new("id_x", "NAME X", "TACTIC", 9, 2.5, 7, 66, 13, 0.3, "ECM_JAM", "DESC"))
+	var copy := src.duplicate_mech()
+	for prop in src.get_property_list():
+		if not (int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE) or prop["name"] == "abilities":
+			continue
+		_check(copy.get(prop["name"]) == src.get(prop["name"]), "duplicate_mech copies %s" % prop["name"])
+	_check(copy.abilities.size() == 1 and copy.abilities[0] != src.abilities[0], "abilities are copied, not shared")
+	_check(not is_same(copy.abilities, src.abilities), "the abilities array itself is not shared")
+	for prop in src.abilities[0].get_property_list():
+		if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE:
+			_check(copy.abilities[0].get(prop["name"]) == src.abilities[0].get(prop["name"]), "duplicate_ability copies %s" % prop["name"])
+# ---------------------------------------------------------------- review fixes: modals, victory rules, catalogs
+## An attacker wrecked in the counter-attack must not stay selected (its node is freed this frame).
+func test_wrecked_selection_is_cleared() -> void:
+	var bf := await _spawn_iron_bridge()
+	var attacker := _unit_by_callsign(bf, "IRON-1")
+	var defender: MechUnit = null
+	for u in bf.unit_container.get_faction_units(MechData.Faction.AI):
+		defender = u
+		break
+	# A 1v1 for the order economy: every other Coalition walker has already used its order
+	for u in bf.unit_container.get_faction_units(MechData.Faction.PLAYER):
+		if u != attacker:
+			u.mech_data.has_moved = true
+			u.mech_data.has_attacked = true
+	bf._select_unit(attacker)
+	attacker.mech_data.has_moved = true
+	attacker.mech_data.has_attacked = true
+	attacker.mech_data.current_armor = 0   # wrecked by the counter-attack
+	bf._pending_attacker = attacker
+	bf._pending_defender = defender
+	GlobalState.set_phase(GlobalState.TurnPhase.RESOLUTION_PHASE)
+	bf._phase_before_resolution = GlobalState.TurnPhase.PLAYER_PHASE
+	bf._on_skirmish_modal_closed(SkirmishEngine.SkirmishResult.new())
+	_check(bf.selected_unit == null, "a wrecked attacker is no longer the selected unit")
+	_check(bf.ui_overlay.selected_mech == null, "the HUD stops showing the wrecked attacker")
+	_check(not bf._selected_is_valid(), "_selected_is_valid() is false without a selection")
+	bf._auto_advance_token += 1   # cancel the pending end-of-phase countdown
+	bf.queue_free()
+	await get_tree().process_frame
+
+## While the manual or the debrief is up, only its own controls respond.
+func test_modal_swallows_commands() -> void:
+	var bf := await _spawn_iron_bridge()
+	var ov := bf.ui_overlay
+	var fired: Array = []
+	ov.action_end_turn_requested.connect(func(): fired.append("end_turn"))
+	ov.action_center_camera_requested.connect(func(): fired.append("cam"))
+	ov.show_manual_modal = true
+	ov._activate("end_turn")
+	ov._activate("cam")
+	_check(fired.is_empty(), "commands do nothing while the manual is open (fired %s)" % [fired])
+	ov._activate("manual")
+	_check(not ov.show_manual_modal, "the manual's own control still closes it")
+	ov.show_game_over_modal = true
+	ov._activate("end_turn")
+	_check(fired.is_empty(), "commands do nothing while the debrief is open (fired %s)" % [fired])
+	ov.show_game_over_modal = false
+	ov._activate("block")
+	_check(fired.is_empty(), "a plain panel hotspot does nothing")
+	ov._activate("end_turn")
+	_check(fired == ["end_turn"], "with no modal the command fires (fired %s)" % [fired])
+	bf._auto_advance_token += 1
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_victory_rules_evaluate() -> void:
+	var m: MapDefinition = GlobalState.maps[0]
+	_check(VictoryRules.evaluate(m, null, 3, 3, 0, 3, 3, false).is_empty(), "mid-game with both sides alive is undecided")
+	_check(VictoryRules.evaluate(m, null, 3, 3, 1, 3, 1, true).is_empty(), "end of an early turn with a split objective is undecided")
+	var win := VictoryRules.evaluate(m, null, 2, 0, 0, 3, 2, false)
+	_check(win.get("winner", -1) == 0 and win.get("reason", "") == "All Kriegs-Syndikat Armored Walkers have been destroyed!", "wiping out the Syndicate wins (got %s)" % [win])
+	var loss := VictoryRules.evaluate(m, null, 0, 2, 0, 3, 2, false)
+	_check(loss.get("winner", -1) == 1 and loss.get("reason", "") == "All 8th Iron Division Walkers were lost in action.", "losing every walker loses (got %s)" % [loss])
+	var limit := VictoryRules.evaluate(m, null, 3, 3, 1, 3, m.turn_limit, true)
+	_check(limit.get("winner", -1) == 1, "a minority of bridgeheads at the turn limit loses (got %s)" % [limit])
+	var held := VictoryRules.evaluate(m, null, 3, 3, 3, 3, 2, true)
+	_check(held.get("winner", -1) == 0, "holding every bridgehead at turn end wins (got %s)" % [held])
+	# even split at the turn limit goes to the side with more walkers left (ties to the player)
+	for ac in [3, 2]:   # equal walkers, then the player ahead
+		var pm: MapDefinition = null
+		for cand: MapDefinition in GlobalState.maps:
+			if cand.strategy_mode == MapDefinition.StrategyMode.PITCHED_BATTLE:
+				pm = cand
+		var r := VictoryRules.evaluate(pm, null, 3, ac, 2, 4, pm.turn_limit, true)
+		_check(r.get("winner", -1) == 0, "an even objective split with %d walkers vs %d goes to the player (got %s)" % [3, ac, r])
+	var pm2: MapDefinition = GlobalState.maps[0]
+	var lost_split := VictoryRules.evaluate(pm2, null, 2, 3, 2, 4, pm2.turn_limit, true)
+	_check(lost_split.get("winner", -1) == 1, "an even split with fewer walkers loses (got %s)" % [lost_split])
+	# DEFENSE: overrun loses at turn end, holding through the limit wins, otherwise undecided
+	var dm: MapDefinition = null
+	var om_idx := -1
+	for i in GlobalState.maps.size():
+		var cand: MapDefinition = GlobalState.maps[i]
+		if cand.strategy_mode == MapDefinition.StrategyMode.DEFENSE:
+			dm = cand
+		elif cand.strategy_mode == MapDefinition.StrategyMode.OFFENSE:
+			om_idx = i
+	_check(dm != null and om_idx >= 0, "precondition: a DEFENSE and an OFFENSE map ship")
+	_check(VictoryRules.evaluate(dm, null, 3, 3, 0, 2, 2, true).get("winner", -1) == 1, "DEFENSE: losing every Citadel node loses")
+	_check(VictoryRules.evaluate(dm, null, 3, 3, 1, 2, dm.turn_limit, true).get("winner", -1) == 0, "DEFENSE: holding a node through the turn limit wins")
+	_check(VictoryRules.evaluate(dm, null, 3, 3, 1, 2, 2, true).is_empty(), "DEFENSE: holding a node before the limit is undecided")
+	# OFFENSE on a real grid: an HQ bunker held by the player wins, otherwise the turn limit loses
+	var om: MapDefinition = GlobalState.maps[om_idx]
+	var og := _grid(om_idx)
+	_check(VictoryRules.evaluate(om, og, 3, 3, 0, 2, 2, true).is_empty(), "OFFENSE: HQ not held, before the limit is undecided")
+	_check(VictoryRules.evaluate(om, og, 3, 3, 0, 2, om.turn_limit, true).get("winner", -1) == 1, "OFFENSE: HQ not held at the turn limit loses")
+	og.get_tile(om.hq_positions[0]).controlled_by = MechData.Faction.PLAYER
+	_check(VictoryRules.evaluate(om, og, 3, 3, 1, 2, 2, true).get("winner", -1) == 0, "OFFENSE: holding an HQ bunker at turn end wins")
+	_check(VictoryRules.evaluate(om, og, 3, 3, 1, 2, 2, false).is_empty(), "OFFENSE: objectives are only judged at the end of a full turn")
+	og.free()
+
+func test_catalogs_are_consistent() -> void:
+	_check(not GlobalState.ability_catalog.is_empty(), "ability catalog is filled")
+	_check(not GlobalState.chassis_catalog.is_empty(), "chassis catalog is filled")
+	_check(not GlobalState.maps.is_empty(), "map catalog is filled")
+	_check(GlobalState.chassis_catalog.size() == ChassisCatalog.ORDER.size(), "ChassisCatalog.ORDER lists every chassis")
+	for id: String in ChassisCatalog.ORDER:
+		_check(GlobalState.chassis_catalog.has(id), "chassis %s exists" % id)
+		if not GlobalState.chassis_catalog.has(id):
+			continue
+		var ch: MechData = GlobalState.chassis_catalog[id]
+		for ab: CombatAbility in ch.abilities:
+			_check(GlobalState.ability_catalog.has(ab.ability_id), "%s ability %s exists in the ability catalog" % [id, ab.ability_id])
+	for md: MapDefinition in GlobalState.maps:
+		var inb := func(c: Vector2i) -> bool: return c.x >= 0 and c.y >= 0 and c.x < md.width and c.y < md.height
+		for sp in md.spawns:
+			_check(GlobalState.chassis_catalog.has(str(sp.get("chassis", ""))), "%s spawn %s uses a known chassis" % [md.map_name, sp.get("callsign", "?")])
+			_check(inb.call(sp["pos"]), "%s spawn %s is in bounds" % [md.map_name, sp.get("callsign", "?")])
+		for ob in md.objectives:
+			_check(inb.call(ob["pos"]), "%s objective %s is in bounds" % [md.map_name, ob.get("label", "?")])
+		for hq in md.hq_positions:
+			_check(inb.call(hq), "%s HQ %s is in bounds" % [md.map_name, hq])
+# ---------------------------------------------------------------- terrain grid / data table
+func _plan_diff(a: StrikePlan, b: StrikePlan) -> String:
+	if a.severity != b.severity: return "severity"
+	if a.needs != b.needs: return "needs"
+	if a.have != b.have: return "have"
+	if a.path_fuel != b.path_fuel: return "path_fuel"
+	if a.launch != b.launch: return "launch"
+	if a.step != b.step: return "step"
+	if a.advice != b.advice: return "advice"
+	if a.move_to != b.move_to: return "move_to"
+	return ""
+
+func test_strike_cost_field_matches_targeted_search() -> void:
+	var diffs: Array = []
+	var plans := 0
+	for mi in GlobalState.maps.size():
+		var md: MapDefinition = GlobalState.maps[mi]
+		var gm := _grid(mi)
+		var occ: Dictionary = {}
+		var mechs: Array[MechData] = []
+		for sp in md.spawns:
+			var fac := MechData.Faction.PLAYER if int(sp["faction"]) == 0 else MechData.Faction.AI
+			var m := _unit(str(sp["chassis"]), fac, sp["pos"], "s")
+			occ[m.grid_pos] = m
+			mechs.append(m)
+		for u in mechs:
+			var others: Dictionary = occ.duplicate()
+			others.erase(u.grid_pos)
+			for fuel in [u.max_fuel, 3]:
+				for moved in [false, true]:
+					u.current_fuel = fuel
+					u.has_moved = moved
+					var field: Dictionary = gm.strike_cost_field(u, others)
+					for t in mechs:
+						if t.faction == u.faction:
+							continue
+						var p1: StrikePlan = gm.compute_strike_plan(u, t.grid_pos, others)
+						var p2: StrikePlan = gm.compute_strike_plan(u, t.grid_pos, others, field)
+						plans += 1
+						var d := _plan_diff(p1, p2)
+						if d != "":
+							diffs.append([mi, u.grid_pos, t.grid_pos, d])
+		gm.free()
+	_check(plans > 50, "strike-field comparison covered plans (%d)" % plans)
+	_check(diffs.is_empty(), "plan with a cost field equals the targeted search (%d diffs, first %s)" % [diffs.size(), diffs.slice(0, 1)])
+
+func test_tile_data_getters_pinned() -> void:
+	# [type, name, short, fuel, def, atk, eva] as the pre-table match statements returned them.
+	var expected: Array = [
+		[0, "Open Plain", "PLN", 2, 5, 0, 0],
+		[1, "Transit Road", "ROD", 1, 0, 5, 0],
+		[2, "River Ford", "RIV", 4, -15, -15, -10],
+		[3, "Trench Timber", "TRN", 3, 15, 5, 8],
+		[4, "Fortified City", "CTY", 2, 25, 10, 10],
+		[5, "Mountain Crag", "MTN", 5, 30, 15, 10],
+	]
+	_check(expected.size() == GridTileData.TerrainType.size(), "every terrain type is pinned")
+	for e: Array in expected:
+		var td := GridTileData.new(Vector2i.ZERO, e[0], 1)
+		var got := [e[0], td.get_terrain_name(), td.get_terrain_short_code(), td.get_base_fuel_cost(),
+			td.get_defense_modifier_pct(), td.get_attack_modifier_pct(), td.get_evasion_modifier_pct()]
+		_check(got == e, "tile getters for terrain %d unchanged (got %s)" % [e[0], got])
+	_check(GridTileData.new(Vector2i.ZERO, 0, 99).elevation == GridTileData.MAX_ELEVATION, "elevation clamps to MAX_ELEVATION")
+
+func test_terrain_codes_and_colors() -> void:
+	var codes := {"P": 0, "D": 1, "R_D": 1, "r_d": 1, "R": 2, "F": 3, "C": 4, "M": 5, "X": 0, "": 0}
+	for k: String in codes:
+		_check(TerrainDefs.parse_code(k) == codes[k], "parse_code('%s') == %d" % [k, codes[k]])
+	# The renderer's former colour function, kept here as the oracle.
+	var bases := {0: [0.31, 0.37, 0.24], 1: [0.36, 0.35, 0.32], 3: [0.22, 0.30, 0.19], 4: [0.42, 0.40, 0.36], 5: [0.45, 0.43, 0.39]}
+	var bad := 0
+	for elev in range(0, GridTileData.MAX_ELEVATION + 1):
+		var tint: float = float(elev - 1) * 0.045
+		for t: int in bases:
+			var b: Array = bases[t]
+			if TerrainDefs.top_color(t, elev) != Color(b[0] + tint, b[1] + tint, b[2] + tint):
+				bad += 1
+		if TerrainDefs.top_color(2, elev) != Color(0.16, 0.33, 0.38):
+			bad += 1
+	_check(bad == 0, "terrain top colours unchanged (%d differ)" % bad)
+
+func test_map_definitions_validate() -> void:
+	for m: MapDefinition in GlobalState.maps:
+		var errs := m.validate()
+		_check(errs.is_empty(), "map %s validates (%s)" % [m.map_id, errs])
+	var bad := MapDefinition.new()
+	bad.width = 3
+	bad.height = 2
+	bad.terrain_codes = PackedStringArray(["P P Z"])
+	bad.elevation_rows = PackedStringArray(["1 1 9", "1 1 1"])
+	bad.objectives = [{"pos": Vector2i(5, 5)}]
+	bad.spawns = [{"pos": Vector2i(0, 0)}, {"pos": Vector2i(0, 0)}]
+	_check(bad.validate().size() >= 5, "validate() flags a broken map (%s)" % [bad.validate()])
+	_check(bad.terrain_at(2, 1) == GridTileData.TerrainType.PLAIN and bad.elevation_at(9, 9) == 1, "missing cells use the loader defaults")
+
+func _repeat(s: String, n: int) -> PackedStringArray:
+	var out := PackedStringArray()
+	for i in n:
+		out.append(s)
+	return out
+
+func test_iso_key_round_trips() -> void:
+	var md := MapDefinition.new()
+	md.width = 48
+	md.height = 48
+	var rows := PackedStringArray()
+	for y in 48:
+		rows.append(" ".join(_repeat("1", 48)))
+	md.terrain_codes = PackedStringArray()
+	for i in 48:
+		md.terrain_codes.append(" ".join(_repeat("P", 48)))
+	md.elevation_rows = rows
+	md.objectives.append({"pos": Vector2i(0, 0)})
+	md.spawns = [{"chassis": "vanguard", "pos": Vector2i(1, 1), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(2, 2), "faction": 1}]
+	var gm := IsoGridMap.new()
+	gm.load_from_definition(md)
+	var seen := {}
+	var bad := 0
+	for y in 48:
+		for x in 48:
+			var k: int = gm._iso_key(Vector2i(x, y))
+			var s: int = k / gm.grid_width
+			var dx: int = k % gm.grid_width
+			if Vector2i(dx, s - dx) != Vector2i(x, y) or seen.has(k):
+				bad += 1
+			seen[k] = true
+	_check(bad == 0, "_iso_key encodes every tile of a 48x48 grid uniquely and decodes back (%d bad)" % bad)
+	gm.free()
+
+func test_screen_to_grid_round_trips() -> void:
+	var bad: Array = []
+	for mi in GlobalState.maps.size():
+		var gm := _grid(mi)
+		for c: Vector2i in gm.tiles.keys():
+			var got := gm.screen_to_grid(gm.grid_to_screen(c))
+			if got != c:
+				bad.append([mi, c, got])
+		gm.free()
+	_check(bad.is_empty(), "screen_to_grid(grid_to_screen(c)) == c on every shipped map (%d bad, first %s)" % [bad.size(), bad.slice(0, 1)])
+
+func test_overlay_hover_does_not_rebuild_base_list() -> void:
+	var bf := await _spawn_iron_bridge()
+	var gm := bf.grid_map
+	await get_tree().process_frame
+	var occ: Dictionary = {}
+	var u := _unit("vanguard", MechData.Faction.PLAYER, Vector2i(2, 3), "o")
+	gm.compute_reachable_tiles(u, occ)
+	gm.queue_redraw()
+	await get_tree().process_frame
+	var keys_before: PackedInt32Array = gm._base_keys
+	var sorted_ok := true
+	for i in range(1, keys_before.size()):
+		sorted_ok = sorted_ok and keys_before[i - 1] < keys_before[i]
+	_check(sorted_ok and keys_before.size() >= gm.reachable_info.size(), "base overlay keys are sorted, unique and cover the reachable set")
+	for c in [Vector2i(0, 0), Vector2i(7, 5), Vector2i(2, 3), Vector2i(-1, -1)]:
+		gm.hovered_coords = c
+		gm.queue_redraw()
+		await get_tree().process_frame
+		_check(not gm._base_dirty and gm._base_keys == keys_before, "hovering %s leaves the cached base list alone" % [c])
+		_check(gm._extra_keys.size() <= 2, "at most two extra overlay keys (got %d)" % gm._extra_keys.size())
+	bf.queue_free()
+	await get_tree().process_frame
+
+## Points the (headless) mouse at tile `c` so Battlefield's click path, which reads the live mouse
+## position, can land on the map: the camera is moved so that tile sits under the viewport origin.
+func _aim_mouse_at_tile(bf: Battlefield, c: Vector2i) -> void:
+	var world := bf.grid_map.to_global(bf.grid_map.grid_to_screen(c))
+	var vp := bf.get_viewport().get_visible_rect().size
+	bf.camera.position = world + vp / 2.0 / bf.camera.zoom.x
+	await get_tree().process_frame
+
+func _click_event(pos: Vector2) -> InputEventMouseButton:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	ev.position = pos
+	return ev
+
+func _hotspot_rect(ov: UIOverlay, id: String) -> Rect2:
+	for sp in ov.root_ctrl.hot._spots:
+		if sp["id"] == id:
+			return sp["rect"]
+	return Rect2()
+
+func test_modal_input_gating() -> void:
+	var bf := await _spawn_iron_bridge()
+	var ov := bf.ui_overlay
+	var clicks: Array = []
+	bf.grid_map.tile_clicked.connect(func(c): clicks.append(c))
+	await _aim_mouse_at_tile(bf, Vector2i(3, 3))
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	# Control: with the pointer on the map and not over the HUD, a click reaches the map
+	ov.root_ctrl.hot.hovered = ""
+	bf._unhandled_input(_click_event(Vector2(300, 300)))
+	_check(clicks.size() == 1, "control: a click off the HUD reaches the map (got %d)" % clicks.size())
+	# (1) a click over a HUD panel (hotspot BLOCKER) is not a map click
+	var top := _hotspot_rect(ov, UIOverlay.BLOCKER)
+	_check(top.size != Vector2.ZERO, "precondition: a HUD panel hotspot exists")
+	var ev := _click_event(top.get_center() * ov.root_ctrl.px_scale)
+	ov._input(ev)   # the overlay marks it hovered (and handled)
+	_check(ov.pointer_over_hud(), "the overlay sees the pointer over a HUD panel")
+	bf._unhandled_input(ev)
+	_check(clicks.size() == 1, "a click on a HUD panel does not reach grid_map.handle_click (got %d)" % clicks.size())
+	# (2) END TURN while the manual is open does not change the phase
+	ov.root_ctrl.hot.hovered = ""
+	var end_r := _hotspot_rect(ov, "end_turn")
+	_check(end_r.size != Vector2.ZERO, "precondition: END TURN hotspot exists")
+	ov.show_manual_modal = true
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	_check(not bf.camera.input_enabled, "the camera is gated while the manual is open")
+	var phase_before := GlobalState.current_phase
+	var click := _click_event(end_r.get_center() * ov.root_ctrl.px_scale)
+	ov._input(click)
+	bf._unhandled_input(click)
+	_check(GlobalState.current_phase == phase_before, "END TURN click while the manual is open changes nothing")
+	bf._on_end_turn_requested()
+	_check(GlobalState.current_phase == phase_before and not bf.can_command(), "can_command() is false and END TURN refused while the manual is open")
+	_check(clicks.size() == 1, "no map click reached the map while the manual was open")
+	# (3) game over with the manual open closes the manual and leaves the debrief reachable
+	ov.trigger_game_over()
+	_check(not ov.show_manual_modal and ov.show_game_over_modal, "game over closes the manual and shows the debrief")
+	_check(not ov.toggle_manual() and not ov.show_manual_modal, "the manual cannot be reopened over the debrief")
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	_check(_hotspot_rect(ov, "debrief:1").size != Vector2.ZERO, "the debrief rows are hotspots after game over")
+	var fired: Array = []
+	ov.action_return_menu_requested.disconnect(bf._on_return_menu_requested)
+	ov.action_return_menu_requested.connect(func(): fired.append("menu"))
+	ov._activate("debrief:1")
+	_check(fired == ["menu"], "debrief:1 is activatable after game over with the manual open (fired %s)" % [fired])
+	bf._auto_advance_token += 1
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_recon_colors_cover_every_terrain() -> void:
+	for t: int in GridTileData.TerrainType.values():
+		_check(MainMenu.RECON_COLORS.has(t), "recon preview has a colour for terrain %d" % t)
+	for code in ["P", "D", "R_D", "r_d", "R", "F", "C", "M", "?"]:
+		_check(MainMenu.RECON_COLORS.has(TerrainDefs.parse_code(code)), "recon code %s resolves to a terrain colour" % code)
+	_check(TerrainDefs.parse_code("R_D") == GridTileData.TerrainType.ROAD, "the R_D alias renders as road in the recon map")
+
+# ---------------------------------------------------------------- review pass 2: safety claims
+## Every script variable of an object as {name: value}, containers shallow-copied.
+func _script_vars(obj: Object) -> Dictionary:
+	var out: Dictionary = {}
+	for prop in obj.get_property_list():
+		if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE and not String(prop["name"]).begins_with("_state_props"):
+			var v: Variant = obj.get(prop["name"])
+			if v is Array or v is Dictionary:
+				v = v.duplicate()
+			out[prop["name"]] = v
+	return out
+
+func _mech_snapshot(m: MechData) -> Dictionary:
+	var snap := _script_vars(m)
+	var abs_snap: Array = []
+	for ab in m.abilities:
+		abs_snap.append([ab, _script_vars(ab)])
+	snap["__abilities"] = abs_snap
+	return snap
+
+func test_forecast_and_pure_sim_never_mutate_walkers() -> void:
+	var atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var dfn := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	atk.current_armor -= 7
+	atk.current_energy -= 2
+	dfn.is_entrenched = true
+	_check(atk.abilities.size() > 0 and dfn.abilities.size() > 0, "both walkers carry abilities to snapshot")
+	var from := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 2)
+	var to := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.FOREST, 1)
+	var ctx := {"atk_allies_adj": 1, "def_allies_adj": 1, "is_pincer": false, "atk_suppression": 1}
+	var snap_a := _mech_snapshot(atk)
+	var snap_d := _mech_snapshot(dfn)
+	SkirmishEngine.clear_forecast_cache()
+	SkirmishEngine.compute_forecast(atk, dfn, from, to, ctx)
+	SkirmishEngine.forecast_shared(atk, dfn, from, to, ctx)
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to, false, true, ctx)
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to)   # the default must be a pure simulation too
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to, false, false, ctx)   # live dice, still no write-back
+	_check(_mech_snapshot(atk) == snap_a, "the attacker is unchanged by forecasts and non-applying simulations")
+	_check(_mech_snapshot(dfn) == snap_d, "the defender is unchanged by forecasts and non-applying simulations")
+	# the flipped default really does not apply, while an explicit true does
+	var hull := dfn.current_armor
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to)
+	_check(dfn.current_armor == hull, "resolve_skirmish defaults to apply_to_units = false")
+	SkirmishEngine.resolve_skirmish(atk, dfn, from, to, true)
+	_check(dfn.current_armor != hull, "apply_to_units = true still writes the result back")
+
+func test_forecast_cache_rotation_at_the_limit() -> void:
+	SkirmishEngine.clear_forecast_cache()
+	var limit := SkirmishForecast.FORECAST_CACHE_LIMIT
+	for i in limit:
+		SkirmishForecast._store([i], {"v": i})
+	_check(SkirmishForecast._forecast_cache.size() == limit and SkirmishForecast._forecast_old.is_empty(), "a full generation has not rotated yet")
+	SkirmishForecast._store([limit], {"v": limit})
+	_check(SkirmishForecast._forecast_old.size() == limit and SkirmishForecast._forecast_old.has([0]) and SkirmishForecast._forecast_old.has([limit - 1]),
+		"the full generation became the old one with every earlier entry intact")
+	_check(SkirmishForecast._forecast_cache.size() == 1 and SkirmishForecast._forecast_cache.has([limit]), "the new entry starts a fresh current generation")
+	SkirmishEngine.clear_forecast_cache()
+	_check(SkirmishForecast._forecast_cache.is_empty() and SkirmishForecast._forecast_old.is_empty(), "clear_forecast_cache empties both generations")
+
+## Pinned from the table at review time: effect_type -> [on_foe, {property: delta from a clean state}, soften token, status text].
+const SUPPORT_FIXTURE := {
+	"PROTECT_RICOCHET": [false, {"def_buff_pct": 35}, "krupp_plate", "DEF +35% // GLACIS ANGLING"],
+	"BULKHEAD_WALL": [false, {"def_buff_pct": 45}, "", "BULKHEAD DEPLOYED (+45% DEF)"],
+	"ANCHOR_BRACE": [false, {"def_buff_pct": 30, "acc_buff_pct": 20, "crit_buff_pct": 15}, "", "BRACED (+30% DEF / +CRIT)"],
+	"REACTIVE_SHIELD": [false, {"def_buff_pct": 20}, "ablative_shield", "REACTIVE SHIELD ARMED"],
+	"THRUSTER_EVADE": [false, {"eva_buff_pct": 30, "spd_buff_pct": 35}, "gyro_thruster", "EVA +30% // HASTE +35%"],
+	"RECON_LOCK": [false, {"acc_buff_pct": 35, "crit_buff_pct": 35, "atk_buff_pct": 20}, "", "TARGET LOCK (+35% CRIT/ACC)"],
+	"BALLISTIC_PLOT": [false, {"atk_buff_pct": 30, "crit_buff_pct": 25, "armor_pierce_bonus": 0.20}, "", "FIRE PLOT (+30% ATK / +AP)"],
+	"ECM_JAM": [true, {"acc_buff_pct": -30, "spd_buff_pct": -25, "def_buff_pct": -20}, "", "ENEMY JAMMED (-ACC/-SPD/-DEF)"],
+	"CMD_UPLINK": [false, {"atk_buff_pct": 25, "def_buff_pct": 25, "spd_buff_pct": 15, "acc_buff_pct": 15}, "", "HQ UPLINK (+25% ATK/DEF)"],
+}
+const BUFF_PROPS: Array[String] = ["atk_buff_pct", "def_buff_pct", "spd_buff_pct", "eva_buff_pct", "acc_buff_pct", "crit_buff_pct", "armor_pierce_bonus"]
+
+func test_every_support_effect_matches_the_pinned_fixture() -> void:
+	_check(SkirmishEngine.SUPPORT_EFFECTS.size() == SUPPORT_FIXTURE.size(), "the fixture covers every SUPPORT_EFFECTS row (%d vs %d)" % [SkirmishEngine.SUPPORT_EFFECTS.size(), SUPPORT_FIXTURE.size()])
+	for et in SkirmishEngine.SUPPORT_EFFECTS:
+		_check(SUPPORT_FIXTURE.has(et), "%s is pinned in the fixture" % et)
+		if not SUPPORT_FIXTURE.has(et):
+			continue
+		var fx: Array = SUPPORT_FIXTURE[et]
+		var sess := _flat_session("vanguard", "moloch")
+		var ab := CombatAbility.new("t_" + et, "T", "TACTIC", 0, 1.0, 0, 95, 0, 0.0, et)
+		var step := SkirmishEngine.TurnStep.new()
+		sess._resolve_support_tech(step, sess.atk_state, sess.def_state, ab)
+		var who: SkirmishEngine.CombatantState = sess.def_state if fx[0] else sess.atk_state
+		var other: SkirmishEngine.CombatantState = sess.atk_state if fx[0] else sess.def_state
+		for prop in BUFF_PROPS:
+			var want: float = float((fx[1] as Dictionary).get(prop, 0))
+			_check(is_equal_approx(float(who.get(prop)), want), "%s sets %s to %s (got %s)" % [et, prop, want, who.get(prop)])
+			_check(is_equal_approx(float(other.get(prop)), 0.0), "%s leaves the other side's %s alone" % [et, prop])
+		_check(sess.atk_state.pending_soften == fx[2], "%s soften token is '%s'" % [et, fx[2]])
+		_check(step.status_text == fx[3], "%s status text is pinned ('%s')" % [et, step.status_text])
+	# a presentation-free session skips text but applies the identical numbers
+	var quiet := _flat_session("vanguard", "moloch")
+	quiet.record_presentation = false
+	var q_step := SkirmishEngine.TurnStep.new()
+	quiet._resolve_support_tech(q_step, quiet.atk_state, quiet.def_state, CombatAbility.new("t_q", "T", "ARMOR", 0, 1.0, 0, 95, 0, 0.0, "BULKHEAD_WALL"))
+	_check(quiet.atk_state.def_buff_pct == 45 and q_step.status_text == "" and q_step.description == "", "record_presentation=false skips text but applies the effect")
+
+func _pct_figures(text: String) -> Array[int]:
+	var out: Array[int] = []
+	var re := RegEx.new()
+	re.compile("([+-])(\\d+)%")
+	for m in re.search_all(text):
+		out.append(int(m.get_string(2)) * (-1 if m.get_string(1) == "-" else 1))
+	return out
+
+func test_support_text_and_descriptions_match_the_mods() -> void:
+	for et in SkirmishEngine.SUPPORT_EFFECTS:
+		var fx: Dictionary = SkirmishEngine.SUPPORT_EFFECTS[et]
+		var mod_figs: Array[int] = []
+		for mod in fx["mods"]:
+			var v: float = float(mod[1]) * (100.0 if mod[0] == "armor_pierce_bonus" else 1.0)
+			var fig := roundi(v)
+			if not mod_figs.has(fig):
+				mod_figs.append(fig)
+		mod_figs.sort()
+		for fig in _pct_figures(String(fx["text"])):
+			_check(mod_figs.has(fig), "%s status text figure %+d%% is one of the mods %s" % [et, fig, mod_figs])
+		var matched := 0
+		for id in GlobalState.ability_catalog:
+			var ab: CombatAbility = GlobalState.ability_catalog[id]
+			if ab.effect_type != et:
+				continue
+			matched += 1
+			var desc_figs: Array[int] = []
+			for fig in _pct_figures(ab.description):
+				if not desc_figs.has(fig):
+					desc_figs.append(fig)
+			desc_figs.sort()
+			_check(desc_figs == mod_figs, "%s description figures %s equal the mods %s" % [id, desc_figs, mod_figs])
+		_check(matched > 0, "%s has a catalog ability" % et)
+func test_terrain_defs_invariants() -> void:
+	var letters := {}
+	var dup := 0
+	var bad_fuel := 0
+	for tname in GridTileData.TerrainType.keys():
+		var t: int = GridTileData.TerrainType[tname]
+		_check(TerrainDefs.TABLE.has(t), "terrain %s has a TerrainDefs row" % tname)
+		if not TerrainDefs.TABLE.has(t):
+			continue
+		var r: Dictionary = TerrainDefs.TABLE[t]
+		if int(r["fuel"]) < 1:
+			bad_fuel += 1
+		for l: String in r["letters"]:
+			if letters.has(l):
+				dup += 1
+			letters[l] = t
+	_check(TerrainDefs.TABLE.size() == GridTileData.TerrainType.size(), "no extra TerrainDefs rows")
+	_check(dup == 0, "map letters are unique across terrain rows (%d duplicates)" % dup)
+	_check(bad_fuel == 0, "every terrain costs at least 1 fuel")
+
+func _valid_two_tile_map() -> MapDefinition:
+	var g := MapDefinition.new()
+	g.map_id = "t"
+	g.width = 2
+	g.height = 1
+	g.terrain_codes = PackedStringArray(["P P"])
+	g.elevation_rows = PackedStringArray(["1 1"])
+	g.objectives = [{"pos": Vector2i(0, 0)}]
+	g.spawns = [{"chassis": "vanguard", "pos": Vector2i(0, 0), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(1, 0), "faction": 1}]
+	return g
+
+func test_map_validate_extended_rules() -> void:
+	_check(_valid_two_tile_map().validate().is_empty(), "minimal valid map is clean (%s)" % [_valid_two_tile_map().validate()])
+	var m := _valid_two_tile_map()
+	m.objectives = [{"pos": Vector2i(0, 0)}, {"pos": Vector2i(0, 0)}]
+	_check(not m.validate().is_empty(), "duplicate objectives flagged")
+	m = _valid_two_tile_map()
+	m.objectives = []
+	_check(not m.validate().is_empty(), "pitched battle without objectives flagged")
+	m = _valid_two_tile_map()
+	m.strategy_mode = MapDefinition.StrategyMode.OFFENSE
+	_check(not m.validate().is_empty(), "offense map without HQ flagged")
+	m.hq_positions = [Vector2i(1, 0)]
+	_check(m.validate().is_empty(), "offense map with an HQ is clean (%s)" % [m.validate()])
+	m = _valid_two_tile_map()
+	m.spawns[1]["faction"] = 2
+	_check(m.validate().size() >= 1, "spawn faction 2 flagged")
+	m = _valid_two_tile_map()
+	m.spawns[1]["chassis"] = "nope"
+	_check(m.validate().size() == 1, "unknown chassis flagged (%s)" % [m.validate()])
+	_check(m.validate(["nope", "vanguard"]).is_empty(), "known_chassis parameter overrides the catalog")
+	m = _valid_two_tile_map()
+	m.spawns[1]["faction"] = 0
+	_check(m.validate().size() == 1, "faction with zero spawns flagged (%s)" % [m.validate()])
+	m = _valid_two_tile_map()
+	m.width = 5000
+	m.height = 5000
+	_check(not m.validate().is_empty(), "map of 1<<24 tiles or more flagged")
+
+func test_visible_band_search_matches_brute_force() -> void:
+	var md := MapDefinition.new()
+	md.width = 48
+	md.height = 48
+	for y in 48:
+		md.terrain_codes.append(" ".join(_repeat("P", 48)))
+		var e := PackedStringArray()
+		for x in 48:
+			e.append(str((x * 7 + y * 3) % 5))
+		md.elevation_rows.append(" ".join(e))
+	md.objectives.append({"pos": Vector2i(0, 0)})
+	md.spawns = [{"chassis": "vanguard", "pos": Vector2i(1, 1), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(2, 2), "faction": 1}]
+	var gm := IsoGridMap.new()
+	add_child(gm)
+	gm.load_from_definition(md)
+	var all := {}
+	for c: Vector2i in gm.tiles.keys():
+		all[c] = {"fuel_spent": 1, "fuel_left": 0, "path": [c] as Array[Vector2i], "is_attack": false}
+	gm.reachable_info = all
+	gm._rebuild_base()
+	_check(gm._base_keys.size() == 48 * 48, "every tile is in the base list (%d)" % gm._base_keys.size())
+	var rects: Array[Rect2] = [
+		Rect2(-200, 300, 400, 200), Rect2(-2000, -2000, 8000, 8000), Rect2(900, 1200, 300, 250),
+		Rect2(-3000, 100, 500, 120), Rect2(0, 0, 50, 50), Rect2(-100, 2800, 600, 400)]
+	var narrower := false
+	for rect in rects:
+		var band: Vector2i = gm._visible_base_range(rect)
+		var from_band := {}
+		for i in range(band.x, band.y):
+			var c: Vector2i = gm._base_coords[i]
+			if rect.has_point(gm._tile_top[c]):
+				from_band[c] = true
+		var brute := {}
+		for c: Vector2i in gm.tiles.keys():
+			if rect.has_point(gm._tile_top[c]):
+				brute[c] = true
+		_check(from_band.size() == brute.size() and from_band.keys().all(func(c): return brute.has(c)),
+				"band search yields exactly the tiles inside %s (%d vs %d)" % [rect, from_band.size(), brute.size()])
+		narrower = narrower or (band.y - band.x) < gm._base_keys.size()
+	_check(narrower, "the band search skips tiles outside the view")
+	gm.queue_free()
+	await get_tree().process_frame
+
+# ---------------------------------------------------------------- architecture review pass 3: grid
+## The step-cost table is a process-lifetime static keyed on the walker's build. If a MechData field
+## changes the fuel rule, it must change the key, or every later search would read stale costs.
+func test_step_table_key_covers_fuel_rule_inputs() -> void:
+	var pairs: Array = []
+	for t in GridTileData.TerrainType.size():
+		pairs.append([GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.PLAIN, 1), GridTileData.new(Vector2i.ONE, t as GridTileData.TerrainType, 3)])
+		pairs.append([GridTileData.new(Vector2i.ZERO, t as GridTileData.TerrainType, 2), GridTileData.new(Vector2i.ONE, GridTileData.TerrainType.ROAD, 0)])
+	var covered := 0
+	for prop in MechData.new().get_property_list():
+		if not (int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE):
+			continue
+		var pname: String = prop["name"]
+		var base := _unit("goliath", MechData.Faction.PLAYER, Vector2i.ZERO, "k")
+		var mut := base.duplicate_mech()
+		var cur: Variant = mut.get(pname)
+		var changed: Variant = cur
+		match typeof(cur):
+			TYPE_INT: changed = cur + 1
+			TYPE_BOOL: changed = not cur
+		if changed == cur:
+			continue
+		mut.set(pname, changed)
+		var rule_changed := false
+		for pr in pairs:
+			if base.get_step_fuel_cost(pr[0], pr[1]) != mut.get_step_fuel_cost(pr[0], pr[1]):
+				rule_changed = true
+				break
+		if rule_changed:
+			covered += 1
+			_check(TerrainGrid.step_table_key(base) != TerrainGrid.step_table_key(mut), "MechData.%s changes step fuel, so it must be in the step-table key" % pname)
+	_check(covered >= 4, "the fuel rule reads at least fuel_usage, efficiency and both gears (%d found)" % covered)
+
+## A 7x1 corridor: the enemy at the far end has exactly one launch tile. Moving a friend onto it must
+## invalidate the selected walker's cached cost field (via the occupancy epoch), not just the plan.
+func test_strike_field_follows_occupancy_epoch() -> void:
+	var md := MapDefinition.new()
+	md.map_name = "CORRIDOR"
+	md.width = 7
+	md.height = 1
+	md.terrain_codes.append("P P P P P P P")
+	md.elevation_rows.append("0 0 0 0 0 0 0")
+	md.objectives.append({"pos": Vector2i(3, 0), "label": "MID", "owner": -1})
+	md.spawns = [
+		{"chassis": "vanguard", "callsign": "LEAD-1", "pos": Vector2i(0, 0), "faction": 0},
+		{"chassis": "vanguard", "callsign": "WING-2", "pos": Vector2i(1, 0), "faction": 0},
+		{"chassis": "vanguard", "callsign": "FOE-3", "pos": Vector2i(6, 0), "faction": 1},
+	]
+	GlobalState.maps.append(md)
+	GlobalState.selected_map_index = GlobalState.maps.size() - 1
+	var bf: Battlefield = load("res://scenes/Battlefield.tscn").instantiate()
+	add_child(bf)
+	await get_tree().process_frame
+	var lead := _unit_by_callsign(bf, "LEAD-1")
+	var wing := _unit_by_callsign(bf, "WING-2")
+	lead.mech_data.current_fuel = 2
+	bf._select_unit(lead)
+	var p1: StrikePlan = bf.strike_plan_for(Vector2i(6, 0))
+	_check(p1 != null and p1.launch == Vector2i(5, 0), "the far enemy's only launch tile is (5,0)")
+	var epoch_before: int = bf._strike_cache.field_key()[2]
+	bf.unit_container.move_unit(wing, Vector2i(5, 0))
+	var p2: StrikePlan = bf.strike_plan_for(Vector2i(6, 0))
+	_check(p2 != null and p2.severity == StrikePlan.NO_APPROACH, "a friend on the launch tile leaves no approach")
+	_check(bf._strike_cache.field_key()[2] > epoch_before, "the cost field was rebuilt for the new occupancy epoch")
+	var direct: StrikePlan = bf.grid_map.compute_strike_plan(lead.mech_data, Vector2i(6, 0), bf.unit_container.build_occupied_map(lead))
+	_check(_plan_diff(p2, direct) == "", "the cached-field plan equals a fresh targeted search")
+	bf.queue_free()
+	await get_tree().process_frame
+	GlobalState.maps.pop_back()
+	GlobalState.selected_map_index = 0
+
+## Dense random occupancy: launch tiles are often occupied, which the shipped spawn layouts rarely
+## exercise. The plan from a cost field must still equal the targeted search.
+func test_strike_cost_field_matches_targeted_search_dense() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	var codes := ["P", "P", "D", "F", "R", "C", "M"]
+	var diffs: Array = []
+	var plans := 0
+	for mi in 6:
+		var md := MapDefinition.new()
+		md.map_name = "DENSE %d" % mi
+		md.width = 14
+		md.height = 12
+		for y in 12:
+			var t := PackedStringArray()
+			var e := PackedStringArray()
+			for x in 14:
+				t.append(codes[rng.randi_range(0, codes.size() - 1)])
+				e.append(str(rng.randi_range(0, 3)))
+			md.terrain_codes.append(" ".join(t))
+			md.elevation_rows.append(" ".join(e))
+		md.objectives.append({"pos": Vector2i(7, 6), "label": "OBJ", "owner": -1})
+		var gm := IsoGridMap.new()
+		add_child(gm)
+		gm.load_from_definition(md)
+		var occ: Dictionary = {}
+		var mechs: Array[MechData] = []
+		var n := 0
+		while n < 40:
+			var pos := Vector2i(rng.randi_range(0, 13), rng.randi_range(0, 11))
+			if occ.has(pos):
+				continue
+			var m := _unit(ALL_CHASSIS[n % ALL_CHASSIS.size()], MechData.Faction.PLAYER if n % 2 == 0 else MechData.Faction.AI, pos, "d%d" % n)
+			occ[pos] = m
+			mechs.append(m)
+			n += 1
+		for u in mechs:
+			if u.faction != MechData.Faction.PLAYER:
+				continue
+			var others: Dictionary = occ.duplicate()
+			others.erase(u.grid_pos)
+			for fuel in [u.max_fuel, 3]:
+				for moved in [false, true]:
+					u.current_fuel = fuel
+					u.has_moved = moved
+					var field: Dictionary = gm.strike_cost_field(u, others)
+					for t in mechs:
+						if t.faction == u.faction:
+							continue
+						var p1: StrikePlan = gm.compute_strike_plan(u, t.grid_pos, others)
+						var p2: StrikePlan = gm.compute_strike_plan(u, t.grid_pos, others, field)
+						plans += 1
+						var d := _plan_diff(p1, p2)
+						if d != "":
+							diffs.append([mi, u.grid_pos, t.grid_pos, d])
+		gm.queue_free()
+	_check(plans > 1000, "dense strike-field comparison covered plans (%d)" % plans)
+	_check(diffs.is_empty(), "dense occupancy: plan with a cost field equals the targeted search (%d diffs, first %s)" % [diffs.size(), diffs.slice(0, 1)])
+## record_presentation only adds presentation data: the fight itself is identical with and without it.
+func test_record_presentation_does_not_change_the_fight() -> void:
+	var pairs := [["vanguard", "moloch"], ["falke", "kommandant"], ["goliath", "donner"], ["kommandant", "falke"], ["donner", "vanguard"]]
+	var terrains := [GridTileData.TerrainType.PLAIN, GridTileData.TerrainType.MOUNTAIN]
+	var ctxs := [{}, {"atk_allies_adj": 1, "def_allies_adj": 1, "is_pincer": true, "atk_suppression": 1}]
+	var step_fields := ["actor_side", "ability_id", "damage_dealt", "is_miss", "is_crit", "escaped", "escape_failed",
+		"atk_hp_after", "def_hp_after", "atk_en_after", "def_en_after"]
+	for pair in pairs:
+		for terr in terrains:
+			for ci in ctxs.size():
+				var ctx: Dictionary = ctxs[ci]
+				var ft := GridTileData.new(Vector2i(3, 2), terr, 1)
+				var tt := GridTileData.new(Vector2i(4, 2), terr, 1)
+				var out: Array = []
+				for rec in [true, false]:
+					var a := GlobalState.create_mech_instance(pair[0], MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+					var d := GlobalState.create_mech_instance(pair[1], MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+					out.append(SkirmishEngine.resolve_skirmish(a, d, ft, tt, false, true, ctx, rec))
+				var r1: SkirmishEngine.SkirmishResult = out[0]
+				var r2: SkirmishEngine.SkirmishResult = out[1]
+				var label := "%s/%s terrain %d ctx %d" % [pair[0], pair[1], terr, ci]
+				_check(r1.total_dmg_to_defender == r2.total_dmg_to_defender and r1.total_dmg_to_attacker == r2.total_dmg_to_attacker, "totals equal: " + label)
+				_check(r1.attacker_won_clash == r2.attacker_won_clash and r1.attacker_destroyed == r2.attacker_destroyed
+					and r1.defender_destroyed == r2.defender_destroyed, "outcome flags equal: " + label)
+				_check(r1.first_striker == r2.first_striker and r1.atk_effective_speed == r2.atk_effective_speed
+					and r1.def_effective_speed == r2.def_effective_speed and r1.rounds_fought == r2.rounds_fought, "initiative equal: " + label)
+				_check(r1.tactical_tags == r2.tactical_tags, "tactical tags equal: " + label)
+				_check(r1.steps.size() == r2.steps.size(), "step count equal: " + label)
+				if r1.steps.size() == r2.steps.size():
+					for i in r1.steps.size():
+						for f in step_fields:
+							_check(r1.steps[i].get(f) == r2.steps[i].get(f), "step %d %s equal: %s" % [i, f, label])
+
+## A centre request during the AI phase recentres the camera (killing the AI's pan) and the phase still
+## completes: the AI turn runs on a timer, not on the pan tween's callback.
+func test_center_request_during_ai_phase_does_not_stall() -> void:
+	var bf := await _spawn_iron_bridge()
+	bf._begin_ai_phase()
+	await get_tree().create_timer(0.7).timeout   # the first AI walker's camera pan is in flight
+	var turn_before := GlobalState.turn_number
+	bf._on_center_requested()
+	var modal: BattleScreen = bf.ui_overlay.skirmish_modal
+	var waited := 0.0
+	var done := false
+	while waited < 60.0:
+		if modal.visible:
+			if modal._all_steps_done:
+				modal._on_confirm_pressed()
+			else:
+				modal._on_skip_pressed()
+		var ph := GlobalState.current_phase
+		if ph == GlobalState.TurnPhase.PLAYER_PHASE or ph == GlobalState.TurnPhase.GAME_OVER:
+			done = true
+			break
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	_check(done, "the AI phase completes after a centre request mid-pan (waited %.2fs)" % waited)
+	_check(GlobalState.turn_number > turn_before or GlobalState.current_phase == GlobalState.TurnPhase.GAME_OVER, "the turn counter advanced or the mission ended (phase %d, turn %d)" % [GlobalState.current_phase, GlobalState.turn_number])
+	bf.queue_free()
+	await get_tree().process_frame
+
+## An ENGAGE whose target is gone continues through _after(); the continuation path advances the phase.
+func test_ai_continuation_advances_the_phase() -> void:
+	var bf := await _spawn_iron_bridge()
+	GlobalState.set_phase(GlobalState.TurnPhase.AI_PHASE)
+	bf._ai_queue.clear()
+	var turn_before := GlobalState.turn_number
+	bf._after(0.05, bf._process_next_ai_unit)
+	await get_tree().create_timer(0.3).timeout
+	_check(GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and GlobalState.turn_number == turn_before + 1, "an after()-scheduled continuation with an empty queue finishes the AI phase")
+	bf.queue_free()
+	await get_tree().process_frame
+
+## HUD fuel text quotes the real (fuel_usage-multiplied) numbers.
+func test_hud_fuel_text_is_multiplied() -> void:
+	var bf := await _spawn_iron_bridge()
+	var river := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.RIVER, 1)
+	var ov := bf.ui_overlay
+	ov.hovered_tile = river
+	ov.step_cost_mech = null
+	var fu := RulesContent.default_fuel_usage()
+	var row_text := ""
+	for r in ov._terrain_rows():
+		if r[0] == "FUEL COST":
+			row_text = r[1]
+	_check(row_text == "%d/TILE" % (river.get_base_fuel_cost() * fu), "river FUEL COST row is multiplied by fuel_usage (got %s)" % row_text)
+	var falke: MechData = GlobalState.chassis_catalog["falke"]
+	var goliath: MechData = GlobalState.chassis_catalog["goliath"]
+	var donner: MechData = GlobalState.chassis_catalog["donner"]
+	_check(("RIVER -%d" % (2 * falke.fuel_usage)) in ov._gear_note(falke), "falke gear note: %s" % ov._gear_note(falke))
+	_check(("MTN -%d" % (2 * donner.fuel_usage)) in ov._gear_note(donner) and ("CLIMB -%d" % donner.fuel_usage) in ov._gear_note(donner), "donner gear note: %s" % ov._gear_note(donner))
+	_check(("%+d FUEL OFF-ROAD" % (goliath.fuel_efficiency_mod * goliath.fuel_usage)) in ov._gear_note(goliath), "goliath gear note: %s" % ov._gear_note(goliath))
+	bf.queue_free()
+	await get_tree().process_frame
+
+## The river advisory formats its fuel figure and keeps its literal percent signs: a "%" inside a
+## format string must be escaped, or the operator raises a formatting error and the tip ships unformatted.
+func test_river_tip_formats_fuel_and_percentages() -> void:
+	var river: Dictionary = TerrainDefs.TABLE[GridTileData.TerrainType.RIVER]
+	var river_fuel: int = RulesContent.terrain_fuel(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.RIVER, 1), RulesContent.default_fuel_usage())
+	_check(river_fuel == int(river["fuel"]) * MechData.DEFAULT_FUEL_USAGE, "the catalog's shared fuel usage is MechData.DEFAULT_FUEL_USAGE")
+	var expected := "Rivers cost %d Fuel and impose %+d%% ATK / %+d%% DEF / %+d%% EVA" % [river_fuel, int(river["atk"]), int(river["def"]), int(river["eva"])]
+	_check(expected.contains("-15% ATK / -15% DEF / -10% EVA"), "the river modifiers read as the shipped table says")
+	var found := false
+	for m in GlobalState.maps:
+		if m.tactical_tip.contains(expected):
+			found = true
+	_check(found, "a briefing tip states the river fuel cost and its combat modifiers verbatim")

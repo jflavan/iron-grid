@@ -1,5 +1,5 @@
 class_name MainMenu
-extends Control
+extends CrtScreen
 
 ## Command HQ: theater select with briefing and recon map, plus the Hangar Codex (6 chassis), and
 ## the Rules of Engagement page (RulesContent) opened from the header.
@@ -10,32 +10,39 @@ extends Control
 
 const HANGAR_W := 300       # right column width (virtual px); fits two of the largest sprites side by side
 const RECON_CELL := Vector2i(14, 10)
+## Map-preview colour of each terrain type (elevation lightens it).
+const RECON_COLORS := {
+	GridTileData.TerrainType.PLAIN: Color(0.30, 0.36, 0.24),
+	GridTileData.TerrainType.ROAD: Color(0.42, 0.40, 0.36),
+	GridTileData.TerrainType.RIVER: Color(0.16, 0.36, 0.44),
+	GridTileData.TerrainType.FOREST: Color(0.20, 0.28, 0.17),
+	GridTileData.TerrainType.CITY: Color(0.55, 0.50, 0.38),
+	GridTileData.TerrainType.MOUNTAIN: Color(0.50, 0.48, 0.44),
+}
 const RULES_LIST_W := 176   # chapter list column width (virtual px)
 const RULES_PAD := 10       # inner padding of the rules panels
 const RULES_BODY_TOP := 26  # first block's offset below the body panel's top (title row above it)
 const RULES_ROW := 14       # chapter list row pitch
 
-var selected_map_idx: int = 0
+## The theatre the cursor is on: GlobalState's selection, read through (Battlefield loads it from there).
+var selected_map_idx: int:
+	get: return GlobalState.selected_map_index
 var selected_chassis_idx: int = 0
-var _chassis_keys: Array[String] = ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+var _chassis_keys: Array[String] = ChassisCatalog.ORDER
 var _anim_time: float = 0.0
-var _scale: int = 2
-var _hot := CrtHotspots.new()
 var _stat_max := {"hull": 1, "en": 1, "armor": 1, "fire": 1, "spd": 1, "fuel": 1}
 var show_rules: bool = false
 var rules_chapter: int = 0
 var _rules: Array[Dictionary] = []
 var _rules_cache: Dictionary = {}   # "chapter:width" -> laid-out blocks (content is fixed while the menu lives)
-# Drawn on change, not every frame: input and selection set _dirty; the hangar's idle sprites and the
+# Drawn on change, not every frame: input and selection set dirty; the hangar's idle sprites and the
 # launch blink redraw when their frame actually steps (_anim_key).
-var _dirty: bool = true
 var _anim_key := Vector3i(-1, -1, -1)
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	selected_map_idx = GlobalState.selected_map_index
 	for key in _chassis_keys:
 		var m: MechData = GlobalState.chassis_catalog[key]
 		_stat_max["hull"] = maxi(_stat_max["hull"], m.max_armor)
@@ -54,9 +61,9 @@ func _process(delta: float) -> void:
 		var key := Vector3i(MechSpriteBank.idle_frame(chassis, t_ms), MechSpriteBank.idle_frame(chassis, t_ms + 420.0), int(_anim_time / 0.5) % 2)
 		if key != _anim_key:
 			_anim_key = key
-			_dirty = true
-	if _dirty:
-		_dirty = false
+			dirty = true
+	if dirty:
+		dirty = false
 		queue_redraw()
 
 # ---------------------------------------------------------------- input
@@ -85,8 +92,6 @@ func _key_action(keycode: int) -> String:
 	match keycode:
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 			return "launch"
-		KEY_1, KEY_2, KEY_3:
-			return "map:%d" % (keycode - KEY_1)
 		KEY_UP:
 			return "map:%d" % (selected_map_idx - 1)
 		KEY_DOWN:
@@ -97,23 +102,21 @@ func _key_action(keycode: int) -> String:
 			return "chassis:%d" % (selected_chassis_idx + 1)
 		KEY_R:
 			return "rules"
+	if keycode >= KEY_1 and keycode < KEY_1 + GlobalState.maps.size():
+		return "map:%d" % (keycode - KEY_1)
 	return ""
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
-		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
-		if id != _hot.hovered:
-			_dirty = true
-		_hot.hovered = id
-		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if _hot.hovered != "" else Control.CURSOR_ARROW
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
+		track_pointer(event)
+	else:
+		var id := clicked_id(event)
 		if id != "":
 			_activate(id)
 			accept_event()
 
 func _activate(id: String) -> void:
-	_dirty = true
+	dirty = true
 	if id.begins_with("map:"):
 		_select_map(int(id.substr(4)))
 	elif id.begins_with("chassis:"):
@@ -139,7 +142,6 @@ func _select_map(i: int) -> void:
 	if i < 0 or i >= GlobalState.maps.size() or i == selected_map_idx:
 		return
 	SoundManager.play("ui_click")
-	selected_map_idx = i
 	GlobalState.selected_map_index = i
 
 func _select_chassis(i: int) -> void:
@@ -151,22 +153,21 @@ func _select_chassis(i: int) -> void:
 
 func _on_launch_pressed() -> void:
 	SoundManager.play("ui_confirm")
-	GlobalState.selected_map_index = selected_map_idx
-	get_tree().change_scene_to_file("res://scenes/Battlefield.tscn")
+	get_tree().change_scene_to_file(GlobalState.BATTLEFIELD_SCENE)
 
 # ---------------------------------------------------------------- drawing
 func _row_color(id: String, selected: bool) -> Color:
-	if _hot.hovered == id:
+	if hot.hovered == id:
 		return CrtUI.C_CURSOR
 	return CrtUI.C_NAME if selected else CrtUI.C_NUM
 
 func _draw() -> void:
 	var vp: Vector2 = get_viewport_rect().size
 	draw_rect(Rect2(Vector2.ZERO, vp), CrtUI.C_SCREEN)
-	_scale = CrtUI.pixel_scale(vp)
-	var v := CrtUI.virtual_size(vp, _scale)
-	CrtUI.begin(self, _scale)
-	_hot.clear()
+	px_scale = CrtUI.pixel_scale(vp)
+	var v := CrtUI.virtual_size(vp, px_scale)
+	CrtUI.begin(self, px_scale)
+	hot.clear()
 	if show_rules:
 		_draw_rules(v)
 		return
@@ -175,21 +176,22 @@ func _draw() -> void:
 	CrtUI.panel(self, Rect2(6, 6, v.x - 12, 30))
 	CrtUI.text(self, "OPERATION: IRON GRID", Vector2(16, 12), CrtUI.C_NAME)
 	CrtUI.text(self, "DIESELPUNK ISOMETRIC TACTICAL WARFARE // TURN-BASED RPG COMBAT ENGINE", Vector2(16, 23), CrtUI.C_LABEL_DIM)
-	var exit_r := Rect2(v.x - 66, 9, 54, 12)
-	CrtUI.text_right(self, "EXIT", v.x - 16, 12, _row_color("exit", false))
-	if _hot.hovered == "exit":
-		CrtUI.cursor(self, Vector2(v.x - 16 - PixelFont.text_width("EXIT") - 10, 12))
-	_hot.add("exit", exit_r)
+	_link("exit", "EXIT", v.x - 16, 12, Rect2(v.x - 66, 9, 54, 12))
 
 	var rules_lbl := "RULES OF ENGAGEMENT [R]"
 	var rules_right := v.x - 16 - PixelFont.text_width("EXIT") - 24
-	CrtUI.text_right(self, rules_lbl, rules_right, 12, _row_color("rules", false))
-	if _hot.hovered == "rules":
-		CrtUI.cursor(self, Vector2(rules_right - PixelFont.text_width(rules_lbl) - 10, 12))
-	_hot.add("rules", Rect2(rules_right - PixelFont.text_width(rules_lbl) - 12, 9, PixelFont.text_width(rules_lbl) + 16, 12))
+	_link("rules", rules_lbl, rules_right, 12, Rect2(rules_right - PixelFont.text_width(rules_lbl) - 12, 9, PixelFont.text_width(rules_lbl) + 16, 12))
 
 	_draw_theaters(Rect2(6, 40, v.x - 16 - HANGAR_W, v.y - 46))
 	_draw_hangar(Rect2(v.x - 6 - HANGAR_W, 40, HANGAR_W, v.y - 46))
+
+## A right-aligned header link: its label ending at `right_x`, the cursor beside it while hovered, and
+## `hit` registered as its hotspot.
+func _link(id: String, label: String, right_x: float, y: float, hit: Rect2) -> void:
+	CrtUI.text_right(self, label, right_x, y, _row_color(id, false))
+	if hot.hovered == id:
+		CrtUI.cursor(self, Vector2(right_x - PixelFont.text_width(label) - 10, y))
+	hot.add(id, hit)
 
 func _draw_theaters(p: Rect2) -> void:
 	CrtUI.panel(self, p)
@@ -203,7 +205,7 @@ func _draw_theaters(p: Rect2) -> void:
 		CrtUI.text(self, "%d. %s" % [i + 1, m.map_name], Vector2(x + 12, y), _row_color(id, i == selected_map_idx))
 		if i == selected_map_idx:
 			CrtUI.cursor(self, Vector2(x + 2, y))
-		_hot.add(id, Rect2(x, y - 3, 200, 14))
+		hot.add(id, Rect2(x, y - 3, 200, 14))
 
 	var map_def: MapDefinition = GlobalState.maps[selected_map_idx]
 	var recon := Rect2(right - (map_def.width * RECON_CELL.x + 12), 46, map_def.width * RECON_CELL.x + 12, map_def.height * RECON_CELL.y + 24)
@@ -227,11 +229,11 @@ func _draw_theaters(p: Rect2) -> void:
 	CrtUI.paragraph(self, map_def.tactical_tip, Vector2(x, y), w, CrtUI.C_LABEL, max_y)
 
 	CrtUI.panel(self, launch)
-	var blink := int(_anim_time / 0.5) % 2 == 0 or _hot.hovered == "launch"
+	var blink := int(_anim_time / 0.5) % 2 == 0 or hot.hovered == "launch"
 	if blink:
 		CrtUI.cursor(self, launch.position + Vector2(8, 9))
-	CrtUI.text(self, "LAUNCH OPERATION [ENTER]", launch.position + Vector2(20, 9), CrtUI.C_CURSOR if _hot.hovered == "launch" else CrtUI.C_NAME)
-	_hot.add("launch", launch)
+	CrtUI.text(self, "LAUNCH OPERATION [ENTER]", launch.position + Vector2(20, 9), CrtUI.C_CURSOR if hot.hovered == "launch" else CrtUI.C_NAME)
+	hot.add("launch", launch)
 
 func _draw_recon(r: Rect2, map_def: MapDefinition) -> void:
 	CrtUI.frame(self, r)
@@ -239,19 +241,8 @@ func _draw_recon(r: Rect2, map_def: MapDefinition) -> void:
 	var ox := r.position.x + 6
 	var oy := r.position.y + 18
 	for y in map_def.height:
-		var t_row := map_def.terrain_codes[y].split(" ", false)
-		var e_row := map_def.elevation_rows[y].split(" ", false)
 		for x in map_def.width:
-			var code: String = t_row[x] if x < t_row.size() else "P"
-			var elev: int = int(e_row[x]) if x < e_row.size() else 1
-			var col := Color(0.30, 0.36, 0.24)
-			match code:
-				"R": col = Color(0.16, 0.36, 0.44)
-				"D": col = Color(0.42, 0.40, 0.36)
-				"F": col = Color(0.20, 0.28, 0.17)
-				"C": col = Color(0.55, 0.50, 0.38)
-				"M": col = Color(0.50, 0.48, 0.44)
-			col = col.lightened(float(elev - 1) * 0.08)
+			var col: Color = RECON_COLORS[map_def.terrain_at(x, y)].lightened(float(map_def.elevation_at(x, y) - 1) * 0.08)
 			draw_rect(Rect2(ox + x * RECON_CELL.x, oy + y * RECON_CELL.y, RECON_CELL.x - 1, RECON_CELL.y - 1), col)
 	for sp in map_def.spawns:
 		var pos: Vector2i = sp["pos"]
@@ -275,7 +266,7 @@ func _draw_hangar(p: Rect2) -> void:
 		CrtUI.text(self, CrtUI.fit(ch.callsign, col_w - 12), Vector2(cx + 10, cy), _row_color(id, i == selected_chassis_idx))
 		if i == selected_chassis_idx:
 			CrtUI.cursor(self, Vector2(cx, cy))
-		_hot.add(id, Rect2(cx, cy - 2, col_w, CrtUI.ROW))
+		hot.add(id, Rect2(cx, cy - 2, col_w, CrtUI.ROW))
 
 	var mech: MechData = GlobalState.chassis_catalog[_chassis_keys[selected_chassis_idx]]
 	# Portrait: one cell per livery, each as large as the biggest sprite, so mechs never overlap.
@@ -284,8 +275,8 @@ func _draw_hangar(p: Rect2) -> void:
 	CrtUI.frame(self, port)
 	var gap := (w - cell.x * 2.0) / 3.0
 	var t_ms := _anim_time * 1000.0
-	CrtUI.mech(self, mech.chassis_id, MechData.Faction.PLAYER, Rect2(x + gap, port.position.y + 4, cell.x, cell.y), false, t_ms, _scale)
-	CrtUI.mech(self, mech.chassis_id, MechData.Faction.AI, Rect2(x + gap * 2 + cell.x, port.position.y + 4, cell.x, cell.y), true, t_ms + 420.0, _scale)
+	CrtUI.mech(self, mech.chassis_id, MechData.Faction.PLAYER, Rect2(x + gap, port.position.y + 4, cell.x, cell.y), false, t_ms, px_scale)
+	CrtUI.mech(self, mech.chassis_id, MechData.Faction.AI, Rect2(x + gap * 2 + cell.x, port.position.y + 4, cell.x, cell.y), true, t_ms + 420.0, px_scale)
 
 	var y := port.end.y + 6
 	CrtUI.text(self, CrtUI.fit("%s // %s" % [mech.unit_name, mech.chassis_class], w), Vector2(x, y), CrtUI.C_NAME)
@@ -341,10 +332,7 @@ func _draw_rules(v: Vector2) -> void:
 	CrtUI.text(self, "HOW THE BATTLE WORKS // FIELD TIPS", hdr.position + Vector2(10, 17), CrtUI.C_LABEL_DIM)
 	var back_lbl := "[ESC] COMMAND HQ"
 	var back_right := hdr.end.x - 10
-	CrtUI.text_right(self, back_lbl, back_right, hdr.position.y + 6, _row_color("rules_back", false))
-	if _hot.hovered == "rules_back":
-		CrtUI.cursor(self, Vector2(back_right - PixelFont.text_width(back_lbl) - 10, hdr.position.y + 6))
-	_hot.add("rules_back", Rect2(back_right - PixelFont.text_width(back_lbl) - 12, hdr.position.y + 3, PixelFont.text_width(back_lbl) + 14, 12))
+	_link("rules_back", back_lbl, back_right, hdr.position.y + 6, Rect2(back_right - PixelFont.text_width(back_lbl) - 12, hdr.position.y + 3, PixelFont.text_width(back_lbl) + 14, 12))
 
 	var lst: Rect2 = lay["list"]
 	CrtUI.panel(self, lst)
@@ -356,7 +344,7 @@ func _draw_rules(v: Vector2) -> void:
 		CrtUI.text(self, "%d %s" % [i + 1, _rules[i]["title"]], Vector2(lx + 12, y), _row_color(id, i == rules_chapter))
 		if i == rules_chapter:
 			CrtUI.cursor(self, Vector2(lx + 2, y))
-		_hot.add(id, Rect2(lst.position.x + 2, y - 3, lst.size.x - 4, RULES_ROW))
+		hot.add(id, Rect2(lst.position.x + 2, y - 3, lst.size.x - 4, RULES_ROW))
 	CrtUI.paragraph(self, "UP/DOWN OR 1-%d: CHAPTER  ESC: BACK" % _rules.size(), Vector2(lx, lst.end.y - 28), lst.size.x - 2 * RULES_PAD, CrtUI.C_LABEL_DIM)
 
 	var body: Rect2 = lay["body"]
@@ -381,7 +369,7 @@ func _draw_rules(v: Vector2) -> void:
 				y += CrtUI.LINE
 		y += RulesContent.BLOCK_GAP
 
-## A chapter's blocks wrapped / measured for `inner_w`, cached: _draw runs every frame.
+## A chapter's blocks wrapped / measured for `inner_w`, cached: the menu redraws only on change (see _draw's dirty gate).
 ## Each item is {"rows", "xs"} for a table or {"lines", "col"} for text.
 func _rules_render(chapter: int, inner_w: float) -> Array:
 	var key := "%d:%d" % [chapter, int(inner_w)]

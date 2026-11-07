@@ -37,7 +37,7 @@ static func impact_time(card_id: String) -> float:
 static func duration(card_id: String) -> float:
 	return impact_time(card_id) + float(_p(card_id)["tail"])
 
-static func run(stage: BattleStage, a: Dictionary, d: Dictionary, card_id: String, t: float, hit: bool = true) -> void:
+static func run(stage: BattleStage, a: MechView, d: MechView, card_id: String, t: float, hit: bool = true) -> void:
 	var p := _p(card_id)
 	var fire := fire_time(card_id)
 	var imp := impact_time(card_id)
@@ -72,28 +72,28 @@ static func recoil_pose(dt: float) -> String:
 		return "recoil3"
 	return "brace"
 
-static func hit_reaction(_stage: BattleStage, d: Dictionary, dt: float, size: float = 1.0) -> void:
+static func hit_reaction(_stage: BattleStage, d: MechView, dt: float, size: float = 1.0) -> void:
 	if dt < 0.0:
 		return
 	if dt < 0.24 and int(dt / 0.045) % 2 == 0:
-		d["white"] = true
+		d.white = true
 	var shake_dur := 0.53 * size
 	if dt < shake_dur:
-		d["offset"] += Vector2(roundf(sin(dt * 45.0) * 3.0 * size * (1.0 - dt / shake_dur)), 0)
+		d.offset += Vector2(roundf(sin(dt * 45.0) * 3.0 * size * (1.0 - dt / shake_dur)), 0)
 	if dt < 0.38 * size:
-		d["pose"] = "hit"
+		d.pose = "hit"
 
-static func _muzzle(stage: BattleStage, a: Dictionary, id: String) -> Vector2:
-	return stage.point(a, "muzzles/" + id)
+static func _muzzle(stage: BattleStage, a: MechView, id: String) -> Vector2:
+	return stage.point(a, MechSpriteBank.muzzle_name(id))
 
 # ---------------------------------------------------------------- single heavy shell (88mm, 105mm)
-static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
-	a["pose"] = "brace"
+static func _shell(stage: BattleStage, a: MechView, d: MechView, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
+	a.pose = "brace"
 	if t >= fire - 0.15 and t < fire - 0.07:
-		a["pose"] = "chamber" # external breech jolt only; loading is internal
+		a.pose = "chamber" # external breech jolt only; loading is internal
 	if t >= fire:
-		a["pose"] = recoil_pose(t - fire)
-	var dir: int = a["dir"]
+		a.pose = recoil_pose(t - fire)
+	var dir: int = a.dir
 	var muzzle := _muzzle(stage, a, id)
 	var target := stage.point(d, "hull")
 	var flash: float = p["flash"]
@@ -119,22 +119,22 @@ static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String,
 			stage.fx(func(ci): BattleFX.explosion(ci, target, k, size))
 
 # ---------------------------------------------------------------- multi-round fire (MG, autocannon, flak)
-static func _rounds(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, style: String, hit: bool) -> void:
+static func _rounds(stage: BattleStage, a: MechView, d: MechView, id: String, p: Dictionary, t: float, fire: float, imp: float, style: String, hit: bool) -> void:
 	var n: int = p["rounds"]
 	var interval: float = p["interval"]
 	var travel: float = p["travel"]
-	var dir: int = a["dir"]
+	var dir: int = a.dir
 	var target := stage.point(d, "hull")
-	a["pose"] = "brace"
+	a.pose = "brace"
 	var last_shot := fire + (n - 1) * interval
 	if t >= fire and t < last_shot + 0.3:
 		var since := fmod(t - fire, interval)
 		if style == "burst":
-			a["pose"] = "recoil1" if since < 0.06 else "recoil3"
+			a.pose = "recoil1" if since < 0.06 else "recoil3"
 		elif style == "flak":
-			a["pose"] = "recoil2" if since < 0.05 else "recoil3"
+			a.pose = "recoil2" if since < 0.05 else "recoil3"
 		else:
-			a["pose"] = "recoil3" if int((t - fire) / 0.03) % 2 == 0 else "brace"
+			a.pose = "recoil3" if int((t - fire) / 0.03) % 2 == 0 else "brace"
 	var muzzle := _muzzle(stage, a, id)
 	var hit_count := 0
 	for i in n:
@@ -171,14 +171,14 @@ static func _rounds(stage: BattleStage, a: Dictionary, d: Dictionary, id: String
 		hit_reaction(stage, d, t - imp, 0.7 if style == "mg" else 0.9)
 		# keep the target jittering while later rounds land
 		if hit_count > 1 and t < last_shot + travel + 0.1:
-			d["offset"] += Vector2(1 if int(t / 0.04) % 2 == 0 else -1, 0)
+			d.offset += Vector2(1 if int(t / 0.04) % 2 == 0 else -1, 0)
 
 # ---------------------------------------------------------------- 210mm Mörser lob
-static func _lob(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
-	a["pose"] = "brace"
+static func _lob(stage: BattleStage, a: MechView, d: MechView, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
+	a.pose = "brace"
 	if t >= fire:
-		a["pose"] = recoil_pose((t - fire) * 0.7)
-	var dir: int = a["dir"]
+		a.pose = recoil_pose((t - fire) * 0.7)
+	var dir: int = a.dir
 	var muzzle := _muzzle(stage, a, id)
 	var target := stage.point(d, "hull")
 	if t >= fire and t < fire + 0.16:
@@ -204,20 +204,20 @@ static func _lob(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p
 			var k := (t - imp) / 0.9
 			var feet := stage.point(d, "feet")
 			stage.fx(func(ci):
-				BattleFX.ellipse(ci, Vector2(feet.x, BattleStage.GROUND_Y), int(20 + k * 40), int(3 + k * 4), Color(0.45, 0.38, 0.25, 0.7 * (1.0 - k)))
+				BattleFX.ellipse(ci, Vector2(feet.x, BattleLayout.GROUND_Y), int(20 + k * 40), int(3 + k * 4), Color(0.45, 0.38, 0.25, 0.7 * (1.0 - k)))
 				BattleFX.explosion(ci, target, k, 1.6))
 
 # ---------------------------------------------------------------- Nebelwerfer rocket salvo
-static func _rockets(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, _imp: float, hit: bool) -> void:
+static func _rockets(stage: BattleStage, a: MechView, d: MechView, id: String, p: Dictionary, t: float, fire: float, _imp: float, hit: bool) -> void:
 	var n: int = p["rounds"]
 	var interval: float = p["interval"]
 	var travel: float = p["travel"]
-	var dir: int = a["dir"]
+	var dir: int = a.dir
 	var muzzle := _muzzle(stage, a, id)
 	var target := stage.point(d, "hull")
-	a["pose"] = "brace"
+	a.pose = "brace"
 	if t >= fire and t < fire + n * interval:
-		a["pose"] = "recoil3" if int((t - fire) / interval) % 2 == 0 else "brace"
+		a.pose = "recoil3" if int((t - fire) / interval) % 2 == 0 else "brace"
 	for i in n:
 		var t0 := fire + i * interval
 		var tube := muzzle + Vector2(0, (i % 3) * 5.0 - 5.0)
@@ -245,19 +245,19 @@ static func _rockets(stage: BattleStage, a: Dictionary, d: Dictionary, id: Strin
 	if hit and t >= first:
 		hit_reaction(stage, d, t - first, 1.1)
 		if t < first + n * interval:
-			d["offset"] += Vector2(2 if int(t / 0.05) % 2 == 0 else -2, 0)
+			d.offset += Vector2(2 if int(t / 0.05) % 2 == 0 else -2, 0)
 
 # ---------------------------------------------------------------- Thermite flame lance
-static func _flame(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
-	a["pose"] = "brace"
-	var dir: int = a["dir"]
+static func _flame(stage: BattleStage, a: MechView, d: MechView, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
+	a.pose = "brace"
+	var dir: int = a.dir
 	var nozzle := _muzzle(stage, a, id)
 	var target := stage.point(d, "hull")
 	var stream_end := fire + 1.0
 	if t >= fire - 0.25 and t < fire:
 		stage.fx(func(ci): BattleFX.blob(ci, nozzle, 2, BattleFX.FLASH_ORANGE if int(t / 0.05) % 2 else BattleFX.FLASH_YELLOW))
 	if t >= fire and t < stream_end:
-		a["pose"] = "recoil3"
+		a.pose = "recoil3"
 		var reach := clampf((t - fire) / float(p["travel"]), 0.0, 1.0)
 		var fade := clampf((stream_end - t) / 0.2, 0.0, 1.0)
 		stage.fx(func(ci):
@@ -286,29 +286,29 @@ static func _flame(stage: BattleStage, a: Dictionary, d: Dictionary, id: String,
 					BattleFX.blob(ci, ep, int(3 * (1.0 - ph)) + 1, BattleFX.FIRE if ph > 0.4 else BattleFX.FLASH_ORANGE))
 
 # ---------------------------------------------------------------- Hydraulic pile-bunker ram
-static func _ram(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
-	var dir: int = a["dir"]
-	var tip_rest := stage.point(a, "muzzles/" + id)
+static func _ram(stage: BattleStage, a: MechView, d: MechView, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
+	var dir: int = a.dir
+	var tip_rest := stage.point(a, MechSpriteBank.muzzle_name(id))
 	var target := stage.point(d, "glacis")
 	var gap := maxf(0.0, (target.x - tip_rest.x) * dir + 2.0)
 	var out := 0.0
 	if t < fire:
-		a["pose"] = "brace"
+		a.pose = "brace"
 	elif t < imp:
-		a["pose"] = "lunge"
+		a.pose = "lunge"
 		var k := (t - fire) / (imp - fire)
 		out = gap * k * k
 	elif t < imp + 0.18:
-		a["pose"] = "lunge"
+		a.pose = "lunge"
 		out = gap
 	elif t < imp + 0.6:
-		a["pose"] = "recoil2"
+		a.pose = "recoil2"
 		out = gap * (1.0 - (t - imp - 0.18) / 0.42)
 	else:
-		a["pose"] = "brace"
-	a["offset"] += Vector2(roundf(out * dir), 0)
+		a.pose = "brace"
+	a.offset += Vector2(roundf(out * dir), 0)
 	if t >= imp and t < imp + 0.12:
-		var tip := stage.point(a, "muzzles/" + id)
+		var tip := stage.point(a, MechSpriteBank.muzzle_name(id))
 		stage.fx(func(ci):
 			ci.draw_rect(Rect2(tip.x - (0 if dir > 0 else 16), tip.y - 1, 16, 3), Color.WHITE)
 			BattleFX.blob(ci, tip, 6, BattleFX.FLASH_YELLOW))

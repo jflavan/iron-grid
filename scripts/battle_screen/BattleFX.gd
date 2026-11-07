@@ -22,28 +22,32 @@ const FLASH_HALF_H := [5, 4, 2]
 const FLASH_SPARK_OFFSETS := [Vector2(4, -9), Vector2(9, -7), Vector2(4, 8), Vector2(10, 6), Vector2(16, -3), Vector2(17, 3)]
 const OUTLINE_OFFSETS := [Vector2(-0.5, 0), Vector2(0.5, 0), Vector2(0, -0.5), Vector2(0, 0.5)]
 
-const CRT_FILL := CrtUI.C_FILL
-const CRT_SCAN := CrtUI.C_SCAN
 const CRT_BORDER := CrtUI.C_BORDER
-const CRT_RULE := CrtUI.C_RULE
 
 static var _circle_tex: ImageTexture = null
 
 static func _get_circle_texture() -> ImageTexture:
 	if _circle_tex == null:
+		# A disc of radius size/2 centred between pixels: pixel (x, y) is inside when its centre is within
+		# the radius. Integer form of |(x, y) - (size/2 - 0.5)| <= size/2 (doubled to stay integral; the
+		# equality case cannot occur for even sizes), filled one span per row instead of per pixel.
 		var size := 32
 		var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-		var center := Vector2(size * 0.5 - 0.5, size * 0.5 - 0.5)
-		var r_f := size * 0.5
-		for y in range(size):
-			for x in range(size):
-				var d := (Vector2(x, y) - center).length()
-				if d <= r_f:
-					img.set_pixel(x, y, Color.WHITE)
-				else:
-					img.set_pixel(x, y, Color(1, 1, 1, 0))
+		img.fill(Color(1, 1, 1, 0))
+		var limit := size * size  # (2r)^2 with r = size / 2
+		for y in size:
+			var dy := 2 * y - (size - 1)
+			var x0 := 0
+			while x0 < size and (2 * x0 - (size - 1)) * (2 * x0 - (size - 1)) + dy * dy > limit:
+				x0 += 1
+			if x0 < size:
+				img.fill_rect(Rect2i(x0, y, size - 2 * x0, 1), Color.WHITE)
 		_circle_tex = ImageTexture.create_from_image(img)
 	return _circle_tex
+
+## Builds the shared circle texture now (blobs/ellipses/shadows use it) instead of on the first draw.
+static func warm() -> void:
+	_get_circle_texture()
 
 static func blob(ci: CanvasItem, c: Vector2, r: int, col: Color) -> void:
 	var sz := r * 2

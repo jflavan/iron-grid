@@ -6,6 +6,15 @@ extends Node2D
 
 var units: Array[MechUnit] = []
 
+## Bumped whenever the set of occupied tiles may have changed (spawn, removal, move_unit()), so a
+## caller can cache build_occupied_map() / anything derived from it and compare epochs.
+var occupancy_epoch: int = 0
+
+## The one way a walker changes tile: writes its grid position and bumps the occupancy epoch.
+func move_unit(u: MechUnit, to: Vector2i) -> void:
+	u.mech_data.grid_pos = to
+	occupancy_epoch += 1
+
 func _ready() -> void:
 	y_sort_enabled = true
 
@@ -14,6 +23,7 @@ func clear_units() -> void:
 		if is_instance_valid(u):
 			u.queue_free()
 	units.clear()
+	occupancy_epoch += 1
 
 func spawn_units_for_map(map_def: MapDefinition, grid_map: IsoGridMap) -> void:
 	clear_units()
@@ -32,36 +42,33 @@ func spawn_units_for_map(map_def: MapDefinition, grid_map: IsoGridMap) -> void:
 		add_child(m_node)
 		m_node.setup(m_data, grid_map.grid_to_screen(pos, true))
 		units.append(m_node)
+	occupancy_epoch += 1
 
 func get_unit_at(coords: Vector2i, exclude_unit: MechUnit = null) -> MechUnit:
 	for u in units:
-		if not is_instance_valid(u) or u == exclude_unit:
-			continue
-		if u.mech_data != null and u.mech_data.is_alive() and u.mech_data.grid_pos == coords:
+		if u != exclude_unit and MechUnit.is_live(u) and u.mech_data.grid_pos == coords:
 			return u
 	return null
 
 func build_occupied_map(exclude_unit: MechUnit = null) -> Dictionary:
 	var occ: Dictionary = {}
 	for u in units:
-		if not is_instance_valid(u) or u == exclude_unit:
-			continue
-		if u.mech_data != null and u.mech_data.is_alive():
+		if u != exclude_unit and MechUnit.is_live(u):
 			occ[u.mech_data.grid_pos] = u.mech_data
 	return occ
 
 func get_faction_units(faction: MechData.Faction) -> Array[MechUnit]:
 	var list: Array[MechUnit] = []
 	for u in units:
-		if is_instance_valid(u) and u.mech_data != null and u.mech_data.is_alive():
-			if u.mech_data.faction == faction:
-				list.append(u)
+		if MechUnit.is_live(u) and u.mech_data.faction == faction:
+			list.append(u)
 	return list
 
 func remove_destroyed_unit(u: MechUnit) -> void:
 	if u == null:
 		return
 	units.erase(u)
+	occupancy_epoch += 1
 	if is_instance_valid(u):
 		_spawn_explosion_effect(u.position)
 		u.queue_free()
@@ -91,12 +98,10 @@ func _spawn_explosion_effect(screen_pos: Vector2) -> void:
 	)
 
 ## Calculates adjacent tactical formation (crossfire, pincer, escort screen, suppression)
-## for an engagement where attacker launches from `from_pos` into `target_pos`.
-## `occupied` (Vector2i -> MechData, as build_occupied_map returns) lets a caller that already holds
-## an occupancy map skip rebuilding it; each neighbour is then a single lookup.
-func get_formation_context(target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int, occupied: Dictionary = {}) -> Dictionary:
-	var occ: Dictionary = occupied if not occupied.is_empty() else build_occupied_map()
-	return formation_context(occ, target_pos, from_pos, attacker_faction)
+## for an engagement where attacker launches from `from_pos` into `target_pos`. A caller that already
+## holds an occupancy map (the AI) uses the static formation_context directly.
+func get_formation_context(target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int) -> Dictionary:
+	return formation_context(build_occupied_map(), target_pos, from_pos, attacker_faction)
 
 static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: Vector2i, attacker_faction: int) -> Dictionary:
 	var atk_allies: int = 0
@@ -104,7 +109,7 @@ static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: V
 	var is_pincer: bool = false
 	var pincer_opposite_pos: Vector2i = target_pos + (target_pos - from_pos)
 
-	for d in _DIRS:
+	for d in TerrainGrid.DIRS:
 		var adj_pos: Vector2i = target_pos + d
 		if adj_pos == from_pos:
 			continue # Attacker launches from from_pos, not a separate supporting ally
@@ -120,7 +125,7 @@ static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: V
 	# Check suppression: defender allies adjacent to attacker's launch tile (from_pos)
 	var suppression: int = 0
 	if from_pos != target_pos:
-		for d in _DIRS:
+		for d in TerrainGrid.DIRS:
 			var adj_launch: Vector2i = from_pos + d
 			if adj_launch == target_pos:
 				continue # Target is the defender
@@ -135,4 +140,3 @@ static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: V
 		"atk_suppression": suppression,
 	}
 
-const _DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]

@@ -7,7 +7,7 @@ extends Node
 ##   D  low-hull defender (destruction ending)    I  toggle interactive vs playback
 ##   S  1x/2x speed (BattleScreen)    A  Auto-Pilot    Space  skip / confirm
 
-const CHASSIS := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+const CHASSIS := ChassisCatalog.ORDER
 const TERRAINS := [
 	GridTileData.TerrainType.PLAIN, GridTileData.TerrainType.ROAD, GridTileData.TerrainType.RIVER,
 	GridTileData.TerrainType.FOREST, GridTileData.TerrainType.CITY, GridTileData.TerrainType.MOUNTAIN,
@@ -68,11 +68,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_RIGHT:
 			atk_i = (atk_i + 1) % CHASSIS.size()
 		KEY_UP:
-			if screen.stage.phase == "command_select":
+			if screen.stage.phase == BattleStage.PHASE_COMMAND_SELECT:
 				return
 			def_i = (def_i + CHASSIS.size() - 1) % CHASSIS.size()
 		KEY_DOWN:
-			if screen.stage.phase == "command_select":
+			if screen.stage.phase == BattleStage.PHASE_COMMAND_SELECT:
 				return
 			def_i = (def_i + 1) % CHASSIS.size()
 		KEY_T:

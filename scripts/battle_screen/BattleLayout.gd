@@ -5,6 +5,12 @@ extends RefCounted
 ## gap between the walkers is fixed; only the side (from the isometric screen-x of the approach)
 ## and the elevation lift vary.
 
+## Native battle canvas and the ground line the walkers stand on (BattleStage aliases these).
+const W := 360
+const H := 225
+const GROUND_Y := 141.0
+const FEET_X := {"left": 92.0, "right": 268.0}
+
 const PX_PER_LEVEL := 4
 const MAX_LIFT := 12
 
@@ -35,8 +41,13 @@ static var _backdrop_cache: Dictionary = {}
 static func backdrop_path(terrain: int) -> String:
 	return "res://assets/battle/backdrops/%s.png" % BACKDROP_BY_TERRAIN.get(terrain, "plain")
 
-static func get_backdrop(terrain: int) -> Texture2D:
-	if not _backdrop_cache.has(terrain):
-		_backdrop_cache[terrain] = load(backdrop_path(terrain)) as Texture2D
-	return _backdrop_cache[terrain]
-
+## `path_override` (tests) replaces the terrain's backdrop file; the cache logic is the same.
+static func get_backdrop(terrain: int, path_override: String = "") -> Texture2D:
+	var tex: Texture2D = _backdrop_cache.get(terrain)
+	if tex == null:
+		var path := path_override if path_override != "" else backdrop_path(terrain)
+		if ResourceLoader.exists(path):
+			tex = load(path) as Texture2D
+		if tex != null:   # a missing backdrop is not cached, so adding the file fixes it without a restart
+			_backdrop_cache[terrain] = tex
+	return tex

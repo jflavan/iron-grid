@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3 uid="uid://b4ironbattlefield"]
+[gd_scene load_steps=6 format=3 uid="uid://b4ironbattlefield"]
 
 [ext_resource type="Script" path="res://scripts/battle/Battlefield.gd" id="1_bf"]
 [ext_resource type="Script" path="res://scripts/battle/IsoGridMap.gd" id="2_grid"]
 [ext_resource type="Script" path="res://scripts/battle/UnitContainer.gd" id="3_units"]
 [ext_resource type="Script" path="res://scripts/ui/UIOverlay.gd" id="4_ui"]
+[ext_resource type="Script" path="res://scripts/battle/BattleCamera.gd" id="5_cam"]
 
 [node name="Battlefield" type="Node2D"]
 script = ExtResource("1_bf")
@@ -16,6 +17,7 @@ y_sort_enabled = true
 script = ExtResource("3_units")
 
 [node name="Camera2D" type="Camera2D" parent="."]
+script = ExtResource("5_cam")
 
 [node name="UIOverlay" type="CanvasLayer" parent="."]
 script = ExtResource("4_ui")

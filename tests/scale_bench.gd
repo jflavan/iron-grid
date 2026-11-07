@@ -1,15 +1,17 @@
 extends Node
 
-## Headless scalability benchmark: synthetic maps from 10x10 to 48x48 with a walker on roughly
+## Headless scalability benchmark: synthetic maps from 10x10 to 100x100 with a walker on roughly
 ## every 12th tile, timing the CPU-side systems that grow with map and army size: map load (incl.
 ## the terrain mesh bake), movement ranges, strike plans and full AI decisions. Times are medians.
 ## Run: godot --headless --path . res://tests/ScaleBench.tscn
 
-const SIZES: Array[int] = [10, 20, 32, 48]
+const SIZES: Array[int] = [10, 20, 32, 48, 64, 100]
+## Unit cap for the big maps so ai_decision_ms stays measurable (units ~ n*n/12 below it).
+const MAX_UNITS := 240
 const REPEATS := 5
 
 func _ready() -> void:
-	print("\n[SCALE BENCH] size  units  map_load_ms  reach_ms  strike_plan_ms  ai_decision_ms  terrain_ops")
+	print("\n[SCALE BENCH] size  units  map_load_ms  reach_ms  strike_plan_ms  field_ms  plan_w_field_ms  ai_decision_ms  terrain_ops")
 	for n in SIZES:
 		await _bench_size(n)
 	print("[SCALE BENCH] done")
@@ -33,6 +35,8 @@ func _bench_size(n: int) -> void:
 
 	var reach_t: Array[float] = []
 	var plan_t: Array[float] = []
+	var field_t: Array[float] = []
+	var plan_f_t: Array[float] = []
 	var ai_t: Array[float] = []
 	for r in REPEATS:
 		var u: MechUnit = players[r % players.size()]
@@ -49,6 +53,13 @@ func _bench_size(n: int) -> void:
 		t0 = Time.get_ticks_usec()
 		gm.compute_strike_plan(u.mech_data, far.mech_data.grid_pos, occ)
 		plan_t.append((Time.get_ticks_usec() - t0) / 1000.0)
+		# The same plan from a cost field computed once per selection (Battlefield's strike-plan cache).
+		t0 = Time.get_ticks_usec()
+		var field: Dictionary = gm.strike_cost_field(u.mech_data, occ)
+		field_t.append((Time.get_ticks_usec() - t0) / 1000.0)
+		t0 = Time.get_ticks_usec()
+		gm.compute_strike_plan(u.mech_data, far.mech_data.grid_pos, occ, field)
+		plan_f_t.append((Time.get_ticks_usec() - t0) / 1000.0)
 		var a: MechUnit = ais[r % ais.size()]
 		a.mech_data.has_moved = false
 		a.mech_data.has_attacked = false
@@ -58,8 +69,8 @@ func _bench_size(n: int) -> void:
 		AIController.choose_best_action(a, gm, uc, md)
 		ai_t.append((Time.get_ticks_usec() - t0) / 1000.0)
 
-	print("[SCALE BENCH] %4d  %5d  %11.2f  %8.2f  %14.2f  %14.2f  %11d" % [
-		n, uc.units.size(), _median(load_t), _median(reach_t), _median(plan_t), _median(ai_t), _terrain_ops(gm)])
+	print("[SCALE BENCH] %4d  %5d  %11.2f  %8.2f  %14.2f  %8.2f  %15.2f  %14.2f  %11d" % [
+		n, uc.units.size(), _median(load_t), _median(reach_t), _median(plan_t), _median(field_t), _median(plan_f_t), _median(ai_t), _terrain_ops(gm)])
 	uc.clear_units()
 	uc.queue_free()
 	gm.queue_free()
@@ -89,9 +100,9 @@ func _synthetic_map(n: int) -> MapDefinition:
 		md.elevation_rows.append(" ".join(e))
 	for i in maxi(1, n / 8):
 		md.objectives.append({"pos": Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1)), "label": "OBJ", "owner": -1})
-	var chassis := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+	var chassis := ChassisCatalog.ORDER
 	var taken := {}
-	var count: int = maxi(4, n * n / 12)
+	var count: int = clampi(n * n / 12, 4, MAX_UNITS)
 	while taken.size() < count:
 		var p := Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1))
 		if taken.has(p):

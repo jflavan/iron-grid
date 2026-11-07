@@ -124,16 +124,33 @@ const MAX_VERTS_PER_MESH := 196608
 func _tri(a: Vector2, b: Vector2, c: Vector2, color: Color) -> void:
 	if _verts.size() >= MAX_VERTS_PER_MESH:
 		_flush()
-	_verts.append_array(PackedVector2Array([a, b, c]))
-	_cols.append_array(PackedColorArray([color, color, color]))
-	_uvs.append_array(PackedVector2Array([_white_uv, _white_uv, _white_uv]))
+	var n: int = _verts.size()
+	_verts.resize(n + 3)
+	_cols.resize(n + 3)
+	_uvs.resize(n + 3)
+	_verts[n] = a
+	_verts[n + 1] = b
+	_verts[n + 2] = c
+	for i in 3:
+		_cols[n + i] = color
+		_uvs[n + i] = _white_uv
 
 func _quad(a: Vector2, b: Vector2, c: Vector2, d: Vector2, color: Color) -> void:
 	if _verts.size() >= MAX_VERTS_PER_MESH:
 		_flush()
-	_verts.append_array(PackedVector2Array([a, b, c, a, c, d]))
-	_cols.append_array(PackedColorArray([color, color, color, color, color, color]))
-	_uvs.append_array(PackedVector2Array([_white_uv, _white_uv, _white_uv, _white_uv, _white_uv, _white_uv]))
+	var n: int = _verts.size()
+	_verts.resize(n + 6)
+	_cols.resize(n + 6)
+	_uvs.resize(n + 6)
+	_verts[n] = a
+	_verts[n + 1] = b
+	_verts[n + 2] = c
+	_verts[n + 3] = a
+	_verts[n + 4] = c
+	_verts[n + 5] = d
+	for i in 6:
+		_cols[n + i] = color
+		_uvs[n + i] = _white_uv
 
 func _flush() -> void:
 	if _verts.is_empty():

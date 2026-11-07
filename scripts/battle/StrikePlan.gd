@@ -1,7 +1,7 @@
 class_name StrikePlan
 extends RefCounted
 
-## Why a selected walker can (or cannot) strike an enemy tile, built by IsoGridMap.compute_strike_plan.
+## Why a selected walker can (or cannot) strike an enemy tile, built by TerrainGrid.compute_strike_plan.
 ## An attack is a move onto the enemy's tile, so the strike costs the cheapest path to a launch tile
 ## (one of the enemy's neighbours) plus the step onto the enemy: terrain + chassis + climb.
 ## The HUD's OUT OF REACH box and the Comms Log line are both written from this object.
