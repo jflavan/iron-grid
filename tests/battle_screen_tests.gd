@@ -2305,3 +2305,46 @@ func test_map_validate_extended_rules() -> void:
 	m.width = 5000
 	m.height = 5000
 	_check(not m.validate().is_empty(), "map of 1<<24 tiles or more flagged")
+
+func test_visible_band_search_matches_brute_force() -> void:
+	var md := MapDefinition.new()
+	md.width = 48
+	md.height = 48
+	for y in 48:
+		md.terrain_codes.append(" ".join(_repeat("P", 48)))
+		var e := PackedStringArray()
+		for x in 48:
+			e.append(str((x * 7 + y * 3) % 5))
+		md.elevation_rows.append(" ".join(e))
+	md.objectives.append({"pos": Vector2i(0, 0)})
+	md.spawns = [{"chassis": "vanguard", "pos": Vector2i(1, 1), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(2, 2), "faction": 1}]
+	var gm := IsoGridMap.new()
+	add_child(gm)
+	gm.load_from_definition(md)
+	var all := {}
+	for c: Vector2i in gm.tiles.keys():
+		all[c] = {"fuel_spent": 1, "fuel_left": 0, "path": [c] as Array[Vector2i], "is_attack": false}
+	gm.reachable_info = all
+	gm._rebuild_base()
+	_check(gm._base_keys.size() == 48 * 48, "every tile is in the base list (%d)" % gm._base_keys.size())
+	var rects: Array[Rect2] = [
+		Rect2(-200, 300, 400, 200), Rect2(-2000, -2000, 8000, 8000), Rect2(900, 1200, 300, 250),
+		Rect2(-3000, 100, 500, 120), Rect2(0, 0, 50, 50), Rect2(-100, 2800, 600, 400)]
+	var narrower := false
+	for rect in rects:
+		var band: Vector2i = gm._visible_base_range(rect)
+		var from_band := {}
+		for i in range(band.x, band.y):
+			var c: Vector2i = gm._base_coords[i]
+			if rect.has_point(gm._tile_top[c]):
+				from_band[c] = true
+		var brute := {}
+		for c: Vector2i in gm.tiles.keys():
+			if rect.has_point(gm._tile_top[c]):
+				brute[c] = true
+		_check(from_band.size() == brute.size() and from_band.keys().all(func(c): return brute.has(c)),
+				"band search yields exactly the tiles inside %s (%d vs %d)" % [rect, from_band.size(), brute.size()])
+		narrower = narrower or (band.y - band.x) < gm._base_keys.size()
+	_check(narrower, "the band search skips tiles outside the view")
+	gm.queue_free()
+	await get_tree().process_frame
