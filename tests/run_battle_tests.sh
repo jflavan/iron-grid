@@ -3,9 +3,10 @@
 # SCRIPT ERROR was printed (a GDScript parse error would otherwise leave Godot idling with exit code
 # 0, and a runtime error aborts the running test function without recording a failure).
 set -u
+GODOT="${GODOT:-godot}"
 cd "$(dirname "$0")/.."
-godot --headless --path . --import >/dev/null 2>&1  # refresh the global class cache for new class_name scripts
-out="$(godot --headless --path . --quit-after 20000 res://tests/BattleScreenTests.tscn 2>&1)"
+"$GODOT" --headless --path . --import >/dev/null 2>&1  # refresh the global class cache for new class_name scripts
+out="$("$GODOT" --headless --path . --quit-after 20000 res://tests/BattleScreenTests.tscn 2>&1)"
 code=$?
 echo "$out" | grep -E "BATTLE TEST|SCRIPT ERROR|Parse Error|FAIL" | head -40
 summary="$(echo "$out" | grep -E '^\[BATTLE TESTS\]')"
