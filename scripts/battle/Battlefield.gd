@@ -134,7 +134,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if ui_overlay.show_manual_modal:
 			if event.keycode == KEY_ESCAPE:
-				ui_overlay.show_manual_modal = false
+				ui_overlay.close_manual()
 				camera.stop_drag()
 			return
 		if event.keycode == KEY_C:
@@ -679,8 +679,8 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 		)
 		if decision.has("facing"):
 			ai_unit.mech_data.facing = decision["facing"]
-		var action_type: String = decision.get("type", "WAIT_ENTRENCH")
-		if action_type == "WAIT_ENTRENCH":
+		var action_type: String = decision.get("type", AIController.ACTION_WAIT)
+		if action_type == AIController.ACTION_WAIT:
 			_pending_ai_target = null
 			_pending_ai_attack_fuel = 0
 			_entrench_unit(ai_unit.mech_data)
@@ -689,7 +689,7 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			])
 			ai_unit.queue_redraw()
 			_after(0.32, _process_next_ai_unit)
-		elif action_type == "ENGAGE":
+		elif action_type == AIController.ACTION_ENGAGE:
 			var target_pos: Vector2i = decision["target_pos"]
 			var target_unit := unit_container.get_unit_at(target_pos, ai_unit)
 			if target_unit == null:

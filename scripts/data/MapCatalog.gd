@@ -26,7 +26,7 @@ static func build() -> Array[MapDefinition]:
 	)
 	map1.tactical_tip = (
 		"TACTICAL ADVISORY: Every city here sits level with the roads, so a garrison can be stormed without an uphill penalty, and digging in alone won't hold the line. " +
-		"Rivers cost 4 Fuel and impose -15% ATK / -15% DEF / -10% EVA: cross on the bridges, or wade with a Falke. Concentrate your attacks on one target at a time."
+		"Rivers cost %d Fuel and impose -15% ATK / -15% DEF / -10% EVA: cross on the bridges, or wade with a Falke. Concentrate your attacks on one target at a time." % RulesContent.terrain_fuel(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.RIVER, 1), RulesContent.default_fuel_usage())
 	)
 	# Every city sits level with the roads (height 1) and a neutral Central Island Depot stands
 	# between the bridges: five objectives can't split 2-2, so digging in can't run out the clock.

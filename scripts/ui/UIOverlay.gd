@@ -147,6 +147,11 @@ func modal_blocks_map() -> bool:
 	return skirmish_modal.visible or show_game_over_modal
 
 ## Opens or closes the Field Manual; refused (false) while the skirmish or the debrief is up.
+## Closes the manual silently (Esc); a no-op when it is not open.
+func close_manual() -> void:
+	if show_manual_modal:
+		show_manual_modal = false
+
 func toggle_manual() -> bool:
 	if modal_blocks_map():
 		return false
@@ -204,6 +209,8 @@ func pointer_over_hud() -> bool:
 func _activate(id: String) -> void:
 	if id == BLOCKER:
 		return
+	if id.begins_with("debrief:") and not show_game_over_modal:
+		return   # a second click in the same frame (the first already dismissed the debrief)
 	# A modal owns the screen: only its own controls respond (the debrief outranks the manual)
 	if show_game_over_modal:
 		if not id.begins_with("debrief:"):
@@ -405,12 +412,11 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 		y += 20
 
 func _gear_note(m: MechData) -> String:
-	if m.amphibious_gear:
-		return "AMPHIBIOUS SEALS (-2 RIVER FUEL)"
-	if m.mountain_gear:
-		return "QUAD CLIMBING GEAR (-2 MOUNTAIN/CLIMB FUEL)"
+	var gear := RulesContent.gear_text(m)
+	if gear != "":
+		return gear
 	if m.fuel_efficiency_mod > 0:
-		return "HEAVY CHASSIS (+1 FUEL OFF-ROAD)"
+		return "HEAVY CHASSIS (%+d FUEL OFF-ROAD)" % RulesContent.offroad_fuel(m)
 	return "STANDARD TREAD/LEG GEAR"
 
 ## Sector panel rows: [label, value, colour].
@@ -424,7 +430,7 @@ func _terrain_rows() -> Array:
 		var own: int = step_cost_mech.get_step_fuel_cost(hovered_tile, hovered_tile)
 		rows.append(["YOUR STEP COST", "%dF +CLIMB" % own, CrtUI.C_NUM])
 	else:
-		rows.append(["FUEL COST", "%d/TILE" % hovered_tile.get_base_fuel_cost(), CrtUI.C_NUM])
+		rows.append(["FUEL COST", "%d/TILE" % RulesContent.terrain_fuel(hovered_tile, RulesContent.default_fuel_usage()), CrtUI.C_NUM])
 	rows.append(["ATTACK MOD", "%+d%%" % atk_m, CrtUI.C_LABEL if atk_m >= 0 else CrtUI.C_HOSTILE])
 	rows.append(["DEFENSE MOD", "%+d%%" % def_m, CrtUI.C_LABEL if def_m >= 0 else CrtUI.C_HOSTILE])
 	if not hovered_reach_info.is_empty():

@@ -1150,7 +1150,9 @@ func test_manual_numbers_come_from_data() -> void:
 	var manual := "\n".join(UIOverlay.manual_lines())
 	_check(("+%d Fuel" % MechData.WAIT_FUEL) in manual and ("+%d EN" % MechData.WAIT_ENERGY) in manual, "manual WAIT line reads the WAIT constants")
 	var mtn := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.MOUNTAIN, 1)
-	_check(("%d Fuel" % mtn.get_base_fuel_cost()) in manual and ("%+d%% DEF" % mtn.get_defense_modifier_pct()) in manual, "manual terrain chart reads GridTileData")
+	var mtn_row := "%s (%s): %d Fuel / %+d%% ATK / %+d%% DEF" % [mtn.get_terrain_name().to_upper(), mtn.get_terrain_short_code(),
+		mtn.get_base_fuel_cost() * RulesContent.default_fuel_usage(), mtn.get_attack_modifier_pct(), mtn.get_defense_modifier_pct()]
+	_check(mtn_row in manual, "manual terrain chart reads GridTileData with the fuel_usage multiplier (%s)" % mtn_row)
 	_check(("+%d SPD" % SkirmishEngine.ROUND1_ATTACKER_SPD_BONUS) in manual, "manual initiative line reads SkirmishEngine")
 
 func test_rules_render_is_cached() -> void:
@@ -2746,3 +2748,64 @@ func test_record_presentation_does_not_change_the_fight() -> void:
 					for i in r1.steps.size():
 						for f in step_fields:
 							_check(r1.steps[i].get(f) == r2.steps[i].get(f), "step %d %s equal: %s" % [i, f, label])
+
+## The camera's centre request during the AI phase is ignored: the AI's pan is not killed and the phase completes.
+func test_center_request_during_ai_phase_does_not_stall() -> void:
+	var bf := await _spawn_iron_bridge()
+	bf._begin_ai_phase()
+	await get_tree().create_timer(0.7).timeout   # the first AI walker's camera pan is in flight
+	var turn_before := GlobalState.turn_number
+	bf._on_center_requested()
+	var modal: BattleScreen = bf.ui_overlay.skirmish_modal
+	var waited := 0.0
+	var done := false
+	while waited < 60.0:
+		if modal.visible:
+			if modal._all_steps_done:
+				modal._on_confirm_pressed()
+			else:
+				modal._on_skip_pressed()
+		var ph := GlobalState.current_phase
+		if ph == GlobalState.TurnPhase.PLAYER_PHASE or ph == GlobalState.TurnPhase.GAME_OVER:
+			done = true
+			break
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	_check(done, "the AI phase completes after a centre request mid-pan (waited %.2fs)" % waited)
+	_check(GlobalState.turn_number > turn_before or GlobalState.current_phase == GlobalState.TurnPhase.GAME_OVER, "the turn counter advanced or the mission ended (phase %d, turn %d)" % [GlobalState.current_phase, GlobalState.turn_number])
+	bf.queue_free()
+	await get_tree().process_frame
+
+## An ENGAGE whose target is gone continues through _after(); the continuation path advances the phase.
+func test_ai_continuation_advances_the_phase() -> void:
+	var bf := await _spawn_iron_bridge()
+	GlobalState.set_phase(GlobalState.TurnPhase.AI_PHASE)
+	bf._ai_queue.clear()
+	var turn_before := GlobalState.turn_number
+	bf._after(0.05, bf._process_next_ai_unit)
+	await get_tree().create_timer(0.3).timeout
+	_check(GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and GlobalState.turn_number == turn_before + 1, "an after()-scheduled continuation with an empty queue finishes the AI phase")
+	bf.queue_free()
+	await get_tree().process_frame
+
+## HUD fuel text quotes the real (fuel_usage-multiplied) numbers.
+func test_hud_fuel_text_is_multiplied() -> void:
+	var bf := await _spawn_iron_bridge()
+	var river := GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.RIVER, 1)
+	var ov := bf.ui_overlay
+	ov.hovered_tile = river
+	ov.step_cost_mech = null
+	var fu := RulesContent.default_fuel_usage()
+	var row_text := ""
+	for r in ov._terrain_rows():
+		if r[0] == "FUEL COST":
+			row_text = r[1]
+	_check(row_text == "%d/TILE" % (river.get_base_fuel_cost() * fu), "river FUEL COST row is multiplied by fuel_usage (got %s)" % row_text)
+	var falke: MechData = GlobalState.chassis_catalog["falke"]
+	var goliath: MechData = GlobalState.chassis_catalog["goliath"]
+	var donner: MechData = GlobalState.chassis_catalog["donner"]
+	_check(("RIVER -%d" % (2 * falke.fuel_usage)) in ov._gear_note(falke), "falke gear note: %s" % ov._gear_note(falke))
+	_check(("MTN -%d" % (2 * donner.fuel_usage)) in ov._gear_note(donner) and ("CLIMB -%d" % donner.fuel_usage) in ov._gear_note(donner), "donner gear note: %s" % ov._gear_note(donner))
+	_check(("%+d FUEL OFF-ROAD" % (goliath.fuel_efficiency_mod * goliath.fuel_usage)) in ov._gear_note(goliath), "goliath gear note: %s" % ov._gear_note(goliath))
+	bf.queue_free()
+	await get_tree().process_frame
