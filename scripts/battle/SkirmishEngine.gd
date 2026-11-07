@@ -36,6 +36,7 @@ const ELEV_EVA_PER_LEVEL: int = 4        # the higher walker's EVA
 const ELEV_CRIT_PER_LEVEL: int = 5       # the higher walker's crit
 const ELEV_ACC_PER_LEVEL: int = 4        # hit chance, + for the higher walker, - for the lower
 const GUARD_DAMAGE_MULT: float = 0.50    # DEFEND: the next landed hit is halved
+const GUARD_BLOCK_PCT: int = int((1.0 - GUARD_DAMAGE_MULT) * 100.0)  # the 50 in "GUARD +50%" / "-50% DMG TAKEN"
 const DEFEND_EN_GAIN: int = 2
 const ESCAPE_BASE_PCT: int = 58          # RETREAT chance = base + per-SPD x speed lead, clamped
 const ESCAPE_PER_SPD_PCT: int = 2
@@ -69,6 +70,23 @@ const ADJ_ESCORT_RETURN_FP_PER_ALLY: int = 5
 
 const ADJ_SUPPRESSION_FP_PER_ENEMY: int = -6
 
+## Support TECH effects by CombatAbility.effect_type: "mods" are [CombatantState property, delta, limit]
+## (limit optional: the cap for a buff, the floor for a debuff), "on_foe" aims them at the opponent,
+## "soften" arms the matching shield visual/damage cut, "text" is the step's status line.
+const SUPPORT_EFFECTS := {
+	"PROTECT_RICOCHET": {"mods": [["def_buff_pct", 35, 75]], "soften": "krupp_plate", "text": "DEF +35% // GLACIS ANGLING"},
+	"BULKHEAD_WALL": {"mods": [["def_buff_pct", 45, 85]], "text": "BULKHEAD DEPLOYED (+45% DEF)"},
+	"ANCHOR_BRACE": {"mods": [["def_buff_pct", 30, 75], ["acc_buff_pct", 20], ["crit_buff_pct", 15]], "text": "BRACED (+30% DEF / +CRIT)"},
+	"REACTIVE_SHIELD": {"mods": [["def_buff_pct", 20, 75]], "soften": "ablative_shield", "text": "REACTIVE SHIELD ARMED"},
+	"THRUSTER_EVADE": {"mods": [["eva_buff_pct", 30, 45], ["spd_buff_pct", 35, 60]], "soften": "gyro_thruster", "text": "EVA +30% // HASTE +35%"},
+	"RECON_LOCK": {"mods": [["acc_buff_pct", 35], ["crit_buff_pct", 35], ["atk_buff_pct", 20, 65]], "text": "TARGET LOCK (+35% CRIT/ACC)"},
+	"BALLISTIC_PLOT": {"mods": [["atk_buff_pct", 30, 65], ["crit_buff_pct", 25], ["armor_pierce_bonus", 0.20, 0.45]], "text": "FIRE PLOT (+30% ATK / +AP)"},
+	"ECM_JAM": {"on_foe": true, "mods": [["acc_buff_pct", -30, -45], ["spd_buff_pct", -25, -45], ["def_buff_pct", -20, -40]], "text": "ENEMY JAMMED (-ACC/-SPD/-DEF)"},
+	"CMD_UPLINK": {"mods": [["atk_buff_pct", 25, 65], ["def_buff_pct", 25, 75], ["spd_buff_pct", 15, 60], ["acc_buff_pct", 15]], "text": "HQ UPLINK (+25% ATK/DEF)"},
+}
+## An effect_type the table does not know still does something visible, but is capped like a DEF buff.
+const SUPPORT_FALLBACK := {"mods": [["def_buff_pct", 25, 75]], "text": "SYSTEM BOOST"}
+
 class TurnStep extends RefCounted:
 	var step_index: int = 0
 	var round_number: int = 1
@@ -78,7 +96,7 @@ class TurnStep extends RefCounted:
 	var command_type: int = CommandType.ATTACK
 	var ability_id: String = ""
 	var ability_name: String = ""
-	var ability_category: String = "WEAPON" # WEAPON, ARMOR, TACTIC, DEFEND, RETREAT
+	var ability_category: String = "WEAPON" # WEAPON (TECH shot), ATTACK (basic gun), ARMOR, TACTIC, DEFEND, RETREAT
 	var is_support_only: bool = false       # true for ARMOR/TACTIC/DEFEND/RETREAT (no weapon shot)
 	var is_miss: bool = false
 	var is_crit: bool = false
@@ -92,6 +110,14 @@ class TurnStep extends RefCounted:
 	var def_hp_after: int = 0
 	var atk_en_after: int = 0
 	var def_en_after: int = 0
+	# Combatant status right after this step (a snapshot: the live session may already be further on),
+	# so a presentation layer can show the state that belongs to the beat it is animating.
+	var atk_badges: Array[String] = []
+	var def_badges: Array[String] = []
+	var atk_spd_after: int = 0
+	var def_spd_after: int = 0
+	var atk_eva_after: int = 0
+	var def_eva_after: int = 0
 
 class SkirmishResult extends RefCounted:
 	var attacker: MechData
@@ -502,8 +528,8 @@ class BattleSession extends RefCounted:
 				step.ability_name = "DEFEND / BRACE"
 				step.ability_category = "DEFEND"
 				step.is_support_only = true
-				step.status_text = "GUARD +50% // +2 EN"
-				step.description = "%s braces armor plating (+50%% Guard, +2 EN)." % actor.mech.callsign
+				step.status_text = "GUARD +%d%% // +%d EN" % [GUARD_BLOCK_PCT, DEFEND_EN_GAIN]
+				step.description = "%s braces armor plating (+%d%% Guard, +%d EN)." % [actor.mech.callsign, GUARD_BLOCK_PCT, DEFEND_EN_GAIN]
 			CommandType.RETREAT:
 				actor.retreat_attempted = true
 				step.ability_id = "retreat"
@@ -529,6 +555,12 @@ class BattleSession extends RefCounted:
 		step.def_hp_after = def_state.hp
 		step.atk_en_after = atk_state.en
 		step.def_en_after = def_state.en
+		step.atk_badges = atk_state.get_status_badges()
+		step.def_badges = def_state.get_status_badges()
+		step.atk_spd_after = atk_state.get_effective_speed()
+		step.def_spd_after = def_state.get_effective_speed()
+		step.atk_eva_after = atk_state.get_effective_evasion()
+		step.def_eva_after = def_state.get_effective_evasion()
 		result.steps.append(step)
 
 		if step.escaped or atk_state.hp <= 0 or def_state.hp <= 0:
@@ -589,7 +621,7 @@ class BattleSession extends RefCounted:
 		if is_crit:
 			notes.append("CRITICAL HIT!")
 		if target.defending:
-			notes.append("GUARDED (-50%)")
+			notes.append("GUARDED (-%d%%)" % GUARD_BLOCK_PCT)
 		if step.soften_from != "":
 			notes.append("SHIELD DEFLECT!")
 		step.status_text = " // ".join(notes)
@@ -609,52 +641,19 @@ class BattleSession extends RefCounted:
 		step.is_support_only = true
 		actor.used_support_ids[ab.ability_id] = true
 
-		match ab.effect_type:
-			"PROTECT_RICOCHET":
-				actor.def_buff_pct = mini(75, actor.def_buff_pct + 35)
-				actor.pending_soften = "krupp_plate"
-				step.status_text = "DEF +35% // GLACIS ANGLING"
-			"BULKHEAD_WALL":
-				actor.def_buff_pct = mini(85, actor.def_buff_pct + 45)
-				step.status_text = "BULKHEAD DEPLOYED (+45% DEF)"
-			"ANCHOR_BRACE":
-				actor.def_buff_pct = mini(75, actor.def_buff_pct + 30)
-				actor.acc_buff_pct += 20
-				actor.crit_buff_pct += 15
-				step.status_text = "BRACED (+30% DEF / +CRIT)"
-			"REACTIVE_SHIELD":
-				actor.def_buff_pct = mini(75, actor.def_buff_pct + 20)
-				actor.pending_soften = "ablative_shield"
-				step.status_text = "REACTIVE SHIELD ARMED"
-			"THRUSTER_EVADE":
-				actor.eva_buff_pct = mini(45, actor.eva_buff_pct + 30)
-				actor.spd_buff_pct = mini(60, actor.spd_buff_pct + 35)
-				actor.pending_soften = "gyro_thruster"
-				step.status_text = "EVA +30% // HASTE +35%"
-			"RECON_LOCK":
-				actor.acc_buff_pct += 35
-				actor.crit_buff_pct += 35
-				actor.atk_buff_pct = mini(65, actor.atk_buff_pct + 20)
-				step.status_text = "TARGET LOCK (+35% CRIT/ACC)"
-			"BALLISTIC_PLOT":
-				actor.atk_buff_pct = mini(65, actor.atk_buff_pct + 30)
-				actor.crit_buff_pct += 25
-				actor.armor_pierce_bonus = minf(0.45, actor.armor_pierce_bonus + 0.20)
-				step.status_text = "FIRE PLOT (+30% ATK / +AP)"
-			"ECM_JAM":
-				target.acc_buff_pct = maxi(-45, target.acc_buff_pct - 30)
-				target.spd_buff_pct = maxi(-45, target.spd_buff_pct - 25)
-				target.def_buff_pct = maxi(-40, target.def_buff_pct - 20)
-				step.status_text = "ENEMY JAMMED (-ACC/-SPD/-DEF)"
-			"CMD_UPLINK":
-				actor.atk_buff_pct = mini(65, actor.atk_buff_pct + 25)
-				actor.def_buff_pct = mini(75, actor.def_buff_pct + 25)
-				actor.spd_buff_pct = mini(60, actor.spd_buff_pct + 15)
-				actor.acc_buff_pct += 15
-				step.status_text = "HQ UPLINK (+25% ATK/DEF)"
-			_:
-				actor.def_buff_pct += 25
-				step.status_text = "SYSTEM BOOST"
+		var fx: Dictionary = SUPPORT_EFFECTS.get(ab.effect_type, {})
+		if fx.is_empty():
+			push_warning("SkirmishEngine: unknown support effect '%s' on %s; applying the generic boost" % [ab.effect_type, ab.ability_id])
+			fx = SUPPORT_FALLBACK
+		var who: CombatantState = target if fx.get("on_foe", false) else actor
+		for mod in fx["mods"]:
+			var v = who.get(mod[0]) + mod[1]
+			if mod.size() > 2:
+				v = min(v, mod[2]) if mod[1] > 0 else max(v, mod[2])  # buffs stop at a cap, debuffs at a floor
+			who.set(mod[0], v)
+		if fx.has("soften"):
+			actor.pending_soften = fx["soften"]
+		step.status_text = fx["text"]
 
 		step.description = "%s activates [%s] -> %s!" % [actor.mech.callsign, ab.ability_name, step.status_text]
 

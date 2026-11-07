@@ -44,20 +44,18 @@ func _init(
 func is_weapon() -> bool:
 	return category == "WEAPON"
 
+## Script variable names, from the property list, so a new field is copied automatically.
+static var _state_props: PackedStringArray = PackedStringArray()
+
 func duplicate_ability() -> CombatAbility:
-	return CombatAbility.new(
-		ability_id,
-		ability_name,
-		category,
-		energy_cost,
-		power_multiplier,
-		flat_power,
-		accuracy,
-		crit_bonus,
-		armor_pierce,
-		effect_type,
-		description
-	)
+	if _state_props.is_empty():
+		for prop in get_property_list():
+			if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE and prop["name"] != "_state_props":
+				_state_props.append(String(prop["name"]))
+	var copy := CombatAbility.new()
+	for n in _state_props:
+		copy.set(n, get(n))
+	return copy
 
 func get_stats_summary() -> String:
 	if is_weapon():

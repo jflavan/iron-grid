@@ -36,7 +36,10 @@ static func backdrop_path(terrain: int) -> String:
 	return "res://assets/battle/backdrops/%s.png" % BACKDROP_BY_TERRAIN.get(terrain, "plain")
 
 static func get_backdrop(terrain: int) -> Texture2D:
-	if not _backdrop_cache.has(terrain):
-		_backdrop_cache[terrain] = load(backdrop_path(terrain)) as Texture2D
-	return _backdrop_cache[terrain]
+	var tex: Texture2D = _backdrop_cache.get(terrain)
+	if tex == null:
+		tex = load(backdrop_path(terrain)) as Texture2D
+		if tex != null:   # a missing backdrop is not cached, so adding the file fixes it without a restart
+			_backdrop_cache[terrain] = tex
+	return tex
 

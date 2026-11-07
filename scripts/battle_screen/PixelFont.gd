@@ -14,6 +14,10 @@ static var _attempted: bool = false
 static var _index: Dictionary = {}
 static var _ascii_table: PackedInt32Array = PackedInt32Array()
 
+## Loads the glyph atlas and index now instead of on the first text draw.
+static func warm() -> void:
+	_ensure()
+
 static func _ensure() -> void:
 	if _attempted:
 		return

@@ -32,6 +32,19 @@ const CHASSIS_NAMES := {
 	"donner": "SPINNE", "kommandant": "KAISERSTUHL", "moloch": "BRENNER",
 }
 
+## Phase names (string values are part of the contract: BattleScreen, BattlePreview and tests compare them).
+const PHASE_IDLE := "idle"
+const PHASE_INTRO := "intro"
+const PHASE_MENU := "menu"
+const PHASE_SUPPORT := "support"
+const PHASE_ATTACK := "attack"
+const PHASE_SETTLE := "settle"
+const PHASE_ENDING := "ending"
+const PHASE_RESULT := "result"
+const PHASE_COMMAND_SELECT := "command_select"
+
+const COST_SLOTS := ["cost0", "cost1", "cost2", "cost3", "cost4", "cost5", "cost6", "cost7"]  # _en_cost cache keys
+
 const INTRO_DUR := 0.6
 const SETTLE_DUR := 0.45
 const STATUS_DUR := 0.85
@@ -56,7 +69,7 @@ var finished: bool = false
 var speed_label: String = ""
 var auto_pilot: bool = false
 
-var phase: String = "idle"
+var phase: String = PHASE_IDLE
 var phase_t: float = 0.0
 var beat_idx: int = -1
 var clock: float = 0.0
@@ -71,6 +84,8 @@ var _tech_label_cache: Dictionary = {}  # ability_id -> "NAME [CATEGORY]" banner
 var _wrap_src: String = ""            # result headline wrap cache (text + width)
 var _wrap_px: int = -1
 var _wrap_lines: PackedStringArray = PackedStringArray()
+var _labels: Dictionary = {}          # per-fight static HUD strings (callsigns, chassis, tile, command banner)
+var _num_text: Dictionary = {}        # slot -> [a, b, text]: "%d/%d"-style HUD numbers, formatted only when they change
 
 # Interactive Command Menu State
 var menu_cursor: int = 0
@@ -87,7 +102,7 @@ func setup(
 	timeline = p_timeline
 	session = p_session
 	finished = false
-	phase = "intro"
+	phase = PHASE_INTRO
 	phase_t = 0.0
 	beat_idx = -1
 	clock = 0.0
@@ -103,7 +118,17 @@ func setup(
 	hull_display = timeline.start_hull.duplicate()
 	true_hull = timeline.start_hull.duplicate()
 	energy_display = timeline.start_energy.duplicate()
+	_num_text.clear()
 	_backdrop = BattleLayout.get_backdrop(result.target_tile.terrain_type)
+	var tile := result.target_tile
+	var coa_data: MechData = result.attacker if timeline.coalition_side == "atk" else result.defender
+	var syn_data: MechData = result.defender if timeline.coalition_side == "atk" else result.attacker
+	_labels = {
+		"coa_name": short_callsign(coa_data.callsign), "syn_name": short_callsign(syn_data.callsign),
+		"syn_chassis": CHASSIS_NAMES.get(syn_data.chassis_id, syn_data.chassis_id.to_upper()),
+		"tile": "%s %dm" % [tile.get_terrain_short_code(), tile.get_elevation_meters()],
+		"command_banner": "COMMAND // %s" % short_callsign(coa_data.callsign),
+	}
 	var atk_left := BattleLayout.attacker_on_left(result.from_tile.coords, result.target_tile.coords)
 	var lift := BattleLayout.elevation_offsets(result.elev_diff)
 	mechs = {
@@ -148,7 +173,7 @@ func skip_to_end() -> void:
 	in_tech_submenu = false
 
 	var first_unhit := maxi(0, beat_idx)
-	if phase in ["attack", "settle"] and _impact_done:
+	if phase in [PHASE_ATTACK, PHASE_SETTLE] and _impact_done:
 		first_unhit = beat_idx + 1
 	for i in range(maxi(0, beat_idx), timeline.beats.size()):
 		_apply_persistent(i)
@@ -158,18 +183,18 @@ func skip_to_end() -> void:
 				SupportAnims.consume_soften(self, mechs[b["target"]], b["soften_from"])
 	beat_idx = timeline.beats.size()
 	_apply_ending_final()
-	_enter("result")
+	_enter(PHASE_RESULT)
 	queue_redraw()
 
 ## Fast-forwards current turn animations until the next interactive `command_select` prompt
 ## (or `result` if the battle concludes during this exchange).
 func skip_to_next_command_or_end() -> void:
-	if finished or phase == "command_select":
+	if finished or phase == PHASE_COMMAND_SELECT:
 		return
 	_fast_forwarding = true
 	var guard := 0
-	while phase not in ["result", "command_select"] and guard < 64:
-		if phase == "attack" and not _impact_done:
+	while phase not in [PHASE_RESULT, PHASE_COMMAND_SELECT] and guard < 64:
+		if phase == PHASE_ATTACK and not _impact_done:
 			_apply_impact(current_beat())
 		phase_t = 0.0
 		_next_phase()
@@ -188,10 +213,10 @@ func advance(delta: float) -> void:
 		if numbers[ni]["age"] >= 1.6:
 			numbers.remove_at(ni)
 		ni -= 1
-	if phase == "result":
+	if phase == PHASE_RESULT:
 		queue_redraw()
 		return
-	if phase == "command_select":
+	if phase == PHASE_COMMAND_SELECT:
 		if auto_pilot:
 			_trigger_auto_player_command()
 		else:
@@ -199,13 +224,18 @@ func advance(delta: float) -> void:
 			return
 	phase_t += delta
 	while true:
-		if phase == "attack" and not _impact_done and phase_t >= _attack_impact_time():
+		if phase == PHASE_ATTACK and not _impact_done and phase_t >= _attack_impact_time():
 			_apply_impact(current_beat())
 		var dur := _phase_duration()
-		if phase in ["result", "command_select"] or phase_t < dur:
+		if phase in [PHASE_RESULT, PHASE_COMMAND_SELECT] or phase_t < dur:
 			break
 		phase_t -= dur
+		var before := phase
 		_next_phase()
+		if phase == before and dur <= 0.0:
+			# A zero-length phase that does not advance (e.g. advance() before setup()) would spin forever.
+			push_error("BattleStage: phase '%s' made no progress (duration 0); aborting advance" % phase)
+			break
 	queue_redraw()
 
 func current_beat() -> Dictionary:
@@ -215,7 +245,7 @@ func current_beat() -> Dictionary:
 
 # ---------------------------------------------------------------- interactive menu input
 func move_cursor(dir: int) -> void:
-	if phase != "command_select":
+	if phase != PHASE_COMMAND_SELECT:
 		return
 	SoundManager.play("ui_click")
 	if in_tech_submenu:
@@ -227,7 +257,7 @@ func move_cursor(dir: int) -> void:
 	queue_redraw()
 
 func cancel_submenu() -> bool:
-	if phase == "command_select" and in_tech_submenu:
+	if phase == PHASE_COMMAND_SELECT and in_tech_submenu:
 		in_tech_submenu = false
 		SoundManager.play("ui_cancel")
 		queue_redraw()
@@ -235,7 +265,7 @@ func cancel_submenu() -> bool:
 	return false
 
 func confirm_selection() -> void:
-	if phase != "command_select" or session == null:
+	if phase != PHASE_COMMAND_SELECT or session == null:
 		return
 	var coa_side := timeline.coalition_side
 	var coa_state := session.get_combatant(coa_side)
@@ -276,7 +306,7 @@ func confirm_selection() -> void:
 ## the first row (header / EN meter) or below the last one. floori keeps a point just above row 0
 ## negative; int() would truncate -0.7 to row 0 and fire the first entry.
 func menu_row_at(stage_pos: Vector2) -> int:
-	if phase != "command_select":
+	if phase != PHASE_COMMAND_SELECT:
 		return -1
 	var box: Rect2 = TECH_BOX_RECT if in_tech_submenu else CMD_BOX_RECT
 	if not box.has_point(stage_pos):
@@ -299,7 +329,7 @@ func handle_mouse_motion(stage_pos: Vector2) -> void:
 		queue_redraw()
 
 func handle_mouse_click(stage_pos: Vector2) -> bool:
-	if phase != "command_select":
+	if phase != PHASE_COMMAND_SELECT:
 		return false
 	var row := menu_row_at(stage_pos)
 	if row >= 0:
@@ -345,7 +375,7 @@ func _commit_session_turn(cmd_type: int, ability_id: String) -> void:
 func _show_committed_turn(had_step: bool) -> void:
 	if not had_step:
 		if session.is_finished:
-			_enter("ending")
+			_enter(PHASE_ENDING)
 		return
 	beat_idx = timeline.beats.size() - 1
 	_impact_done = false
@@ -358,41 +388,41 @@ func _show_committed_turn(had_step: bool) -> void:
 func _phase_duration() -> float:
 	var b := current_beat()
 	match phase:
-		"intro":
+		PHASE_INTRO:
 			return INTRO_DUR
-		"menu":
+		PHASE_MENU:
 			return 0.28 + 0.10 * maxi(0, int(b["command_row"])) if int(b["command_row"]) >= 0 else 0.22
-		"support":
+		PHASE_SUPPORT:
 			return _support_duration(b)
-		"attack":
+		PHASE_ATTACK:
 			return WeaponAnims.duration(_attack_ability(b))
-		"settle":
+		PHASE_SETTLE:
 			return STATUS_DUR if b["status_text"] != "" else SETTLE_DUR
-		"ending":
+		PHASE_ENDING:
 			return DESTROY_DUR if timeline.ending.begins_with("destroy") else ENDING_DUR
 	return 0.0
 
 func _next_phase() -> void:
 	match phase:
-		"intro":
+		PHASE_INTRO:
 			_start_beat(0)
-		"menu":
+		PHASE_MENU:
 			var b := current_beat()
 			energy_display[b["actor"]] = b["energy_after"][b["actor"]]
 			_enter_beat_anim(b)
-		"support":
+		PHASE_SUPPORT:
 			_apply_persistent(beat_idx)
 			# Pure FF support/status turns finish their turn after the support animation (no follow-up shot)
-			_enter("settle")
-		"attack":
+			_enter(PHASE_SETTLE)
+		PHASE_ATTACK:
 			if not _impact_done:
 				_apply_impact(current_beat())
-			_enter("settle")
-		"settle":
+			_enter(PHASE_SETTLE)
+		PHASE_SETTLE:
 			_start_beat(beat_idx + 1)
-		"ending":
+		PHASE_ENDING:
 			_apply_ending_final()
-			_enter("result")
+			_enter(PHASE_RESULT)
 
 func _start_beat(i: int) -> void:
 	beat_idx = i
@@ -404,7 +434,7 @@ func _start_beat(i: int) -> void:
 			# from there, so manual and auto-piloted player turns share one path.
 			in_tech_submenu = false
 			phase_t = 0.0
-			_enter("command_select")
+			_enter(PHASE_COMMAND_SELECT)
 			if not auto_pilot:
 				SoundManager.play("ui_click")
 			return
@@ -414,25 +444,25 @@ func _start_beat(i: int) -> void:
 			timeline.sync_ending_from_result(result)
 
 	if i >= timeline.beats.size():
-		_enter("ending")
+		_enter(PHASE_ENDING)
 		return
 	_impact_done = false
-	_enter("menu")
+	_enter(PHASE_MENU)
 	if int(current_beat()["command_row"]) >= 0:
 		SoundManager.play("ui_click")
 
 ## Starts a beat's animation phase, with the audio cue the beat type deserves.
 func _enter_beat_anim(b: Dictionary) -> void:
 	if not b["is_support_only"]:
-		_enter("attack")
+		_enter(PHASE_ATTACK)
 		return
-	_enter("support")
+	_enter(PHASE_SUPPORT)
 	if not _fast_forwarding:
 		SoundManager.play("buff_up" if String(b["ability_id"]) in ["defend", "retreat"] else "tech_activate")
 
 func _enter(p: String) -> void:
 	phase = p
-	if p == "result":
+	if p == PHASE_RESULT:
 		finished = true
 		hull_display = timeline.end_hull.duplicate()
 		energy_display = timeline.end_energy.duplicate()
@@ -453,7 +483,7 @@ func _apply_persistent(i: int) -> void:
 	_persist_done[i] = true
 	var b: Dictionary = timeline.beats[i]
 	if b["is_support_only"]:
-		SupportAnims.apply_persistent(self, mechs[b["actor"]], b["ability_id"])
+		SupportAnims.apply_persistent(mechs[b["actor"]], mechs[b["target"]], b["ability_id"])
 
 func _ending_losers() -> Array:
 	match timeline.ending:
@@ -521,6 +551,59 @@ func coalition_mech() -> Dictionary:
 func syndikat_mech() -> Dictionary:
 	return mechs["def" if timeline.coalition_side == "atk" else "atk"]
 
+static var _prompts: PackedStringArray = PackedStringArray()
+
+## One-line help for each command row; the DEFEND numbers come from the engine constants.
+static func _command_prompts() -> PackedStringArray:
+	if _prompts.is_empty():
+		_prompts = PackedStringArray([
+			"STANDARD CANNON ATTACK (0 EN)",
+			"ACTIVATE CHASSIS TECH ABILITY (USES EN)",
+			"BRACE HULL PLATING (-%d%% DMG TAKEN, +%d EN)" % [SkirmishEngine.GUARD_BLOCK_PCT, SkirmishEngine.DEFEND_EN_GAIN],
+			"ATTEMPT TACTICAL DISENGAGE (SPEED ROLL)",
+		])
+	return _prompts
+
+## "%d/%d" / "SPD %d  EVA %d%%"-style text, formatted only when one of its two numbers changed.
+func _pair_text(slot: String, fmt: String, a: int, b: int) -> String:
+	var e = _num_text.get(slot)
+	if e == null:
+		e = [a, b, fmt % [a, b]]
+		_num_text[slot] = e
+	elif e[0] != a or e[1] != b:
+		e[0] = a
+		e[1] = b
+		e[2] = fmt % [a, b]
+	return e[2]
+
+## The status the HUD panels show for `side`: the snapshot stored on the beat being shown (so it can
+## never run ahead of the animation, and showdown playback matches a live fight). Before the first
+## beat of a live fight the session itself is still at its starting state; a showdown shows nothing.
+## Returns {} when there is nothing to show, else {"badges": Array, "spd": int, "eva": int}.
+func _status_of(side: String) -> Dictionary:
+	var b := current_beat()
+	if b.is_empty() and beat_idx >= timeline.beats.size() and not timeline.beats.is_empty():
+		b = timeline.beats.back()   # command_select / ending / result: the last recorded step
+	if not b.is_empty():
+		return {"badges": b["badges"][side], "spd": int(b["spd"][side]), "eva": int(b["eva"][side])}
+	if session != null:
+		var st := session.get_combatant(side)
+		return {"badges": st.get_status_badges(), "spd": st.get_effective_speed(), "eva": st.get_effective_evasion()}
+	return {}
+
+## Loads everything a battle can draw (sheets, silhouettes, variants and attachments of the given
+## chassis, both factions' attachment art, the backdrops of the given terrains, the font and the
+## effect circle) so the first engagement does not hitch. Call at mission load. Safe to repeat.
+static func warm_assets(chassis_ids: Array, terrains: Array) -> void:
+	for id in chassis_ids:
+		MechSpriteBank.warm(String(id))
+	SupportAnims.warm(0)
+	SupportAnims.warm(1)
+	for t in terrains:
+		BattleLayout.get_backdrop(int(t))
+	PixelFont.warm()
+	BattleFX.warm()
+
 static func short_callsign(s: String) -> String:
 	var i := s.find(" (")
 	return s.substr(0, i) if i > 0 else s
@@ -557,7 +640,7 @@ func _animate() -> void:
 		m["bricks_glow"] = 0.4 if m["armed"] and int(clock / 0.3) % 2 == 0 else 0.0
 	_fx.clear()
 	# Hold-at-1: a walker whose real hull is gone keeps acting but staggers, sparks and smokes.
-	if phase not in ["ending", "result"]:
+	if phase not in [PHASE_ENDING, PHASE_RESULT]:
 		for side in mechs:
 			if int(true_hull[side]) <= 0:
 				var m: Dictionary = mechs[side]
@@ -567,7 +650,7 @@ func _animate() -> void:
 				fx(func(ci):
 					BattleFX.sparks(ci, h + Vector2(4, -6), k, 4, 10.0, 7)
 					BattleFX.blob(ci, h + Vector2(-6, -12 - k * 14), int(2 + k * 4), Color(0.25, 0.24, 0.22, 0.8 * (1.0 - k))))
-	if phase == "ending":
+	if phase == PHASE_ENDING:
 		_animate_ending()
 		return
 	var b := current_beat()
@@ -576,9 +659,9 @@ func _animate() -> void:
 	var a: Dictionary = mechs[b["actor"]]
 	var d: Dictionary = mechs[b["target"]]
 	match phase:
-		"support":
+		PHASE_SUPPORT:
 			SupportAnims.run(self, a, d, b["ability_id"], phase_t)
-		"attack":
+		PHASE_ATTACK:
 			var ab_id := _attack_ability(b)
 			WeaponAnims.run(self, a, d, ab_id, phase_t, not b.get("is_miss", false))
 			var imp := WeaponAnims.impact_time(ab_id)
@@ -635,14 +718,15 @@ func _animate_ending() -> void:
 					m["dark"] = k > 0.15
 
 func _draw() -> void:
-	if result == null:
+	if result == null or mechs.is_empty():
 		return
 	_animate()
-	draw_texture(_backdrop, Vector2.ZERO)
+	if _backdrop != null:
+		draw_texture(_backdrop, Vector2.ZERO)
 	for m in mechs.values():
 		var feet := point(m, "feet")
 		BattleFX.shadow(self, feet.x, GROUND_Y, int(MechSpriteBank.cell_size(m["sheet"]).x * 0.32))
-	for side in ["def", "atk"] if phase != "attack" or current_beat().get("actor", "atk") == "atk" else ["atk", "def"]:
+	for side in ["def", "atk"] if phase != PHASE_ATTACK or current_beat().get("actor", "atk") == "atk" else ["atk", "def"]:
 		_draw_mech(mechs[side])
 	for m in mechs.values():
 		if m["slab"]:
@@ -697,14 +781,14 @@ func _draw_mech(m: Dictionary) -> void:
 		elif m["glow"].a > 0.0:
 			draw_texture_rect_region(white, Rect2(dst_pos, src_vis.size), src_vis, m["glow"])
 	if m["bricks_glow"] > 0.0 and not m["dark"]:
-		var br = MechSpriteBank.meta_for(m["chassis"]).get("anchors", {}).get("bricks", null)
+		var br = MechSpriteBank.bricks_anchor(m["chassis"])
 		if br != null:
 			var off := MechSpriteBank.pose_offset(sheet_of(m), pose)
-			draw_rect(Rect2(Vector2(br[0], br[1]) + off, Vector2(31, 19)), Color(1.0, 0.7, 0.2, m["bricks_glow"] * 0.5))
+			draw_rect(Rect2(br + off, Vector2(31, 19)), Color(1.0, 0.7, 0.2, m["bricks_glow"] * 0.5))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if not m["dark"]:
-		var stacks: Array = MechSpriteBank.meta_for(sheet_of(m)).get("anchors", {}).get("stacks", [])
-		for i in stacks.size():
+		var n_stacks := MechSpriteBank.stack_count(sheet_of(m))
+		for i in n_stacks:
 			BattleFX.exhaust(self, point(m, MechSpriteBank.STACK_NAMES[i] if i < MechSpriteBank.STACK_NAMES.size() else "stacks/%d" % i), clock, i * 0.37 + (0.2 if m["side"] == "def" else 0.0), m["dir"])
 	elif sink > 0.0:
 		BattleFX.exhaust(self, point(m, "hull") + Vector2(0, sink), clock * 0.7, 0.1, m["dir"])
@@ -727,24 +811,24 @@ func _draw_menu() -> void:
 	BattleFX.panel(self, Rect2(112, MENU_Y, 246, 70))
 
 	var sd: MechData = syn["data"]
-	PixelFont.draw_text(self, short_callsign(sd.callsign), Vector2(8, MENU_Y + 7), C_NAME)
-	PixelFont.draw_text(self, CHASSIS_NAMES.get(sd.chassis_id, sd.chassis_id.to_upper()), Vector2(8, MENU_Y + 18), C_LABEL.darkened(0.25))
+	PixelFont.draw_text(self, _labels["syn_name"], Vector2(8, MENU_Y + 7), C_NAME)
+	PixelFont.draw_text(self, _labels["syn_chassis"], Vector2(8, MENU_Y + 18), C_LABEL.darkened(0.25))
 
 	var syn_hull := int(hull_display[syn_side])
 	PixelFont.draw_text(self, "HULL", Vector2(8, MENU_Y + 30), C_LABEL)
 	_gauge(Rect2(38, MENU_Y + 32, 66, 3), clampf(float(syn_hull) / maxf(1.0, float(sd.max_armor)), 0.0, 1.0), C_HULL)
-	_right_text("%d/%d" % [syn_hull, sd.max_armor], 104, MENU_Y + 40, C_NUM)
+	_right_text(_pair_text("syn_hull", "%d/%d", syn_hull, sd.max_armor), 104, MENU_Y + 40, C_NUM)
 
-	var tile := result.target_tile
-	PixelFont.draw_text(self, "%s %dm" % [tile.get_terrain_short_code(), tile.get_elevation_meters()], Vector2(8, MENU_Y + 56), C_LABEL)
-	if session != null:
-		var syn_badges := session.get_combatant(syn_side).get_status_badges()
+	PixelFont.draw_text(self, _labels["tile"], Vector2(8, MENU_Y + 56), C_LABEL)
+	var syn_status := _status_of(syn_side)
+	if not syn_status.is_empty():
+		var syn_badges: Array = syn_status["badges"]
 		if not syn_badges.is_empty():
 			_right_text(syn_badges[0], 104, MENU_Y + 56, C_CURSOR)
 
 	# Coalition Panel (Right Half)
 	var cd: MechData = coa["data"]
-	PixelFont.draw_text(self, short_callsign(cd.callsign), Vector2(200, MENU_Y + 7), C_NAME)
+	PixelFont.draw_text(self, _labels["coa_name"], Vector2(200, MENU_Y + 7), C_NAME)
 
 	var mode_tag := speed_label
 	if auto_pilot:
@@ -755,24 +839,24 @@ func _draw_menu() -> void:
 	var coa_hull := int(hull_display[coa_side])
 	PixelFont.draw_text(self, "HULL", Vector2(200, MENU_Y + 21), C_LABEL)
 	_gauge(Rect2(284, MENU_Y + 23, 66, 3), clampf(float(coa_hull) / maxf(1.0, float(cd.max_armor)), 0.0, 1.0), C_HULL)
-	_right_text("%d/%d" % [coa_hull, cd.max_armor], 350, MENU_Y + 30, C_NUM)
+	_right_text(_pair_text("coa_hull", "%d/%d", coa_hull, cd.max_armor), 350, MENU_Y + 30, C_NUM)
 
 	var coa_en := int(energy_display[coa_side])
 	PixelFont.draw_text(self, "EN", Vector2(200, MENU_Y + 41), C_LABEL)
 	_gauge(Rect2(284, MENU_Y + 43, 66, 4), clampf(float(coa_en) / maxf(1.0, float(cd.max_energy)), 0.0, 1.0), C_EN)
-	_right_text("%d/%d" % [coa_en, cd.max_energy], 350, MENU_Y + 50, C_NUM)
+	_right_text(_pair_text("coa_en", "%d/%d", coa_en, cd.max_energy), 350, MENU_Y + 50, C_NUM)
 
-	if session != null:
-		var coa_live := session.get_combatant(coa_side)
-		var coa_badges := coa_live.get_status_badges()
+	var coa_status := _status_of(coa_side)
+	if not coa_status.is_empty():
+		var coa_badges: Array = coa_status["badges"]
 		if not coa_badges.is_empty():
 			PixelFont.draw_text(self, " ".join(coa_badges.slice(0, 2)), Vector2(200, MENU_Y + 58), C_CURSOR)
 		else:
-			PixelFont.draw_text(self, "SPD %d  EVA %d%%" % [coa_live.get_effective_speed(), coa_live.get_effective_evasion()], Vector2(200, MENU_Y + 58), C_LABEL.darkened(0.2))
+			PixelFont.draw_text(self, _pair_text("coa_spd_eva", "SPD %d  EVA %d%%", int(coa_status["spd"]), int(coa_status["eva"])), Vector2(200, MENU_Y + 58), C_LABEL.darkened(0.2))
 
 	# Command Menu (Interactive or Automated Beat Preview)
 	var b := current_beat()
-	if phase == "command_select":
+	if phase == PHASE_COMMAND_SELECT:
 		if not in_tech_submenu:
 			BattleFX.panel(self, CMD_BOX_RECT)
 			for i in COMMANDS.size():
@@ -786,7 +870,7 @@ func _draw_menu() -> void:
 		else:
 			BattleFX.panel(self, TECH_BOX_RECT)
 			PixelFont.draw_text(self, "TECH SYSTEMS [ESC]", Vector2(122, MENU_Y + 8), C_LABEL)
-			_right_text("EN %d/%d" % [coa_en, cd.max_energy], int(TECH_BOX_RECT.end.x - 6), MENU_Y + 8, C_EN)
+			_right_text(_pair_text("tech_en", "EN %d/%d", coa_en, cd.max_energy), int(TECH_BOX_RECT.end.x - 6), MENU_Y + 8, C_EN)
 			var coa_state := session.get_combatant(coa_side)
 			for i in cd.abilities.size():
 				var ab: CombatAbility = cd.abilities[i]
@@ -798,10 +882,10 @@ func _draw_menu() -> void:
 					short_ab = short_ab.substr(0, 24)
 				var ry := _tech_row_y(i)
 				PixelFont.draw_text(self, short_ab, Vector2(130, ry), col)
-				_right_text("USED" if spent else "%dEN" % ab.energy_cost, int(TECH_BOX_RECT.end.x - 6), ry, C_EN if affordable else C_DIM)
+				_right_text("USED" if spent else _en_cost(i, ab.energy_cost), int(TECH_BOX_RECT.end.x - 6), ry, C_EN if affordable else C_DIM)
 			var cy := _tech_row_y(tech_cursor)
 			_draw_cursor(cy)
-	elif phase == "menu" and int(b.get("command_row", -1)) >= 0:
+	elif phase == PHASE_MENU and int(b.get("command_row", -1)) >= 0:
 		BattleFX.panel(self, CMD_BOX_RECT)
 		for i in COMMANDS.size():
 			PixelFont.draw_text(self, COMMANDS[i], Vector2(130, _cmd_row_y(i)), C_NAME)
@@ -810,6 +894,15 @@ func _draw_menu() -> void:
 		if int(clock / 0.18) % 2 == 0 or row == target_row:
 			var cy := _cmd_row_y(row)
 			_draw_cursor(cy)
+
+## "<cost>EN" label of ability row `i`, cached per row until the cost changes.
+func _en_cost(i: int, cost: int) -> String:
+	var slot: String = COST_SLOTS[i] if i < COST_SLOTS.size() else "cost_x"
+	var e = _num_text.get(slot)
+	if e == null or e[0] != cost:
+		e = [cost, 0, "%dEN" % cost]
+		_num_text[slot] = e
+	return e[2]
 
 ## Drawn y of a command / ability row, derived from the same constants menu_row_at hit-tests with.
 func _cmd_row_y(i: int) -> int:
@@ -831,12 +924,12 @@ func _right_text(s: String, right_x: int, y: int, col: Color) -> void:
 
 func _draw_banner() -> void:
 	var b := current_beat()
-	if phase == "intro" and result != null:
+	if phase == PHASE_INTRO and result != null:
 		var intro_lines: Array[String] = []
 		if result.approach_angle == "REAR":
-			intro_lines.append("TACTICAL AMBUSH // REAR ATTACK (+30% FP)")
+			intro_lines.append("TACTICAL AMBUSH // REAR ATTACK (+%d%% FP)" % SkirmishEngine.REAR_ATK_FP_PCT)
 		elif result.approach_angle == "FLANK":
-			intro_lines.append("FLANKING ASSAULT // SIDE ANGLE (+15% FP)")
+			intro_lines.append("FLANKING ASSAULT // SIDE ANGLE (+%d%% FP)" % SkirmishEngine.FLANK_ATK_FP_PCT)
 		else:
 			intro_lines.append("HEAD-ON ENGAGEMENT // FRONTAL CLASH")
 		if not result.tactical_tags.is_empty():
@@ -849,7 +942,7 @@ func _draw_banner() -> void:
 		BattleFX.panel(self, r)
 		for i in intro_lines.size():
 			PixelFont.draw_centered(self, intro_lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_CURSOR)
-	elif phase == "command_select":
+	elif phase == PHASE_COMMAND_SELECT:
 		var coa_data: MechData = coalition_mech()["data"]
 		var top_lines: Array[String] = []
 		if in_tech_submenu and tech_cursor >= 0 and tech_cursor < coa_data.abilities.size():
@@ -861,13 +954,8 @@ func _draw_banner() -> void:
 			top_lines.append(tl)
 			top_lines.append(_up(ab.description))
 		else:
-			var prompts := [
-				"STANDARD CANNON ATTACK (0 EN)",
-				"ACTIVATE CHASSIS TECH ABILITY (USES EN)",
-				"BRACE HULL PLATING (-50% DMG TAKEN, +2 EN)",
-				"ATTEMPT TACTICAL DISENGAGE (SPEED ROLL)"
-			]
-			top_lines.append("COMMAND // %s" % short_callsign(coa_data.callsign))
+			var prompts := _command_prompts()
+			top_lines.append(_labels["command_banner"])
 			top_lines.append(prompts[clampi(menu_cursor, 0, prompts.size() - 1)])
 		var w := 180
 		for l in top_lines:
@@ -877,10 +965,10 @@ func _draw_banner() -> void:
 		BattleFX.panel(self, r)
 		for i in top_lines.size():
 			PixelFont.draw_centered(self, top_lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_LABEL)
-	elif phase in ["support", "attack", "settle"] and not b.is_empty():
+	elif phase in [PHASE_SUPPORT, PHASE_ATTACK, PHASE_SETTLE] and not b.is_empty():
 		var text: String = _up(String(b["ability_name"]))
 		var lines := [text]
-		if phase == "settle" and String(b.get("status_text", "")) != "":
+		if phase == PHASE_SETTLE and String(b.get("status_text", "")) != "":
 			lines.append(_up(String(b["status_text"])))
 		var w := 16
 		for l in lines:
@@ -890,7 +978,7 @@ func _draw_banner() -> void:
 		BattleFX.panel(self, r)
 		for i in lines.size():
 			PixelFont.draw_centered(self, lines[i], W / 2.0, r.position.y + 4 + i * 10, C_NAME if i == 0 else C_CURSOR)
-	elif phase == "result":
+	elif phase == PHASE_RESULT:
 		var lines := _wrapped_headline(timeline.headline, 300)
 		var r := Rect2(24, 44, 312, 20 + lines.size() * 10 + 12)
 		BattleFX.panel(self, r)

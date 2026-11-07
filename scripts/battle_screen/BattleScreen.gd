@@ -74,8 +74,19 @@ func _screen_to_stage(screen_pos: Vector2) -> Vector2:
 	var rel := screen_pos - _view.position
 	return Vector2(rel.x * float(NATIVE.x) / _view.size.x, rel.y * float(NATIVE.y) / _view.size.y)
 
+## A session that is replaced while still on screen must not lose its result: a concluded one is
+## written back to the units now; an unfinished one cannot be applied, so say so.
+func _flush_active_session() -> void:
+	if not _is_active or current_session == null or _all_steps_done:
+		return
+	if current_session.is_finished:
+		_finish()
+	else:
+		push_warning("BattleScreen: replacing an unfinished battle session; its progress is discarded")
+
 ## Starts a live interactive turn-based BattleSession.
 func start_session(session: SkirmishEngine.BattleSession) -> void:
+	_flush_active_session()
 	current_session = session
 	current_result = session.result
 	_is_active = true
@@ -90,6 +101,7 @@ func start_session(session: SkirmishEngine.BattleSession) -> void:
 
 ## Plays back a pre-resolved SkirmishResult (used by BattlePreview and unit tests).
 func start_showdown(result: SkirmishEngine.SkirmishResult) -> void:
+	_flush_active_session()
 	current_session = null
 	current_result = result
 	_is_active = true
@@ -130,7 +142,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
-		if stage.phase == "command_select":
+		if stage.phase == BattleStage.PHASE_COMMAND_SELECT:
 			if event.keycode == KEY_UP or event.keycode == KEY_W:
 				stage.move_cursor(-1)
 				get_viewport().set_input_as_handled()
@@ -156,10 +168,10 @@ func _gui_input(event: InputEvent) -> void:
 	if not visible or not _is_active:
 		return
 	if event is InputEventMouseMotion:
-		if stage.phase == "command_select":
+		if stage.phase == BattleStage.PHASE_COMMAND_SELECT:
 			stage.handle_mouse_motion(_screen_to_stage(event.position))
 	elif event is InputEventMouseButton and event.pressed:
-		if stage.phase == "command_select":
+		if stage.phase == BattleStage.PHASE_COMMAND_SELECT:
 			if event.button_index == MOUSE_BUTTON_RIGHT:
 				stage.cancel_submenu()
 				accept_event()

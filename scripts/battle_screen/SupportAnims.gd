@@ -22,6 +22,7 @@ const SLAB_DROP := 0.35
 const C_LOCK := Color("#ffe080")
 const C_HQ_GREEN := Color("#3ad06a")
 const ATTACH_NAMES := ["slab", "rangefinder", "mast"]
+const ATTACH_ANCHORS := {"slab": "attach/slab", "rangefinder": "attach/rangefinder", "mast": "attach/mast"}  # no per-frame string building
 
 static func has_anim(ability_id: String) -> bool:
 	return DURATIONS.has(ability_id)
@@ -30,7 +31,8 @@ static func duration(ability_id: String) -> float:
 	return DURATIONS.get(ability_id, 0.65)
 
 ## Persistent visual result of a support TECH, applied once when its support phase completes (or on skip).
-static func apply_persistent(_stage: BattleStage, a: Dictionary, ability_id: String) -> void:
+## `a` is the acting walker, `foe` its opponent (ECM jams the foe).
+static func apply_persistent(a: Dictionary, foe: Dictionary, ability_id: String) -> void:
 	match ability_id:
 		"ferro_bulkhead":
 			a["slab"] = true
@@ -45,8 +47,6 @@ static func apply_persistent(_stage: BattleStage, a: Dictionary, ability_id: Str
 		"cmd_override":
 			a["mast_on"] = true
 		"enigma_ecm":
-			var foe_side: String = "def" if a["side"] == "atk" else "atk"
-			var foe: Dictionary = _stage.mechs[foe_side]
 			foe["jammed"] = true
 
 ## Reactive bricks detonate on the hit they soften; the spent sheet replaces the intact one.
@@ -92,8 +92,9 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 					a["offset"] += Vector2(0, 1 if int(t / 0.04) % 2 == 0 else 0)
 				stage.fx(func(ci): BattleFX.ellipse(ci, Vector2(front.x + 20 * (1 if not a["mirrored"] else -1), BattleStage.GROUND_Y), int(10 + k * 46), int(2 + k * 4), Color(0.55, 0.47, 0.32, 0.75 * (1.0 - k))))
 		"anchor_strut":
-			if t >= 0.4 and braced_sheet(a) != "":
-				a["sheet_vis"] = braced_sheet(a) # visual only; the stage applies the lasting swap
+			var braced := braced_sheet(a)
+			if t >= 0.4 and braced != "":
+				a["sheet_vis"] = braced # visual only; the stage applies the lasting swap
 			if t > 0.35 and t < 1.0:
 				var k := (t - 0.35) / 0.65
 				var feet := stage.point(a, "feet")
@@ -194,7 +195,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 ## Dotted ballistic arc from the actor's basic weapon to the target (Elevation Ballistics).
 static func draw_plot_arc(stage: BattleStage, a: Dictionary, d: Dictionary, k: float) -> void:
 	var weapon: String = (a["data"] as MechData).basic_weapon_id
-	var m := stage.point(a, "muzzles/" + weapon)
+	var m := stage.point(a, MechSpriteBank.muzzle_name(weapon))
 	var tgt := stage.point(d, "hull")
 	var arc: float = WeaponAnims.PROFILES.get(weapon, {}).get("arc", 20.0)
 	stage.fx(func(ci):
@@ -249,8 +250,8 @@ static func _attach_tex(name: String, a: Dictionary) -> Texture2D:
 	return _attach_tex_for(name, clampi(int(a["faction"]), 0, 1))
 
 static func _attach_tex_for(name: String, faction: int) -> Texture2D:
-	var pair: Array = _attach_cache.get(name, [])
-	if pair.is_empty():
+	var pair = _attach_cache.get(name)
+	if pair == null:
 		pair = [null, null, false, false]   # textures per faction, then "load attempted" flags
 		_attach_cache[name] = pair
 	if not pair[2 + faction]:
@@ -278,7 +279,7 @@ static func draw_attachment(stage: BattleStage, ci: CanvasItem, a: Dictionary, n
 	var tex := _attach_tex(name, a)
 	if tex == null or ext <= 0.0:
 		return
-	var anchor := stage.point(a, "attach/" + name)
+	var anchor := stage.point(a, ATTACH_ANCHORS[name])
 	var size := Vector2(tex.get_width(), tex.get_height())
 	if name == "mast":
 		var shown := roundf(size.y * ext)

@@ -187,23 +187,23 @@ func get_fuel_ratio() -> float:
 func get_energy_ratio() -> float:
 	return clampf(float(current_energy) / float(maxi(1, max_energy)), 0.0, 1.0)
 
+## Script variable names (everything declared with `var` above), read once from the property list so
+## a field added to MechData is copied by duplicate_mech() without anyone remembering to update it.
+static var _state_props: PackedStringArray = PackedStringArray()
+
+static func _state_prop_names() -> PackedStringArray:
+	if _state_props.is_empty():
+		for prop in MechData.new().get_property_list():
+			if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE and prop["name"] != "_state_props":
+				_state_props.append(String(prop["name"]))
+	return _state_props
+
+## Independent copy of every field; the abilities are copied too (not shared).
 func duplicate_mech() -> MechData:
-	var copy := MechData.new(
-		unit_id, unit_name, callsign, chassis_id, chassis_class, faction,
-		grid_pos, max_armor, armor_rating, firepower, max_fuel,
-		fuel_efficiency_mod, passive_refuel, lore_blurb,
-		speed, evasion, crit_chance, max_energy, passive_energy_regen, basic_weapon_id
-	)
-	copy.current_armor = current_armor
-	copy.current_fuel = current_fuel
-	copy.current_energy = current_energy
-	copy.amphibious_gear = amphibious_gear
-	copy.mountain_gear = mountain_gear
-	copy.fuel_usage = fuel_usage
-	copy.has_moved = has_moved
-	copy.has_attacked = has_attacked
-	copy.is_entrenched = is_entrenched
-	copy.facing = facing
+	var copy := MechData.new()
+	for n in _state_prop_names():
+		if n != "abilities":
+			copy.set(n, get(n))
 	for a in abilities:
 		copy.abilities.append(a.duplicate_ability())
 	return copy
