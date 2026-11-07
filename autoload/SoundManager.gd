@@ -17,7 +17,8 @@ func _ready() -> void:
 		p.volume_db = -8.0
 		add_child(p)
 		_players.append(p)
-	_generate_all_samples()
+	if not _headless:   # headless never plays: skip synthesising ~10 waveforms
+		_generate_all_samples()
 
 func _generate_all_samples() -> void:
 	_samples["ui_click"] = _make_tone_burst(680.0, 320.0, 0.055, 0.25, "square")
@@ -35,6 +36,7 @@ func play(sfx_name: String, pitch_scale: float = 1.0) -> void:
 	if muted or _headless:
 		return
 	if not _samples.has(sfx_name):
+		push_warning("SoundManager: unknown sample '%s'" % sfx_name)
 		return
 	for p in _players:
 		if not p.playing:

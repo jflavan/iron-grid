@@ -25,3 +25,10 @@ func has(id: String) -> bool:
 		if s["id"] == id:
 			return true
 	return false
+
+## Rect of the last spot registered under `id`, or an empty Rect2 when there is none.
+func rect_of(id: String) -> Rect2:
+	for i in range(_spots.size() - 1, -1, -1):
+		if _spots[i]["id"] == id:
+			return _spots[i]["rect"]
+	return Rect2()

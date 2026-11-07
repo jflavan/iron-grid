@@ -20,6 +20,7 @@ const LEFT_W := 152       # fits the widest battle sprite (136px) inside its por
 const RIGHT_W := 164
 const LOG_H := 64
 const TOP_H := 30
+const BLOCKER := "block"   # hotspot id of a plain panel: swallows the click, does nothing
 
 ## The H Field Manual. Numbers are read from the game data (GridTileData, MechData, SkirmishEngine,
 ## BalanceProbe defaults) so it agrees with the Rules of Engagement page after a balance change.
@@ -62,7 +63,7 @@ static func manual_lines() -> Array[String]:
 	return lines
 
 
-var root_ctrl: Control
+var root_ctrl: CrtScreen
 var skirmish_modal: BattleScreen
 
 # HUD state set by Battlefield. Every assignment queues a redraw: the HUD is drawn on change (plus
@@ -93,6 +94,9 @@ var player_obj_count: int = 0:
 var total_obj_count: int = 0:
 	set(v): total_obj_count = v; _dirty = true
 
+## Set by Battlefield while a walker is mid-move: orders are refused, so the commands render disabled.
+var commands_locked: bool = false:
+	set(v): commands_locked = v; _dirty = true
 var show_manual_modal: bool = false:
 	set(v): show_manual_modal = v; _dirty = true; _manual_cache = []   # re-read balance values on open
 var show_game_over_modal: bool = false:
@@ -100,14 +104,22 @@ var show_game_over_modal: bool = false:
 var _banner_timer: float = 0.0
 var _banner_text: String = ""
 var _anim_time: float = 0.0
-var _scale: int = 2
-var _hot := CrtHotspots.new()
+# The CRT screen state lives on root_ctrl (a CrtScreen); these forward to it so the HUD code reads as before.
+var _scale: int:
+	get: return root_ctrl._scale if root_ctrl != null else 2
+	set(v): root_ctrl._scale = v
+var _hot: CrtHotspots:
+	get: return root_ctrl._hot
+var _dirty: bool:
+	get: return root_ctrl == null or root_ctrl._dirty
+	set(v):
+		if root_ctrl != null:
+			root_ctrl._dirty = v
 var _debrief_row: int = 0
 # Redraw scheduling: _dirty is set by HUD state changes, input and GlobalState signals; the idle
 # portrait redraws when its frame steps; the heartbeat picks up in-place MechData changes (fuel,
 # armor) that no setter sees.
 const REDRAW_HEARTBEAT := 0.25
-var _dirty: bool = true
 var _since_redraw: float = 0.0
 var _portraits: PackedStringArray = []   # chassis of the idle portraits in the last frame
 var _portrait_frame: int = -1
@@ -115,7 +127,8 @@ var _manual_cache: Array = []            # [inner width, laid-out lines] for the
 
 func _ready() -> void:
 	layer = 10
-	root_ctrl = Control.new()
+	root_ctrl = CrtScreen.new()
+	root_ctrl.passive_id = BLOCKER
 	root_ctrl.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root_ctrl.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -130,10 +143,16 @@ func _ready() -> void:
 	GlobalState.log_added.connect(func(_e): _mark_dirty())
 
 func _mark_dirty() -> void:
-	_dirty = true
+	if root_ctrl != null:
+		root_ctrl.mark_dirty()
 
 func _process(delta: float) -> void:
 	if skirmish_modal != null and skirmish_modal.visible:
+		# The banner keeps counting down under the modal (it would otherwise reappear frozen afterwards)
+		if _banner_timer > 0.0:
+			_banner_timer = maxf(0.0, _banner_timer - delta)
+			if _banner_timer == 0.0:
+				_dirty = true
 		return
 	_anim_time += delta
 	_since_redraw += delta
@@ -163,7 +182,7 @@ func trigger_game_over() -> void:
 	root_ctrl.queue_redraw()
 
 func _is_player_command_time() -> bool:
-	return GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not skirmish_modal.visible and not show_game_over_modal
+	return GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not skirmish_modal.visible and not show_game_over_modal and not commands_locked
 
 func _can_turn() -> bool:
 	return _is_player_command_time() and selected_mech != null and selected_mech.faction == MechData.Faction.PLAYER
@@ -184,19 +203,18 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey or event is InputEventMouseButton:
 		_dirty = true
 	if event is InputEventMouseMotion:
-		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
-		if id != _hot.hovered:
-			_dirty = true
-		_hot.hovered = id
+		var id := root_ctrl.track_pointer(event)
 		if id.begins_with("debrief:"):
 			_debrief_row = int(id.substr(8))
-		root_ctrl.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if id != "" else Control.CURSOR_ARROW
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var id := _hot.hit(CrtUI.to_virtual(event.position, _scale))
-		if id != "":
+	elif event is InputEventMouseButton:
+		var id := root_ctrl.hit_id(event)
+		_hot.hovered = id   # keep pointer_over_hud() right for clicks that arrive without a motion event
+		if id != "" and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 			# Mark it handled first: MENU / debrief rows change scene and take this overlay out of the tree.
 			get_viewport().set_input_as_handled()
 			_activate(id)
+		elif id == BLOCKER and event.pressed:
+			get_viewport().set_input_as_handled()   # wheel / right-click over a panel does not zoom or drag the map
 	elif show_game_over_modal and event is InputEventKey and event.pressed and not event.echo:
 		get_viewport().set_input_as_handled()   # before _activate: "return to menu" leaves the tree
 		match event.keycode:
@@ -206,7 +224,18 @@ func _input(event: InputEvent) -> void:
 			KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 				_activate("debrief:%d" % _debrief_row)
 
+## True while the pointer is over any HUD panel or command: the map must not see it.
+func pointer_over_hud() -> bool:
+	return _hot.hovered != ""
+
 func _activate(id: String) -> void:
+	if id == BLOCKER:
+		return
+	# A modal owns the screen: only its own controls respond
+	if show_manual_modal and id != "manual":
+		return
+	if show_game_over_modal and not id.begins_with("debrief:"):
+		return
 	match id:
 		"manual":
 			SoundManager.play("ui_click")
@@ -253,6 +282,11 @@ func _row(id: String, label: String, pos: Vector2, width: float, key_hint: Strin
 		_tr(key_hint, pos.x + width, pos.y, CrtUI.C_LABEL_DIM)
 	_hot.add(id, Rect2(pos.x - 2, pos.y - 3, width + 4, CrtUI.ROW + 2))
 
+## A HUD panel that also swallows clicks and hover, so they never reach the map underneath.
+func _panel(r: Rect2, border: Color = CrtUI.C_BORDER, alpha: float = 1.0) -> void:
+	CrtUI.panel(root_ctrl, r, border, alpha)
+	_hot.add(BLOCKER, r)
+
 func _phase_color() -> Color:
 	match GlobalState.current_phase:
 		GlobalState.TurnPhase.PLAYER_PHASE:
@@ -277,7 +311,7 @@ func _on_root_draw() -> void:
 		_draw_unit_panel(Rect2(6, TOP_H + 4, LEFT_W, 0), display_mech)
 	else:
 		var r := Rect2(6, TOP_H + 4, LEFT_W, 58)
-		CrtUI.panel(root_ctrl, r)
+		_panel(r)
 		_t("NO WALKER SELECTED", r.position + Vector2(6, 6), CrtUI.C_NAME)
 		CrtUI.paragraph(root_ctrl, "Click a friendly walker to plot fuel range and engage.", r.position + Vector2(6, 20), r.size.x - 12, CrtUI.C_NUM)
 
@@ -295,13 +329,20 @@ func _on_root_draw() -> void:
 		CrtUI.panel(root_ctrl, br, CrtUI.C_NAME, a)
 		CrtUI.text_centered(root_ctrl, _banner_text, v.x / 2.0, br.position.y + 6, Color(CrtUI.C_NAME, a))
 
+	# A modal owns the screen: drop the HUD's hotspots, swallow everything, keep only its own controls
 	if show_manual_modal:
+		var manual_rect: Rect2 = _hot.rect_of("manual")
+		_hot.clear()
+		_hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
+		_hot.add("manual", manual_rect)   # the MANUAL [H] button still closes it
 		_draw_manual_modal(v)
 	if show_game_over_modal:
+		_hot.clear()
+		_hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
 		_draw_game_over_modal(v)
 
 func _draw_top_bar(v: Vector2) -> void:
-	CrtUI.panel(root_ctrl, Rect2(0, 0, v.x, TOP_H))
+	_panel(Rect2(0, 0, v.x, TOP_H))
 	var map_title: String = map_def.map_name if map_def != null else "OPERATION: IRON GRID"
 	var strat_badge: String = map_def.get_strategy_name() if map_def != null else "TACTICAL"
 	var max_turns: int = map_def.turn_limit if map_def != null else 10
@@ -318,7 +359,7 @@ func _draw_top_bar(v: Vector2) -> void:
 	var left_end := 8.0 + PixelFont.text_width(title if title.length() > stats.length() else stats) + 12.0
 	var pill := Rect2(roundf(maxf(v.x / 2.0 - pw / 2.0, left_end)), 5, pw, 20)
 	var pc := _phase_color()
-	CrtUI.panel(root_ctrl, pill, pc)
+	_panel(pill, pc)
 	CrtUI.text_centered(root_ctrl, phase, pill.position.x + pw / 2.0, pill.position.y + 7, pc)
 
 	# Utility commands, right-aligned
@@ -338,7 +379,7 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	var gear := _gear_note(m)
 	var gear_lines := CrtUI.wrap_lines("MOBILITY: " + gear, rect.size.x - 12).size()
 	rect.size.y = 6 + 40 + cell.y + 8 + 4 + 12 + 57 + gear_lines * CrtUI.LINE + 4 + tech_h + 2
-	CrtUI.panel(root_ctrl, rect, accent)
+	_panel(rect, accent)
 
 	var x := rect.position.x + 6
 	var w := rect.size.x - 12
@@ -459,7 +500,7 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 	var summary_lines: PackedStringArray = lay["summary_lines"]
 	var forecast_h: float = lay["forecast_h"]
 	rect.size.y = lay["height"]
-	CrtUI.panel(root_ctrl, rect)
+	_panel(rect)
 
 	var y := rect.position.y + 6
 	_t("SECTOR %d,%d" % [hovered_tile.coords.x, hovered_tile.coords.y], Vector2(x, y), CrtUI.C_LABEL)
@@ -480,7 +521,7 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 	if has_forecast:
 		y += 4
 		var f := Rect2(x - 2, y, w + 4, forecast_h)
-		CrtUI.panel(root_ctrl, f, CrtUI.C_HOSTILE)
+		_panel(f, CrtUI.C_HOSTILE)
 		var fx := x + 4
 		var fr := right - 4
 		var fy := y + 6
@@ -508,7 +549,7 @@ func _draw_terrain_panel(rect: Rect2) -> void:
 	if plan_h > 0:
 		y += 4
 		if strike_plan.severity == StrikePlan.IN_STRIKING_DISTANCE:
-			CrtUI.panel(root_ctrl, Rect2(x - 2, y, w + 4, plan_h), CrtUI.C_CURSOR)
+			_panel(Rect2(x - 2, y, w + 4, plan_h), CrtUI.C_CURSOR)
 			var py := y + 6
 			_t("OUT OF REACH", Vector2(x + 4, py), CrtUI.C_CURSOR)
 			py += 12
@@ -537,12 +578,12 @@ func _draw_commands(rect: Rect2) -> void:
 		return
 	var h := 8 + rows.size() * CrtUI.ROW
 	var r := Rect2(rect.position.x, rect.position.y - h, rect.size.x, h)
-	CrtUI.panel(root_ctrl, r)
+	_panel(r)
 	for i in rows.size():
 		_row(rows[i][0], rows[i][1], r.position + Vector2(6, 5 + i * CrtUI.ROW), r.size.x - 12, rows[i][2])
 
 func _draw_log(r: Rect2) -> void:
-	CrtUI.panel(root_ctrl, r)
+	_panel(r)
 	var x := r.position.x + 6
 	var w := r.size.x - 12
 	_t("COMMS LOG", Vector2(x, r.position.y + 6), CrtUI.C_LABEL)
@@ -561,7 +602,7 @@ func _draw_manual_modal(v: Vector2) -> void:
 	var lines: Array = _manual_cache[1]
 	var h := 30 + lines.size() * CrtUI.LINE + 8
 	var r := Rect2(roundf((v.x - w) / 2.0), roundf((v.y - h) / 2.0), w, h)
-	CrtUI.panel(root_ctrl, r)
+	_panel(r)
 	_t("FIELD MANUAL", r.position + Vector2(10, 8), CrtUI.C_LABEL)
 	_tr("[H] CLOSE", r.end.x - 10, r.position.y + 8, CrtUI.C_LABEL_DIM)
 	var y := r.position.y + 26
@@ -592,7 +633,7 @@ func _draw_game_over_modal(v: Vector2) -> void:
 	var reason := CrtUI.wrap_lines(GlobalState.last_battle_reason, w - 24)
 	var h := 16 + 12 + 8 + reason.size() * CrtUI.LINE + 8 + 12 + 10 + 2 * CrtUI.ROW + 10
 	var r := Rect2(roundf((v.x - w) / 2.0), roundf((v.y - h) / 2.0), w, h)
-	CrtUI.panel(root_ctrl, r, col)
+	_panel(r, col)
 	var cx := r.position.x + w / 2.0
 	var y := r.position.y + 12
 	CrtUI.text_centered(root_ctrl, "OPERATION VICTORY // SECTOR SECURED" if won else "OPERATION FAILED // COALITION ROUTED", cx, y, col)

@@ -22,7 +22,7 @@ const ROLES := {
 	"kommandant": "COMMAND: UPLINK BUFFS AND ECM JAMMING",
 	"moloch": "BRAWLER: BREAKS CITY AND BUNKER DEFENDERS",
 }
-const CHASSIS_ORDER := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
+const CHASSIS_ORDER := ChassisCatalog.ORDER
 const TERRAIN_ORDER := [
 	GridTileData.TerrainType.ROAD, GridTileData.TerrainType.PLAIN, GridTileData.TerrainType.CITY,
 	GridTileData.TerrainType.FOREST, GridTileData.TerrainType.RIVER, GridTileData.TerrainType.MOUNTAIN,
