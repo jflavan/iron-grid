@@ -143,7 +143,7 @@ static func _terrain() -> Dictionary:
 		{"p": "ATTACKING UPHILL, per level: %s firepower and %s hit for you, while the defender above gains %s firepower and armor plus its own high-ground hit, EVA and crit." % [
 			_pct(-S.ELEV_CLIMB_FP_PCT), _pct(-S.ELEV_ACC_PER_LEVEL), _pct(S.ELEV_CLIMB_ENEMY_FP_PCT)]},
 		{"p": "CITIES repair +%d hull and add +%d fuel and +%d EN at the start of each of your turns. WAIT/REFUEL in a city patches +%d hull more." % [
-			BalanceProbe.upkeep[0], MechData.CITY_FUEL, MechData.CITY_ENERGY, BalanceProbe.patch[0]]},
+			Rules.upkeep_armor(0), MechData.CITY_FUEL, MechData.CITY_ENERGY, Rules.patch_armor(0)]},
 		{"p": "RIVERS are a trap: expensive to wade, and a walker standing in one fights at a penalty."},
 	]}
 
@@ -156,7 +156,7 @@ static func _clash() -> Dictionary:
 		{"p": "FORMATIONS: Each adjacent ally adds +%d%% ATK crossfire (opposite = +%d%% pincer). Each defender ally adds +%d%% DEF escort. Press T to turn in place." % [
 			S.ADJ_CROSSFIRE_FP_PER_ALLY, S.PINCER_CROSSFIRE_FP_BONUS, S.ADJ_ESCORT_DEF_PER_ALLY]},
 		{"p": "ENTRENCHED (the defender used WAIT/REFUEL): %s DEF, +%d SPD in round 1 and +%d after, %s EVA and %s hit." % [
-			_pct(BalanceProbe.def_pct[0]), S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS, S.ENTRENCHED_SPD_BONUS, _pct(S.ENTRENCHED_EVA_BONUS), _pct(S.ENTRENCHED_ACC_BONUS)]},
+			_pct(Rules.entrench_def_pct(0)), S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS, S.ENTRENCHED_SPD_BONUS, _pct(S.ENTRENCHED_EVA_BONUS), _pct(S.ENTRENCHED_ACC_BONUS)]},
 		{"key": "ATTACK: basic gun (0 EN). TECH: special systems (uses EN). DEFEND: next hit %d%% (+%d EN)." % [
 			int(round(S.GUARD_DAMAGE_MULT * 100.0)), S.DEFEND_EN_GAIN]},
 		{"key": "RETREAT: break off (%d%% %+d%%/SPD lead, between %d%%-%d%%) and end the clash on your current tile." % [

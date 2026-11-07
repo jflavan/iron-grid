@@ -31,8 +31,8 @@ static func manual_lines() -> Array[String]:
 		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+2 Fuel per 100m climbed).",
 		"   - On its turn, a walker can face & entrench, move and then face or attack, or face and attack in place. Attacking an adjacent enemy costs its tile's step fuel (terrain + chassis surcharge + climb) and never moves onto its tile.",
 		"   - [WAIT / REFUEL] entrenches (%+d%% DEF, %+d%% EVA, %+d%% Hit, +%d SPD) & restores +%d Fuel / +%d EN (+%d Hull in a City). Cities repair +%d Hull, +%d Fuel, +%d EN each turn." % [
-			BalanceProbe.def_pct[0], S.ENTRENCHED_EVA_BONUS, S.ENTRENCHED_ACC_BONUS, S.ENTRENCHED_SPD_BONUS,
-			MechData.WAIT_FUEL, MechData.WAIT_ENERGY, BalanceProbe.patch[0], BalanceProbe.upkeep[0], MechData.CITY_FUEL, MechData.CITY_ENERGY],
+			Rules.entrench_def_pct(0), S.ENTRENCHED_EVA_BONUS, S.ENTRENCHED_ACC_BONUS, S.ENTRENCHED_SPD_BONUS,
+			MechData.WAIT_FUEL, MechData.WAIT_ENERGY, Rules.patch_armor(0), Rules.upkeep_armor(0), MechData.CITY_FUEL, MechData.CITY_ENERGY],
 		"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
 		"",
 		"2. TERRAIN CHART (FUEL COST / ATTACK / DEFENSE / EVASION MOD):",

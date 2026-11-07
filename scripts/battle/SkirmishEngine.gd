@@ -770,7 +770,7 @@ static func _init_result_modifiers(
 		res.approach_angle = "FRONT"
 
 	# Entrenchment defense calculation (Rear completely bypasses, Flank halves)
-	var raw_entrench: int = BalanceProbe.def_pct[int(defender.faction)] if defender.is_entrenched else 0
+	var raw_entrench: int = Rules.entrench_def_pct(int(defender.faction)) if defender.is_entrenched else 0
 	var entrench_bonus: int = raw_entrench
 	if defender.is_entrenched:
 		if res.approach_angle == "REAR":
@@ -921,7 +921,7 @@ static func _forecast_key(attacker: MechData, defender: MechData, from_tile: Gri
 	return [
 		_mech_key(attacker), _mech_key(defender),
 		int(from_tile.terrain_type), from_tile.elevation, int(target_tile.terrain_type), target_tile.elevation, target_tile.is_objective,
-		BalanceProbe.def_pct[int(defender.faction)],
+		Rules.entrench_def_pct(int(defender.faction)),
 		approach, defender.facing,
 		int(formation_context.get("atk_allies_adj", 0)),
 		int(formation_context.get("def_allies_adj", 0)),

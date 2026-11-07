@@ -1,19 +1,26 @@
 class_name BalanceProbe
 extends RefCounted
 ## Balance-experiment knobs and recorders, driven by tests/balance.gd.
-## Defaults match the shipped rules; per-skirmish recording only runs when `enabled` is set.
+## The knobs default to the shipped values in Rules and are read by production code only through
+## Rules' accessors; per-skirmish recording only runs when `enabled` is set.
 
 static var enabled: bool = false
 
 # Entrenchment / City healing values, indexed by MechData.Faction (0 = PLAYER, 1 = AI)
-static var def_pct: Array[int] = [15, 15]
-static var patch: Array[int] = [8, 8]
-static var upkeep: Array[int] = [12, 12]
+static var def_pct: Array[int] = [Rules.ENTRENCH_DEF_PCT, Rules.ENTRENCH_DEF_PCT]
+static var patch: Array[int] = [Rules.PATCH_ARMOR, Rules.PATCH_ARMOR]
+static var upkeep: Array[int] = [Rules.UPKEEP_ARMOR, Rules.UPKEEP_ARMOR]
 
 static var entrench_actions: Array[int] = [0, 0]
 static var patch_healed: Array[int] = [0, 0]
 static var upkeep_healed: Array[int] = [0, 0]
 static var skirmishes: Array = []
+
+## Puts the knobs back to the shipped rules (reset() keeps them, so an experiment can span missions).
+static func restore_defaults() -> void:
+	def_pct = [Rules.ENTRENCH_DEF_PCT, Rules.ENTRENCH_DEF_PCT]
+	patch = [Rules.PATCH_ARMOR, Rules.PATCH_ARMOR]
+	upkeep = [Rules.UPKEEP_ARMOR, Rules.UPKEEP_ARMOR]
 
 static func reset() -> void:
 	entrench_actions = [0, 0]

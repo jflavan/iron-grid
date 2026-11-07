@@ -196,7 +196,7 @@ func _apply_turn_upkeep(units: Array[MechUnit], include_refuel: bool) -> void:
 		var energy_amt: int = m.passive_energy_regen
 		if tile != null and tile.terrain_type == GridTileData.TerrainType.CITY:
 			energy_amt += MechData.CITY_ENERGY
-			var healed: int = mini(BalanceProbe.upkeep[int(m.faction)], m.max_armor - m.current_armor)
+			var healed: int = mini(Rules.upkeep_armor(int(m.faction)), m.max_armor - m.current_armor)
 			m.current_armor += healed
 			BalanceProbe.upkeep_healed[int(m.faction)] += healed
 			if healed > 0:
@@ -217,7 +217,7 @@ func _entrench_unit(m: MechData) -> int:
 	BalanceProbe.entrench_actions[int(m.faction)] += 1
 	if td != null and td.terrain_type == GridTileData.TerrainType.CITY:
 		var before: int = m.current_armor
-		m.current_armor = mini(m.max_armor, m.current_armor + BalanceProbe.patch[int(m.faction)])
+		m.current_armor = mini(m.max_armor, m.current_armor + Rules.patch_armor(int(m.faction)))
 		BalanceProbe.patch_healed[int(m.faction)] += m.current_armor - before
 	return gained_fuel
 
@@ -497,7 +497,7 @@ func _on_wait_refuel_requested() -> void:
 	var gained_fuel: int = _entrench_unit(m)
 
 	GlobalState.add_log("%s entrenched at (%d,%d) [%+d%% DEF, +%d Fuel, +%d EN]." % [
-		m.callsign, m.grid_pos.x, m.grid_pos.y, BalanceProbe.def_pct[int(m.faction)], gained_fuel, MechData.WAIT_ENERGY])
+		m.callsign, m.grid_pos.x, m.grid_pos.y, Rules.entrench_def_pct(int(m.faction)), gained_fuel, MechData.WAIT_ENERGY])
 	grid_map.clear_highlights()
 	_clear_strike_readout()
 	selected_unit.queue_redraw()
