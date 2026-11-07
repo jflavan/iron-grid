@@ -10,6 +10,15 @@ extends CrtScreen
 
 const HANGAR_W := 300       # right column width (virtual px); fits two of the largest sprites side by side
 const RECON_CELL := Vector2i(14, 10)
+## Map-preview colour of each terrain type (elevation lightens it).
+const RECON_COLORS := {
+	GridTileData.TerrainType.PLAIN: Color(0.30, 0.36, 0.24),
+	GridTileData.TerrainType.ROAD: Color(0.42, 0.40, 0.36),
+	GridTileData.TerrainType.RIVER: Color(0.16, 0.36, 0.44),
+	GridTileData.TerrainType.FOREST: Color(0.20, 0.28, 0.17),
+	GridTileData.TerrainType.CITY: Color(0.55, 0.50, 0.38),
+	GridTileData.TerrainType.MOUNTAIN: Color(0.50, 0.48, 0.44),
+}
 const RULES_LIST_W := 176   # chapter list column width (virtual px)
 const RULES_PAD := 10       # inner padding of the rules panels
 const RULES_BODY_TOP := 26  # first block's offset below the body panel's top (title row above it)
@@ -144,7 +153,6 @@ func _select_chassis(i: int) -> void:
 
 func _on_launch_pressed() -> void:
 	SoundManager.play("ui_confirm")
-	GlobalState.selected_map_index = selected_map_idx
 	get_tree().change_scene_to_file(GlobalState.BATTLEFIELD_SCENE)
 
 # ---------------------------------------------------------------- drawing
@@ -237,14 +245,7 @@ func _draw_recon(r: Rect2, map_def: MapDefinition) -> void:
 		for x in map_def.width:
 			var code: String = t_row[x] if x < t_row.size() else "P"
 			var elev: int = int(e_row[x]) if x < e_row.size() else 1
-			var col := Color(0.30, 0.36, 0.24)
-			match code:
-				"R": col = Color(0.16, 0.36, 0.44)
-				"D": col = Color(0.42, 0.40, 0.36)
-				"F": col = Color(0.20, 0.28, 0.17)
-				"C": col = Color(0.55, 0.50, 0.38)
-				"M": col = Color(0.50, 0.48, 0.44)
-			col = col.lightened(float(elev - 1) * 0.08)
+			var col: Color = RECON_COLORS[TerrainDefs.parse_code(code)].lightened(float(elev - 1) * 0.08)
 			draw_rect(Rect2(ox + x * RECON_CELL.x, oy + y * RECON_CELL.y, RECON_CELL.x - 1, RECON_CELL.y - 1), col)
 	for sp in map_def.spawns:
 		var pos: Vector2i = sp["pos"]
@@ -374,7 +375,7 @@ func _draw_rules(v: Vector2) -> void:
 				y += CrtUI.LINE
 		y += RulesContent.BLOCK_GAP
 
-## A chapter's blocks wrapped / measured for `inner_w`, cached: _draw runs every frame.
+## A chapter's blocks wrapped / measured for `inner_w`, cached: the menu redraws only on change (see _draw's dirty gate).
 ## Each item is {"rows", "xs"} for a table or {"lines", "col"} for text.
 func _rules_render(chapter: int, inner_w: float) -> Array:
 	var key := "%d:%d" % [chapter, int(inner_w)]

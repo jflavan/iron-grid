@@ -2355,3 +2355,10 @@ func test_modal_input_gating() -> void:
 	bf._auto_advance_token += 1
 	bf.queue_free()
 	await get_tree().process_frame
+
+func test_recon_colors_cover_every_terrain() -> void:
+	for t: int in GridTileData.TerrainType.values():
+		_check(MainMenu.RECON_COLORS.has(t), "recon preview has a colour for terrain %d" % t)
+	for code in ["P", "D", "R_D", "r_d", "R", "F", "C", "M", "?"]:
+		_check(MainMenu.RECON_COLORS.has(TerrainDefs.parse_code(code)), "recon code %s resolves to a terrain colour" % code)
+	_check(TerrainDefs.parse_code("R_D") == GridTileData.TerrainType.ROAD, "the R_D alias renders as road in the recon map")
