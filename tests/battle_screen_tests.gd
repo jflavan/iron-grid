@@ -10,40 +10,13 @@ var failures: Array[String] = []
 var _checks: int = 0
 
 func _ready() -> void:
-	for t in [
-		"test_sprite_bank_loads", "test_anchor_mirrors", "test_recoil_moves_muzzle",
-		"test_side_from_approach", "test_elevation_offsets", "test_wrap_long_headline",
-		"test_damage_sums", "test_hold_at_one", "test_ai_attacker_panels", "test_pure_support_turns", "test_status_text",
-		"test_skip_confirm_reuse", "test_full_playback_finishes", "test_interactive_session_menu",
-		"test_every_weapon_has_anim", "test_every_support_has_anim", "test_persistent_effects_after_skip",
-		"test_pairings_play_to_result", "test_attachment_textures_cached",
-		"test_mouse_click_skips_then_confirms", "test_viewport_renders_only_while_active",
-		"test_white_sheets_are_pregenerated", "test_support_run_is_pure",
-		"test_crt_pixel_scale", "test_crt_glyph_coverage", "test_menu_mechs_never_overlap",
-		"test_menu_header_click_is_inert", "test_basic_weapon_single_source", "test_guard_survives_initiative_flip",
-		"test_forecast_initiative_matches_queue", "test_seeded_sessions_replay", "test_support_tech_is_single_use",
-		"test_guard_survives_miss", "test_auto_pilot_uses_command_select", "test_repelled_attacker_leaves_entrenchment",
-		"test_forecast_damage_matches_ai_estimate", "test_forecast_cache", "test_status_badges",
-		"test_miss_plays_no_impact", "test_seed_counter_resets_per_mission", "test_sure_kill_allows_for_variance",
-		"test_guard_cannot_stack", "test_status_text_lists_every_effect", "test_identical_walkers_share_forecast",
-		"test_apply_before_conclusion_is_ignored", "test_fast_forward_is_quiet",
-		"test_step_breakdown_sums", "test_strike_plan_goliath_mountain", "test_strike_plan_matches_reachable",
-		"test_strike_plan_beyond_range", "test_strike_plan_skips_occupied_launch_tiles", "test_strike_plan_advice_is_true",
-		"test_out_of_reach_hover_and_click", "test_terrain_panel_draws_plan",
-		"test_rules_chapters_fit", "test_rules_numbers_come_from_data", "test_rules_navigation",
-		"test_hud_plan_clears_after_order", "test_rules_offense_final_turn", "test_rules_example_follows_chassis_data",
-		"test_next_turn_fuel_matches_upkeep", "test_manual_numbers_come_from_data", "test_rules_render_is_cached",
-		"test_strike_plan_reused_until_state_changes", "test_overlay_click_that_leaves_scene",
-		"test_facing_direction_vectors", "test_back_attack_combat_modifiers", "test_flanking_combat_modifiers",
-		"test_adjacent_formation_crossfire_and_escort", "test_forecast_matches_directional_resolution",
-		"test_unit_container_formation_context", "test_in_place_rotation_and_movement_facing",
-		"test_ai_prefers_flank_and_rear_attacks",
-		"test_player_and_ai_reface_after_movement",
-		"test_decoupled_movement_and_combat",
-		"test_rules_page_draws_on_open", "test_ai_launch_context_excludes_mover", "test_redeploy_cancels_auto_advance",
-		"test_dijkstra_matches_bellman_ford_on_large_map", "test_terrain_is_baked_into_few_draws",
-		"test_hud_state_changes_queue_redraw",
-	]:
+	# Every `test_*` method of this script, in source order (some tests share static state).
+	for m: Dictionary in (get_script() as Script).get_script_method_list():
+		var t: String = m["name"]
+		if not t.begins_with("test_"):
+			continue
+		if OS.get_environment("TEST_VERBOSE") != "":
+			print("[TEST] ", t)
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
 	for f in failures:
@@ -1657,14 +1630,14 @@ func test_ai_launch_context_excludes_mover() -> void:
 			if launch != Vector2i(-1, -1):
 				break
 			var t := Vector2i(x, y)
-			for sd in UnitContainer._DIRS:
+			for sd in TerrainGrid.DIRS:
 				var st: Vector2i = t + sd
 				if not gm0.is_valid_coords(st) or st.y >= 7 or launch != Vector2i(-1, -1):
 					continue
 				iron.mech_data.grid_pos = t
 				rote.mech_data.grid_pos = st
 				var reach := gm0.find_reachable_tiles(rote.mech_data, uc.build_occupied_map(rote))
-				for ld in UnitContainer._DIRS:
+				for ld in TerrainGrid.DIRS:
 					var l: Vector2i = t + ld
 					if l != st and l.y < 7 and reach.has(l) and not reach[l]["is_attack"]:
 						target = t
@@ -1837,3 +1810,139 @@ func _linear_scan_came_from(gm: IsoGridMap, unit: MechData, occ: Dictionary, bud
 				if not queue.has(n):
 					queue.append(n)
 	return from
+
+# ---------------------------------------------------------------- terrain grid / data table
+func _plan_diff(a: StrikePlan, b: StrikePlan) -> String:
+	if a.severity != b.severity: return "severity"
+	if a.needs != b.needs: return "needs"
+	if a.have != b.have: return "have"
+	if a.path_fuel != b.path_fuel: return "path_fuel"
+	if a.launch != b.launch: return "launch"
+	if a.step != b.step: return "step"
+	if a.advice != b.advice: return "advice"
+	if a.move_to != b.move_to: return "move_to"
+	return ""
+
+func test_strike_cost_field_matches_targeted_search() -> void:
+	var diffs: Array = []
+	var plans := 0
+	for mi in GlobalState.maps.size():
+		var md: MapDefinition = GlobalState.maps[mi]
+		var gm := _grid(mi)
+		var occ: Dictionary = {}
+		var mechs: Array[MechData] = []
+		for sp in md.spawns:
+			var fac := MechData.Faction.PLAYER if int(sp["faction"]) == 0 else MechData.Faction.AI
+			var m := _unit(str(sp["chassis"]), fac, sp["pos"], "s")
+			occ[m.grid_pos] = m
+			mechs.append(m)
+		for u in mechs:
+			var others: Dictionary = occ.duplicate()
+			others.erase(u.grid_pos)
+			for fuel in [u.max_fuel, 3]:
+				for moved in [false, true]:
+					u.current_fuel = fuel
+					u.has_moved = moved
+					var field: Dictionary = gm.strike_cost_field(u, others)
+					for t in mechs:
+						if t.faction == u.faction:
+							continue
+						var p1: StrikePlan = gm.compute_strike_plan(u, t.grid_pos, others)
+						var p2: StrikePlan = gm.compute_strike_plan(u, t.grid_pos, others, field)
+						plans += 1
+						var d := _plan_diff(p1, p2)
+						if d != "":
+							diffs.append([mi, u.grid_pos, t.grid_pos, d])
+		gm.free()
+	_check(plans > 50, "strike-field comparison covered plans (%d)" % plans)
+	_check(diffs.is_empty(), "plan with a cost field equals the targeted search (%d diffs, first %s)" % [diffs.size(), diffs.slice(0, 1)])
+
+func test_tile_data_getters_pinned() -> void:
+	# [type, name, short, fuel, def, atk, eva] as the pre-table match statements returned them.
+	var expected: Array = [
+		[0, "Open Plain", "PLN", 2, 5, 0, 0],
+		[1, "Transit Road", "ROD", 1, 0, 5, 0],
+		[2, "River Ford", "RIV", 4, -15, -15, -10],
+		[3, "Trench Timber", "TRN", 3, 15, 5, 8],
+		[4, "Fortified City", "CTY", 2, 25, 10, 10],
+		[5, "Mountain Crag", "MTN", 5, 30, 15, 10],
+	]
+	_check(expected.size() == GridTileData.TerrainType.size(), "every terrain type is pinned")
+	for e: Array in expected:
+		var td := GridTileData.new(Vector2i.ZERO, e[0], 1)
+		var got := [e[0], td.get_terrain_name(), td.get_terrain_short_code(), td.get_base_fuel_cost(),
+			td.get_defense_modifier_pct(), td.get_attack_modifier_pct(), td.get_evasion_modifier_pct()]
+		_check(got == e, "tile getters for terrain %d unchanged (got %s)" % [e[0], got])
+	_check(GridTileData.new(Vector2i.ZERO, 0, 99).elevation == GridTileData.MAX_ELEVATION, "elevation clamps to MAX_ELEVATION")
+
+func test_terrain_codes_and_colors() -> void:
+	var codes := {"P": 0, "D": 1, "R_D": 1, "r_d": 1, "R": 2, "F": 3, "C": 4, "M": 5, "X": 0, "": 0}
+	for k: String in codes:
+		_check(TerrainDefs.parse_code(k) == codes[k], "parse_code('%s') == %d" % [k, codes[k]])
+	# The renderer's former colour function, kept here as the oracle.
+	var bases := {0: [0.31, 0.37, 0.24], 1: [0.36, 0.35, 0.32], 3: [0.22, 0.30, 0.19], 4: [0.42, 0.40, 0.36], 5: [0.45, 0.43, 0.39]}
+	var bad := 0
+	for elev in range(0, GridTileData.MAX_ELEVATION + 1):
+		var tint: float = float(elev - 1) * 0.045
+		for t: int in bases:
+			var b: Array = bases[t]
+			if TerrainDefs.top_color(t, elev) != Color(b[0] + tint, b[1] + tint, b[2] + tint):
+				bad += 1
+		if TerrainDefs.top_color(2, elev) != Color(0.16, 0.33, 0.38):
+			bad += 1
+	_check(bad == 0, "terrain top colours unchanged (%d differ)" % bad)
+
+func test_map_definitions_validate() -> void:
+	for m: MapDefinition in GlobalState.maps:
+		var errs := m.validate()
+		_check(errs.is_empty(), "map %s validates (%s)" % [m.map_id, errs])
+	var bad := MapDefinition.new()
+	bad.width = 3
+	bad.height = 2
+	bad.terrain_codes = PackedStringArray(["P P Z"])
+	bad.elevation_rows = PackedStringArray(["1 1 9", "1 1 1"])
+	bad.objectives = [{"pos": Vector2i(5, 5)}]
+	bad.spawns = [{"pos": Vector2i(0, 0)}, {"pos": Vector2i(0, 0)}]
+	_check(bad.validate().size() >= 5, "validate() flags a broken map (%s)" % [bad.validate()])
+	_check(bad.terrain_at(2, 1) == GridTileData.TerrainType.PLAIN and bad.elevation_at(9, 9) == 1, "missing cells use the loader defaults")
+
+func _repeat(s: String, n: int) -> PackedStringArray:
+	var out := PackedStringArray()
+	for i in n:
+		out.append(s)
+	return out
+
+func test_iso_key_round_trips() -> void:
+	var md := MapDefinition.new()
+	md.width = 48
+	md.height = 48
+	var rows := PackedStringArray()
+	for y in 48:
+		rows.append(" ".join(_repeat("1", 48)))
+	md.terrain_codes = rows
+	md.elevation_rows = rows
+	var gm := IsoGridMap.new()
+	gm.load_from_definition(md)
+	var seen := {}
+	var bad := 0
+	for y in 48:
+		for x in 48:
+			var k: int = gm._iso_key(Vector2i(x, y))
+			var s: int = k / gm.grid_width
+			var dx: int = k % gm.grid_width
+			if Vector2i(dx, s - dx) != Vector2i(x, y) or seen.has(k):
+				bad += 1
+			seen[k] = true
+	_check(bad == 0, "_iso_key encodes every tile of a 48x48 grid uniquely and decodes back (%d bad)" % bad)
+	gm.free()
+
+func test_screen_to_grid_round_trips() -> void:
+	var bad: Array = []
+	for mi in GlobalState.maps.size():
+		var gm := _grid(mi)
+		for c: Vector2i in gm.tiles.keys():
+			var got := gm.screen_to_grid(gm.grid_to_screen(c))
+			if got != c:
+				bad.append([mi, c, got])
+		gm.free()
+	_check(bad.is_empty(), "screen_to_grid(grid_to_screen(c)) == c on every shipped map (%d bad, first %s)" % [bad.size(), bad.slice(0, 1)])

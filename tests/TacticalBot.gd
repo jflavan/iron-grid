@@ -45,7 +45,6 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 		if score > best["score"]:
 			best = act
 
-	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 	for tgt in foes:
 		if not is_instance_valid(tgt) or tgt.mech_data == null or not tgt.mech_data.is_alive():
 			continue
@@ -53,7 +52,7 @@ static func choose_best_action(unit: MechUnit, grid_map: IsoGridMap, uc: UnitCon
 		var dest_tile: GridTileData = grid_map.get_tile(dest_pos)
 		if dest_tile == null:
 			continue
-		for d in dirs:
+		for d in TerrainGrid.DIRS:
 			var from_pos: Vector2i = dest_pos + d
 			if not grid_map.is_valid_coords(from_pos):
 				continue

@@ -71,7 +71,7 @@ static func choose_best_action(
 		if dest_tile == null:
 			continue
 
-		for d in UnitContainer._DIRS:
+		for d in TerrainGrid.DIRS:
 			var from_pos: Vector2i = dest_pos + d
 			if not grid_map.is_valid_coords(from_pos):
 				continue

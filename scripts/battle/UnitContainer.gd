@@ -104,7 +104,7 @@ static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: V
 	var is_pincer: bool = false
 	var pincer_opposite_pos: Vector2i = target_pos + (target_pos - from_pos)
 
-	for d in _DIRS:
+	for d in TerrainGrid.DIRS:
 		var adj_pos: Vector2i = target_pos + d
 		if adj_pos == from_pos:
 			continue # Attacker launches from from_pos, not a separate supporting ally
@@ -120,7 +120,7 @@ static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: V
 	# Check suppression: defender allies adjacent to attacker's launch tile (from_pos)
 	var suppression: int = 0
 	if from_pos != target_pos:
-		for d in _DIRS:
+		for d in TerrainGrid.DIRS:
 			var adj_launch: Vector2i = from_pos + d
 			if adj_launch == target_pos:
 				continue # Target is the defender
@@ -135,4 +135,3 @@ static func formation_context(occ: Dictionary, target_pos: Vector2i, from_pos: V
 		"atk_suppression": suppression,
 	}
 
-const _DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]

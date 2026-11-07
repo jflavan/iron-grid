@@ -87,7 +87,7 @@ func _check_pathfinding_matches_bruteforce() -> void:
 		grid.load_from_definition(map_def)
 		for chassis in ["vanguard", "goliath", "falke", "donner"]:
 			var m := GlobalState.create_mech_instance(chassis, MechData.Faction.PLAYER, "T", Vector2i(1, 2))
-			var reach: Dictionary = grid.compute_reachable_tiles(m, {}).duplicate(true)
+			var reach: Dictionary = grid.find_reachable_tiles(m, {}).duplicate(true)
 			var best: Dictionary = { m.grid_pos: 0 }
 			var changed := true
 			while changed:
