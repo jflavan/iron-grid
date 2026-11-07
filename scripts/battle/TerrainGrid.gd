@@ -234,8 +234,15 @@ func _search(unit: MechData, occupied_units: Dictionary, budget: int, settle: Ar
 				_heap_push(heap, heap_idx, (new_cost << _SEQ_BITS) | seq[ni], ni)
 	return [cost, came, order]
 
-## [to_terrain][from_elev][to_elev] -> fuel, filled from the unit's own step rule.
+## [to_terrain][from_elev][to_elev] -> fuel, filled from the unit's own step rule. The rule reads
+## only the four stats in the key, so one table per stat tuple serves every walker of that build
+## (filling it costs 150 rule calls, as much as a whole capped reach search).
+static var _step_tables: Dictionary = {}   # [fuel_usage, fuel_efficiency_mod, amphibious, mountain] -> table
 func _step_cost_table(unit: MechData) -> PackedInt32Array:
+	var key := [unit.fuel_usage, unit.fuel_efficiency_mod, unit.amphibious_gear, unit.mountain_gear]
+	var cached: Variant = _step_tables.get(key)
+	if cached != null:
+		return cached
 	if _probe_tiles.is_empty():
 		for t in TERRAIN_COUNT:
 			for e in ELEV_COUNT:
@@ -246,6 +253,7 @@ func _step_cost_table(unit: MechData) -> PackedInt32Array:
 		for fe in ELEV_COUNT:
 			for te in ELEV_COUNT:
 				table[t * 25 + fe * 5 + te] = unit.get_step_fuel_cost(_probe_tiles[fe], _probe_tiles[t * ELEV_COUNT + te])
+	_step_tables[key] = table
 	return table
 
 ## Dictionary view of a _search result: Vector2i -> cost, in discovery order.
