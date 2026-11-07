@@ -245,8 +245,8 @@ class BattleSession extends RefCounted:
 		can_defender_retreat = p_can_def_retreat
 		if p_seed >= 0:
 			rng.seed = p_seed
-		else:
-			rng.randomize()
+		elif not p_deterministic:
+			rng.randomize()  # deterministic sessions never roll, so skip the entropy syscall
 
 		result = SkirmishEngine._init_result_modifiers(attacker, defender, from_tile, target_tile, p_formation)
 		atk_state = _make_combatant("atk", attacker, result.atk_effective_firepower, result.atk_effective_armor, from_tile, result.elev_diff)
@@ -370,9 +370,12 @@ class BattleSession extends RefCounted:
 		# A guard still raised here has not been spent (guards last until the first enemy shot lands),
 		# so it really will halve the next incoming hit and belongs in the estimate. The enemy will
 		# fire its strongest affordable weapon TECH (step 4), not just its basic gun.
-		var enemy_est := strongest_strike_estimate(target, actor)
-		var in_lethal_danger: bool = (hp_ratio <= 0.38 or (actor.hp <= enemy_est + 6 and target.hp > actor.hp + 10))
-		if not deterministic_mode and round_number >= 2 and in_lethal_danger and target.hp > best_weapon_dmg and not holding_vital_objective and can_escape_tile and not actor.retreat_attempted:
+		# Only evaluated where it can matter (live sessions, round 2+): pure, no RNG.
+		var in_lethal_danger := false
+		if not deterministic_mode and round_number >= 2:
+			var enemy_est := strongest_strike_estimate(target, actor)
+			in_lethal_danger = (hp_ratio <= 0.38 or (actor.hp <= enemy_est + 6 and target.hp > actor.hp + 10))
+		if in_lethal_danger and target.hp > best_weapon_dmg and not holding_vital_objective and can_escape_tile and not actor.retreat_attempted:
 			var esc_chance := compute_escape_chance(actor, target)
 			if esc_chance >= 40:
 				return {"command": CommandType.RETREAT, "ability_id": ""}
@@ -896,97 +899,23 @@ static func create_deterministic_session(
 ) -> BattleSession:
 	return BattleSession.new(attacker, defender, from_tile, target_tile, true, -1, true, formation_context)
 
-## Forecasts are deterministic, so identical inputs are served from this cache. The HUD asks on
-## every hover and the AI once per reachable tile x adjacent enemy, each a full simulated battle.
-static var _forecast_cache: Dictionary = {}
-const FORECAST_CACHE_LIMIT: int = 4096
+## Forecast API forwarders (cache, key and simulation live in SkirmishForecast).
+## `_forecast_cache` / `_forecast_key` stay reachable here for the tests: the cache is the current generation.
+static var _forecast_cache: Dictionary:
+	get: return SkirmishForecast._forecast_cache
 
 static func clear_forecast_cache() -> void:
-	_forecast_cache.clear()
-
-## Every MechData field the simulation reads (and nothing it does not, so identical walkers share an
-## entry); a per-unit stat change can never serve a stale forecast.
-static func _mech_key(m: MechData) -> Array:
-	var ability_ids: Array = []
-	for ab in m.abilities:
-		ability_ids.append(ab.ability_id)
-	return [
-		m.chassis_id, m.basic_weapon_id, int(m.faction), m.is_entrenched,
-		m.current_armor, m.max_armor, m.current_energy, m.max_energy,
-		m.firepower, m.armor_rating, m.speed, m.evasion, m.crit_chance, ability_ids,
-	]
+	SkirmishForecast.clear_forecast_cache()
 
 static func _forecast_key(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}) -> Array:
-	var approach: Vector2i = target_tile.coords - from_tile.coords
-	return [
-		_mech_key(attacker), _mech_key(defender),
-		int(from_tile.terrain_type), from_tile.elevation, int(target_tile.terrain_type), target_tile.elevation, target_tile.is_objective,
-		Rules.entrench_def_pct(int(defender.faction)),
-		approach, defender.facing,
-		int(formation_context.get("atk_allies_adj", 0)),
-		int(formation_context.get("def_allies_adj", 0)),
-		bool(formation_context.get("is_pincer", false)),
-		int(formation_context.get("atk_suppression", 0)),
-	]
+	return SkirmishForecast._forecast_key(attacker, defender, from_tile, target_tile, formation_context)
 
-## Computes a fast, deterministic tactical forecast before committing to an engagement.
-static func compute_forecast(
-	attacker: MechData,
-	defender: MechData,
-	from_tile: GridTileData,
-	target_tile: GridTileData,
-	formation_context: Dictionary = {}
-) -> Dictionary:
-	return forecast_shared(attacker, defender, from_tile, target_tile, formation_context).duplicate()
+static func compute_forecast(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}) -> Dictionary:
+	return SkirmishForecast.compute_forecast(attacker, defender, from_tile, target_tile, formation_context)
 
-## compute_forecast without the defensive copy: returns the cached dictionary itself, so the caller
-## must treat it as read-only. For hot read-only loops (AI scoring runs one per launch x target).
-static func forecast_shared(
-	attacker: MechData,
-	defender: MechData,
-	from_tile: GridTileData,
-	target_tile: GridTileData,
-	formation_context: Dictionary = {}
-) -> Dictionary:
-	var key: Array = _forecast_key(attacker, defender, from_tile, target_tile, formation_context)
-	var cached: Dictionary = _forecast_cache.get(key, {})
-	if not cached.is_empty():
-		return cached
-	var sim_atk := attacker.duplicate_mech()
-	var sim_def := defender.duplicate_mech()
-	var res := resolve_skirmish(sim_atk, sim_def, from_tile, target_tile, false, true, formation_context)
-	var favor := "EVEN ENCOUNTER"
-	if res.defender_destroyed and not res.attacker_destroyed:
-		favor = "DECISIVE KILL PROJECTION"
-	elif res.attacker_destroyed and not res.defender_destroyed:
-		favor = "CRITICAL DANGER (LETHAL COUNTER)"
-	elif res.attacker_won_clash:
-		favor = "FAVORABLE ASSAULT"
-	else:
-		favor = "UNFAVORABLE EXCHANGE"
-
-	if _forecast_cache.size() >= FORECAST_CACHE_LIMIT:
-		_forecast_cache.clear()
-	var forecast := {
-		"atk_mod_pct": res.atk_total_mod_pct,
-		"def_mod_pct": res.def_total_mod_pct,
-		"elev_diff": res.elev_diff,
-		"est_dmg_to_def": res.total_dmg_to_defender,
-		"est_dmg_to_atk": res.total_dmg_to_attacker,
-		"atk_eff_fp": res.atk_effective_firepower,
-		"def_eff_fp": res.def_effective_firepower,
-		"atk_spd": res.atk_effective_speed,  # round-1 initiative speeds, the ones the queue was built from
-		"def_spd": res.def_effective_speed,
-		"first_striker": "ATTACKER" if res.first_striker == "atk" else "DEFENDER",
-		"rounds_fought": res.rounds_fought,
-		"attacker_won": res.attacker_won_clash,
-		"win_favor": favor,
-		"approach_summary": res.approach_summary,
-		"approach_angle": res.approach_angle,
-		"tactical_tags": res.tactical_tags.duplicate(),
-	}
-	_forecast_cache[key] = forecast
-	return forecast
+## compute_forecast without the defensive copy: the result is the cached dictionary, read-only.
+static func forecast_shared(attacker: MechData, defender: MechData, from_tile: GridTileData, target_tile: GridTileData, formation_context: Dictionary = {}) -> Dictionary:
+	return SkirmishForecast.forecast_shared(attacker, defender, from_tile, target_tile, formation_context)
 
 ## Executes a complete turn-based battle resolution (used by forecasts, AI simulations, and tests).
 ## If `apply_to_units` is true, mutates `attacker` and `defender` Hull and Energy.

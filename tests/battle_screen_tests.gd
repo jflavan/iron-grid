@@ -43,6 +43,7 @@ func _ready() -> void:
 		"test_rules_page_draws_on_open", "test_ai_launch_context_excludes_mover", "test_redeploy_cancels_auto_advance",
 		"test_dijkstra_matches_bellman_ford_on_large_map", "test_terrain_is_baked_into_few_draws",
 		"test_hud_state_changes_queue_redraw",
+		"test_forecast_key_covers_every_engine_read_field", "test_forecast_cache_two_generations",
 	]:
 		await call(t)
 	print("[BATTLE TESTS] %d checks, %d failures" % [_checks, failures.size()])
@@ -1837,3 +1838,66 @@ func _linear_scan_came_from(gm: IsoGridMap, unit: MechData, occ: Dictionary, bud
 				if not queue.has(n):
 					queue.append(n)
 	return from
+
+## The forecast cache must never serve a stale answer: for every MechData field, if changing it
+## changes the real (uncached) forecast, it must also change the cache key. Walks the script
+## variables, so a field added to MechData later is covered automatically.
+func test_forecast_key_covers_every_engine_read_field() -> void:
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var flat2 := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.PLAIN, 1)
+	var must_differ: Array[String] = ["current_armor", "current_energy", "facing", "is_entrenched", "firepower",
+			"armor_rating", "speed", "evasion", "crit_chance", "max_armor", "max_energy"]
+	for side in ["atk", "def"]:
+		for prop in MechData.new().get_property_list():
+			if not (int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE):
+				continue
+			var pname: String = prop["name"]
+			var base_atk := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+			var base_def := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+			var mut_atk := base_atk.duplicate_mech()
+			var mut_def := base_def.duplicate_mech()
+			var target: MechData = mut_atk if side == "atk" else mut_def
+			var cur: Variant = target.get(pname)
+			var changed: Variant = cur
+			match typeof(cur):
+				TYPE_INT: changed = (1 - cur) if pname == "faction" else cur + 7
+				TYPE_BOOL: changed = not cur
+				TYPE_VECTOR2I: changed = Vector2i(cur.y, cur.x) if cur.x != cur.y else Vector2i(cur.x, -cur.y)
+			if changed == cur:
+				continue
+			SkirmishEngine.clear_forecast_cache()
+			var base_f := SkirmishEngine.compute_forecast(base_atk, base_def, flat, flat2)
+			var key_a := SkirmishEngine._forecast_key(base_atk, base_def, flat, flat2)
+			target.set(pname, changed)
+			var mut_f := SkirmishEngine.compute_forecast(mut_atk, mut_def, flat, flat2)
+			var key_b := SkirmishEngine._forecast_key(mut_atk, mut_def, flat, flat2)
+			if base_f != mut_f:
+				_check(key_a != key_b, "%s.%s changes the forecast, so it must change the cache key" % [side, pname])
+			elif pname in must_differ and side == "def" or (pname in ["current_armor", "firepower", "speed"] and side == "atk"):
+				_check(key_a != key_b, "%s.%s is part of the cache key" % [side, pname])
+	# the cached tactical_tags array is not shared with callers
+	SkirmishEngine.clear_forecast_cache()
+	var a := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var d := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	var f := SkirmishEngine.compute_forecast(a, d, flat, flat2)
+	(f["tactical_tags"] as Array).append("X")
+	_check(not (SkirmishEngine.compute_forecast(a, d, flat, flat2)["tactical_tags"] as Array).has("X"), "forecast tags are a deep copy")
+
+## Two-generation cache: filling past the limit rotates instead of dropping everything, and a
+## hit in the old generation is promoted.
+func test_forecast_cache_two_generations() -> void:
+	SkirmishEngine.clear_forecast_cache()
+	var flat := GridTileData.new(Vector2i(3, 2), GridTileData.TerrainType.PLAIN, 1)
+	var flat2 := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.PLAIN, 1)
+	var a := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+	var d := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+	SkirmishEngine.compute_forecast(a, d, flat, flat2)
+	var key := SkirmishEngine._forecast_key(a, d, flat, flat2)
+	# force a rotation: pretend the current generation is full
+	SkirmishForecast._forecast_old = SkirmishForecast._forecast_cache
+	SkirmishForecast._forecast_cache = {}
+	_check(not SkirmishEngine._forecast_cache.has(key), "after a rotation the entry lives in the old generation")
+	SkirmishEngine.compute_forecast(a, d, flat, flat2)
+	_check(SkirmishEngine._forecast_cache.has(key), "an old-generation hit is promoted")
+	SkirmishEngine.clear_forecast_cache()
+	_check(SkirmishForecast._forecast_old.is_empty() and SkirmishForecast._forecast_cache.is_empty(), "clear empties both generations")
