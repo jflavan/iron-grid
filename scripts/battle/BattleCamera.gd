@@ -20,6 +20,7 @@ var input_enabled: bool = true:
 
 var _dragging: bool = false
 var _drag_last_mouse: Vector2 = Vector2.ZERO
+var _tw: Tween = null   # the running focus pan; a new pan or a recentre replaces it
 
 func _process(delta: float) -> void:
 	if not input_enabled:
@@ -71,6 +72,7 @@ func _set_zoom(z: float) -> void:
 func center_on_map(map_def: MapDefinition) -> void:
 	if map_def == null:
 		return
+	_kill_focus()
 	var cx: float = float(map_def.width - map_def.height) * (IsoGridMap.TILE_W * 0.25)
 	var cy: float = float(map_def.width + map_def.height - 2) * (IsoGridMap.TILE_H * 0.25)
 	position = Vector2(cx, cy + 8.0)
@@ -79,6 +81,12 @@ func center_on_map(map_def: MapDefinition) -> void:
 ## Smoothly pans to `pos` (plus a small downward offset) over `duration` seconds. Returns the tween
 ## so the caller can chain a callback.
 func focus(pos: Vector2, duration: float = 0.28) -> Tween:
-	var tw := create_tween()
-	tw.tween_property(self, "position", pos + FOCUS_OFFSET, duration).set_trans(Tween.TRANS_SINE)
-	return tw
+	_kill_focus()
+	_tw = create_tween()
+	_tw.tween_property(self, "position", pos + FOCUS_OFFSET, duration).set_trans(Tween.TRANS_SINE)
+	return _tw
+
+func _kill_focus() -> void:
+	if _tw != null and _tw.is_valid():
+		_tw.kill()
+	_tw = null

@@ -196,3 +196,43 @@ static func _tips() -> Dictionary:
 		{"p": "WAIT/REFUEL when the enemy is coming to you: the entrenched defender often shoots first."},
 		{"p": "Send Falke and Donner to the flanking ridges early. They spend the least fuel getting there."},
 	]}
+
+## The H Field Manual. Numbers are read from the game data (GridTileData, MechData, SkirmishEngine,
+## BalanceProbe defaults) so it agrees with the Rules of Engagement page after a balance change.
+static func manual_lines() -> Array[String]:
+	var S := SkirmishEngine
+	var lines: Array[String] = [
+		"1. TURN FLOW & FUEL MOBILITY:",
+		"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
+		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+2 Fuel per 100m climbed).",
+		"   - On its turn, a walker can face & entrench, move and then face or attack, or face and attack in place. Attacking an adjacent enemy costs its tile's step fuel (terrain + chassis surcharge + climb) and never moves onto its tile.",
+		"   - [WAIT / REFUEL] entrenches (%+d%% DEF, %+d%% EVA, %+d%% Hit, +%d SPD) & restores +%d Fuel / +%d EN (+%d Hull in a City). Cities repair +%d Hull, +%d Fuel, +%d EN each turn." % [
+			Rules.entrench_def_pct(0), S.ENTRENCHED_EVA_BONUS, S.ENTRENCHED_ACC_BONUS, S.ENTRENCHED_SPD_BONUS,
+			MechData.WAIT_FUEL, MechData.WAIT_ENERGY, Rules.patch_armor(0), Rules.upkeep_armor(0), MechData.CITY_FUEL, MechData.CITY_ENERGY],
+		"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
+		"",
+		"2. TERRAIN CHART (FUEL COST / ATTACK / DEFENSE / EVASION MOD):",
+	]
+	var fuel_mult: int = GlobalState.chassis_catalog["vanguard"].fuel_usage if GlobalState.chassis_catalog.has("vanguard") else 2
+	for t in RulesContent.TERRAIN_ORDER:
+		var td := GridTileData.new(Vector2i.ZERO, t, 1)
+		lines.append("   - %s (%s): %d Fuel / %+d%% ATK / %+d%% DEF / %+d%% EVA" % [
+			td.get_terrain_name().to_upper(), td.get_terrain_short_code(), td.get_base_fuel_cost() * fuel_mult, td.get_attack_modifier_pct(), td.get_defense_modifier_pct(), td.get_evasion_modifier_pct()])
+	lines.append_array([
+		"",
+		"3. ELEVATION & HIGH GROUND ADVANTAGE:",
+		"   - Attacking from higher elevation down onto an enemy grants +%d%% Firepower, +%d%% Armor, +%d%% Hit, +%d%% EVA and +%d%% Crit per level!" % [
+			S.ELEV_HIGH_FP_PCT, S.ELEV_HIGH_ARMOR_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_EVA_PER_LEVEL, S.ELEV_CRIT_PER_LEVEL],
+		"   - Attacking uphill suffers -%d%% Firepower and -%d%% Hit Accuracy per elevation level (the defender above gains +%d%% Firepower & Armor)." % [
+			S.ELEV_CLIMB_FP_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_CLIMB_ENEMY_FP_PCT],
+		"",
+		"4. TURN-BASED RPG COMBAT (ATTACK / TECH / DEFEND / RETREAT):",
+		"   - Attacking an adjacent enemy triggers a classic Final Fantasy turn-based battle; both walkers remain on their own tiles.",
+		"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +%d SPD; an Entrenched Defender answers with +%d." % [
+			S.ROUND1_ATTACKER_SPD_BONUS, S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS],
+		"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-%d%% DMG on the enemy's next hit, +%d EN), or RETREAT." % [
+			100 - int(round(S.GUARD_DAMAGE_MULT * 100.0)), S.DEFEND_EN_GAIN],
+		"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands; it cannot be stacked.",
+		"   - Full rules: RULES OF ENGAGEMENT on the Command HQ screen (press R there).",
+	])
+	return lines
