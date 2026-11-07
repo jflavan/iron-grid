@@ -15,7 +15,6 @@ var base: Vector2 = Vector2.ZERO
 var pose: String = ""
 var offset: Vector2 = Vector2.ZERO
 var white: bool = false
-var visible: bool = true
 var idle_shift_ms: float = 0.0
 
 # lasting state for the rest of the fight

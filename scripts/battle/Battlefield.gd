@@ -99,10 +99,9 @@ func start_mission(map_idx: int) -> void:
 func center_camera_on_map() -> void:
 	camera.center_on_map(current_map_def)
 
-## C / the CAM hotspot. The AI phase owns the camera (it pans to each walker and waits on that pan).
+## C / the CAM hotspot. Always allowed: the AI phase's pans are cosmetic (its turns run on timers).
 func _on_center_requested() -> void:
-	if GlobalState.current_phase != GlobalState.TurnPhase.AI_PHASE:
-		center_camera_on_map()
+	center_camera_on_map()
 
 ## The camera takes pan / zoom / drag input only while no modal is up; set when a modal opens or closes.
 func _on_modal_changed() -> void:
@@ -653,12 +652,11 @@ func _process_next_ai_unit() -> void:
 
 func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 	ui_overlay.selected_mech = ai_unit.mech_data
-	var tok := _mission_token
-	# Smoothly pan camera toward active AI walker
-	var cam_tw := camera.focus(ai_unit.position, 0.28)
-	cam_tw.tween_callback(func():
-		if not _mission_alive(tok, GlobalState.TurnPhase.AI_PHASE):
-			return
+	# Pan the camera toward the active walker; the decision runs on its own timer, so anything that
+	# kills the pan (a C / CAM recentre, a redeploy) cannot drop the AI turn.
+	const PAN := 0.28
+	camera.focus(ai_unit.position, PAN)
+	_after(PAN, func():
 		if not MechUnit.is_live(ai_unit):
 			_process_next_ai_unit()
 			return

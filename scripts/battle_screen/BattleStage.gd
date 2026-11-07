@@ -764,8 +764,6 @@ func _draw() -> void:
 	_draw_banner()
 
 func _draw_mech(m: MechView) -> void:
-	if not m.visible:
-		return
 	var pose := pose_of(m)
 	var tex := MechSpriteBank.get_sheet(sheet_of(m), m.faction)
 	if tex == null:

@@ -135,7 +135,9 @@ static func _movement() -> Dictionary:
 	var ch_rows: Array = [PackedStringArray(["CHASSIS", "TANK+REFUEL", "OFF-ROAD", "GEAR"])]
 	for id in CHASSIS_ORDER:
 		var m := _chassis(id)
-		var gear := gear_text(m) if gear_text(m) != "" else "-"
+		var gear := gear_text(m)
+		if gear == "":
+			gear = "-"
 		var off := "%+d" % offroad_fuel(m) if m.fuel_efficiency_mod != 0 else "0"
 		ch_rows.append(PackedStringArray([m.callsign, "%d+%d" % [m.max_fuel, m.passive_refuel], off, gear]))
 	var ex := _worked_example()

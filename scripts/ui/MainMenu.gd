@@ -241,12 +241,8 @@ func _draw_recon(r: Rect2, map_def: MapDefinition) -> void:
 	var ox := r.position.x + 6
 	var oy := r.position.y + 18
 	for y in map_def.height:
-		var t_row := map_def.terrain_codes[y].split(" ", false)
-		var e_row := map_def.elevation_rows[y].split(" ", false)
 		for x in map_def.width:
-			var code: String = t_row[x] if x < t_row.size() else "P"
-			var elev: int = int(e_row[x]) if x < e_row.size() else 1
-			var col: Color = RECON_COLORS[TerrainDefs.parse_code(code)].lightened(float(elev - 1) * 0.08)
+			var col: Color = RECON_COLORS[map_def.terrain_at(x, y)].lightened(float(map_def.elevation_at(x, y) - 1) * 0.08)
 			draw_rect(Rect2(ox + x * RECON_CELL.x, oy + y * RECON_CELL.y, RECON_CELL.x - 1, RECON_CELL.y - 1), col)
 	for sp in map_def.spawns:
 		var pos: Vector2i = sp["pos"]

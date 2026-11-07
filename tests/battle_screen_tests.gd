@@ -2878,7 +2878,8 @@ func test_record_presentation_does_not_change_the_fight() -> void:
 						for f in step_fields:
 							_check(r1.steps[i].get(f) == r2.steps[i].get(f), "step %d %s equal: %s" % [i, f, label])
 
-## The camera's centre request during the AI phase is ignored: the AI's pan is not killed and the phase completes.
+## A centre request during the AI phase recentres the camera (killing the AI's pan) and the phase still
+## completes: the AI turn runs on a timer, not on the pan tween's callback.
 func test_center_request_during_ai_phase_does_not_stall() -> void:
 	var bf := await _spawn_iron_bridge()
 	bf._begin_ai_phase()
@@ -2942,8 +2943,11 @@ func test_hud_fuel_text_is_multiplied() -> void:
 ## The river advisory formats its fuel figure and keeps its literal percent signs: a "%" inside a
 ## format string must be escaped, or the operator raises a formatting error and the tip ships unformatted.
 func test_river_tip_formats_fuel_and_percentages() -> void:
+	var river: Dictionary = TerrainDefs.TABLE[GridTileData.TerrainType.RIVER]
 	var river_fuel: int = RulesContent.terrain_fuel(GridTileData.new(Vector2i.ZERO, GridTileData.TerrainType.RIVER, 1), RulesContent.default_fuel_usage())
-	var expected := "Rivers cost %d Fuel and impose -15%% ATK / -15%% DEF / -10%% EVA" % river_fuel
+	_check(river_fuel == int(river["fuel"]) * MechData.DEFAULT_FUEL_USAGE, "the catalog's shared fuel usage is MechData.DEFAULT_FUEL_USAGE")
+	var expected := "Rivers cost %d Fuel and impose %+d%% ATK / %+d%% DEF / %+d%% EVA" % [river_fuel, int(river["atk"]), int(river["def"]), int(river["eva"])]
+	_check(expected.contains("-15% ATK / -15% DEF / -10% EVA"), "the river modifiers read as the shipped table says")
 	var found := false
 	for m in GlobalState.maps:
 		if m.tactical_tip.contains(expected):

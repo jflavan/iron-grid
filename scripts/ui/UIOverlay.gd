@@ -141,12 +141,12 @@ func modal_open() -> bool:
 func modal_blocks_map() -> bool:
 	return skirmish_modal.visible or show_game_over_modal
 
-## Opens or closes the Field Manual; refused (false) while the skirmish or the debrief is up.
 ## Closes the manual silently (Esc); a no-op when it is not open.
 func close_manual() -> void:
 	if show_manual_modal:
 		show_manual_modal = false
 
+## Opens or closes the Field Manual; refused (false) while the skirmish or the debrief is up.
 func toggle_manual() -> bool:
 	if modal_blocks_map():
 		return false
@@ -310,8 +310,10 @@ func _on_root_draw() -> void:
 		var manual_rect: Rect2 = root_ctrl.hot.rect_of("manual")
 		root_ctrl.hot.clear()
 		root_ctrl.hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
-		root_ctrl.hot.add("manual", manual_rect)   # the MANUAL [H] button still closes it
 		_draw_manual_modal(v)
+		# Registered after the panel's own blocker (the last hotspot hit wins), so the MANUAL [H]
+		# button still closes the manual even where the panel reaches up over it.
+		root_ctrl.hot.add("manual", manual_rect)
 	if show_game_over_modal:
 		root_ctrl.hot.clear()
 		root_ctrl.hot.add(BLOCKER, Rect2(Vector2.ZERO, v))

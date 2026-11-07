@@ -47,7 +47,9 @@ var max_fuel: int = 14         # Maximum diesel-turbine fuel capacity
 var current_fuel: int = 14     # Remaining fuel for movement
 var fuel_efficiency_mod: int = 0 # -1 = Light All-Terrain, 0 = Standard, +1 = Heavy Surcharge on rough ground
 var passive_refuel: int = 4    # Diesel generator recharge at start of each turn
-var fuel_usage: int = 2        # Diesel fuel usage multiplier (doubled from 1 to 2)
+## Diesel fuel usage multiplier every chassis shares (real fuel = base terrain fuel x this).
+const DEFAULT_FUEL_USAGE: int = 2
+var fuel_usage: int = DEFAULT_FUEL_USAGE
 var amphibious_gear: bool = false # Reduces River fuel penalty
 var mountain_gear: bool = false   # Reduces Mountain climb fuel penalty
 
