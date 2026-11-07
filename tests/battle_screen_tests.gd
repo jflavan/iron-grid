@@ -1843,6 +1843,7 @@ func test_forecast_key_covers_every_engine_read_field() -> void:
 			var base_f := SkirmishEngine.compute_forecast(base_atk, base_def, flat, flat2)
 			var key_a := SkirmishEngine._forecast_key(base_atk, base_def, flat, flat2)
 			target.set(pname, changed)
+			SkirmishEngine.clear_forecast_cache()
 			var mut_f := SkirmishEngine.compute_forecast(mut_atk, mut_def, flat, flat2)
 			var key_b := SkirmishEngine._forecast_key(mut_atk, mut_def, flat, flat2)
 			if base_f != mut_f:
@@ -1865,7 +1866,7 @@ func test_forecast_cache_two_generations() -> void:
 	var flat2 := GridTileData.new(Vector2i(4, 2), GridTileData.TerrainType.PLAIN, 1)
 	var a := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
 	var d := GlobalState.create_mech_instance("moloch", MechData.Faction.AI, "D", Vector2i(4, 2), "d")
-	SkirmishEngine.compute_forecast(a, d, flat, flat2)
+	var f0 := SkirmishEngine.forecast_shared(a, d, flat, flat2)
 	var key := SkirmishEngine._forecast_key(a, d, flat, flat2)
 	# force a rotation: pretend the current generation is full
 	SkirmishForecast._forecast_old = SkirmishForecast._forecast_cache
@@ -1873,6 +1874,7 @@ func test_forecast_cache_two_generations() -> void:
 	_check(not SkirmishEngine._forecast_cache.has(key), "after a rotation the entry lives in the old generation")
 	SkirmishEngine.compute_forecast(a, d, flat, flat2)
 	_check(SkirmishEngine._forecast_cache.has(key), "an old-generation hit is promoted")
+	_check(is_same(SkirmishEngine.forecast_shared(a, d, flat, flat2), f0), "promotion keeps the same cached Dictionary object")
 	SkirmishEngine.clear_forecast_cache()
 	_check(SkirmishForecast._forecast_old.is_empty() and SkirmishForecast._forecast_cache.is_empty(), "clear empties both generations")
 
@@ -1910,8 +1912,8 @@ func test_replacing_a_finished_session_applies_it() -> void:
 	_check(dfn.current_armor == sess.result.def_armor_after and dfn.current_armor < start_def, "a concluded session replaced on screen is written back to the units first")
 	screen.queue_free()
 
-## A replaced finished session also reaches the listeners, once, whether or not it was fully played.
-func test_replaced_finished_session_emits_resolution() -> void:
+## A replaced finished session is applied to the units but does NOT emit (no re-entrant listeners).
+func test_replaced_finished_session_applies_without_emitting() -> void:
 	for played in [false, true]:
 		var screen := BattleScreen.new()
 		add_child(screen)
@@ -1920,13 +1922,15 @@ func test_replaced_finished_session_emits_resolution() -> void:
 		screen.resolution_confirmed.connect(func(r): emitted.append(r))
 		var sess := _flat_session("vanguard", "moloch")
 		sess.auto_resolve()
+		var res_def: MechData = sess.result.defender
 		screen.start_session(sess)
 		if played:
 			screen._on_skip_pressed()   # played out, waiting for the confirm
 		screen.start_showdown(_fight("falke", "goliath"))
-		_check(emitted.size() == 1 and emitted[0] == sess.result, "a replaced finished session emits resolution_confirmed once (fully played: %s)" % played)
+		_check(res_def.current_armor == sess.result.def_armor_after, "a replaced finished session is written back (fully played: %s)" % played)
+		_check(emitted.is_empty(), "a replaced finished session emits nothing (fully played: %s)" % played)
 		screen.start_showdown(_fight("falke", "goliath"))
-		_check(emitted.size() == 1, "replacing a showdown emits nothing")
+		_check(emitted.is_empty(), "replacing a showdown emits nothing")
 		screen.queue_free()
 
 func test_screen_only_processes_while_active() -> void:
@@ -2106,6 +2110,7 @@ func test_duplicate_mech_copies_every_field() -> void:
 			continue
 		_check(copy.get(prop["name"]) == src.get(prop["name"]), "duplicate_mech copies %s" % prop["name"])
 	_check(copy.abilities.size() == 1 and copy.abilities[0] != src.abilities[0], "abilities are copied, not shared")
+	_check(not is_same(copy.abilities, src.abilities), "the abilities array itself is not shared")
 	for prop in src.abilities[0].get_property_list():
 		if int(prop["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE:
 			_check(copy.abilities[0].get(prop["name"]) == src.abilities[0].get(prop["name"]), "duplicate_ability copies %s" % prop["name"])
@@ -2708,3 +2713,36 @@ func test_visible_band_search_matches_brute_force() -> void:
 	_check(narrower, "the band search skips tiles outside the view")
 	gm.queue_free()
 	await get_tree().process_frame
+
+## record_presentation only adds presentation data: the fight itself is identical with and without it.
+func test_record_presentation_does_not_change_the_fight() -> void:
+	var pairs := [["vanguard", "moloch"], ["falke", "kommandant"], ["goliath", "donner"], ["kommandant", "falke"], ["donner", "vanguard"]]
+	var terrains := [GridTileData.TerrainType.PLAIN, GridTileData.TerrainType.MOUNTAIN]
+	var ctxs := [{}, {"atk_allies_adj": 1, "def_allies_adj": 1, "is_pincer": true, "atk_suppression": 1}]
+	var step_fields := ["actor_side", "ability_id", "damage_dealt", "is_miss", "is_crit", "escaped", "escape_failed",
+		"atk_hp_after", "def_hp_after", "atk_en_after", "def_en_after"]
+	for pair in pairs:
+		for terr in terrains:
+			for ci in ctxs.size():
+				var ctx: Dictionary = ctxs[ci]
+				var ft := GridTileData.new(Vector2i(3, 2), terr, 1)
+				var tt := GridTileData.new(Vector2i(4, 2), terr, 1)
+				var out: Array = []
+				for rec in [true, false]:
+					var a := GlobalState.create_mech_instance(pair[0], MechData.Faction.PLAYER, "A", Vector2i(3, 2), "a")
+					var d := GlobalState.create_mech_instance(pair[1], MechData.Faction.AI, "D", Vector2i(4, 2), "d")
+					out.append(SkirmishEngine.resolve_skirmish(a, d, ft, tt, false, true, ctx, rec))
+				var r1: SkirmishEngine.SkirmishResult = out[0]
+				var r2: SkirmishEngine.SkirmishResult = out[1]
+				var label := "%s/%s terrain %d ctx %d" % [pair[0], pair[1], terr, ci]
+				_check(r1.total_dmg_to_defender == r2.total_dmg_to_defender and r1.total_dmg_to_attacker == r2.total_dmg_to_attacker, "totals equal: " + label)
+				_check(r1.attacker_won_clash == r2.attacker_won_clash and r1.attacker_destroyed == r2.attacker_destroyed
+					and r1.defender_destroyed == r2.defender_destroyed, "outcome flags equal: " + label)
+				_check(r1.first_striker == r2.first_striker and r1.atk_effective_speed == r2.atk_effective_speed
+					and r1.def_effective_speed == r2.def_effective_speed and r1.rounds_fought == r2.rounds_fought, "initiative equal: " + label)
+				_check(r1.tactical_tags == r2.tactical_tags, "tactical tags equal: " + label)
+				_check(r1.steps.size() == r2.steps.size(), "step count equal: " + label)
+				if r1.steps.size() == r2.steps.size():
+					for i in r1.steps.size():
+						for f in step_fields:
+							_check(r1.steps[i].get(f) == r2.steps[i].get(f), "step %d %s equal: %s" % [i, f, label])

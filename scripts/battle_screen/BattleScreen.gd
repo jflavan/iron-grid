@@ -77,7 +77,8 @@ func _screen_to_stage(screen_pos: Vector2) -> Vector2:
 
 ## A live session that is replaced while still on screen must not lose its result: a concluded one
 ## (finished in the engine, or fully played and waiting for the confirm) is written back to the units
-## and handed to the listeners via resolution_confirmed, exactly as if the player had confirmed it.
+## and applied without confirmation. No signal is emitted: this runs inside start_session/start_showdown
+## and an emit would re-enter listeners (BattlePreview replays on it).
 ## An unfinished one cannot be applied, so say so. A replaced showdown is only a preview: no signal.
 func _flush_active_session() -> void:
 	if not _is_active or current_session == null:
@@ -87,11 +88,10 @@ func _flush_active_session() -> void:
 		return
 	if not _all_steps_done:
 		_finish()
-	var res := current_result
+	push_warning("BattleScreen: a concluded session was replaced and applied without confirmation")
 	_is_active = false
 	current_result = null
 	current_session = null
-	resolution_confirmed.emit(res)
 
 ## Starts a live interactive turn-based BattleSession.
 func start_session(session: SkirmishEngine.BattleSession) -> void:

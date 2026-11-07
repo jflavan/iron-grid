@@ -201,7 +201,10 @@ func duplicate_mech() -> MechData:
 	var copy := MechData.new()
 	for n in _state_prop_names():
 		if n != "abilities":
-			copy.set(n, get(n))
+			var v: Variant = get(n)
+			if v is Array or v is Dictionary:
+				v = v.duplicate(true)
+			copy.set(n, v)
 	for a in abilities:
 		copy.abilities.append(a.duplicate_ability())
 	return copy
