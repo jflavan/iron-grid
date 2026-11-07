@@ -48,10 +48,12 @@ func _ready() -> void:
 	ui_overlay.action_rotate_requested.connect(_rotate_selected_unit)
 	ui_overlay.action_next_mech_requested.connect(_select_next_player_unit)
 	ui_overlay.action_end_turn_requested.connect(_on_end_turn_requested)
-	ui_overlay.action_center_camera_requested.connect(center_camera_on_map)
+	ui_overlay.action_center_camera_requested.connect(_on_center_requested)
 	ui_overlay.action_return_menu_requested.connect(_on_return_menu_requested)
 	ui_overlay.action_restart_mission_requested.connect(_on_restart_mission_requested)
 	ui_overlay.skirmish_modal_closed.connect(_on_skirmish_modal_closed)
+	ui_overlay.modal_changed.connect(_on_modal_changed)
+	_on_modal_changed()
 
 	start_mission(GlobalState.selected_map_index)
 
@@ -74,6 +76,9 @@ func start_mission(map_idx: int) -> void:
 	_pending_ai_target = null
 	_pending_ai_attack_fuel = 0
 	_phase_before_resolution = GlobalState.TurnPhase.PLAYER_PHASE
+	_strike_plans.clear()
+	_strike_field = {}
+	_strike_field_key = []
 	grid_map.suppress_redraw = false
 	MechUnit.suppress_redraw = false
 	var idx: int = clampi(map_idx, 0, GlobalState.maps.size() - 1)
@@ -101,26 +106,31 @@ func start_mission(map_idx: int) -> void:
 func center_camera_on_map() -> void:
 	camera.center_on_map(current_map_def)
 
-func _modal_up() -> bool:
-	return ui_overlay.skirmish_modal.visible or ui_overlay.show_game_over_modal or ui_overlay.show_manual_modal
+## C / the CAM hotspot. The AI phase owns the camera (it pans to each walker and waits on that pan).
+func _on_center_requested() -> void:
+	if GlobalState.current_phase != GlobalState.TurnPhase.AI_PHASE:
+		center_camera_on_map()
 
-func _process(_delta: float) -> void:
-	camera.input_enabled = not _modal_up()
+## The camera takes pan / zoom / drag input only while no modal is up; set when a modal opens or closes.
+func _on_modal_changed() -> void:
+	camera.input_enabled = not ui_overlay.modal_open()
+
+## True when the player may issue an order: their phase, no walker mid-move, no modal up.
+func can_command() -> bool:
+	return GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not _is_animating_move and not ui_overlay.modal_open()
 
 func _unhandled_input(event: InputEvent) -> void:
-	camera.input_enabled = not _modal_up()
 	if event is InputEventMouseButton and not event.pressed:
 		camera.handle_mouse(event)   # a release always ends a drag
 
-	if ui_overlay.skirmish_modal.visible or ui_overlay.show_game_over_modal:
+	if ui_overlay.modal_blocks_map():
 		camera.stop_drag()
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_H:
-			ui_overlay.show_manual_modal = not ui_overlay.show_manual_modal
-			camera.stop_drag()
-			SoundManager.play("ui_click")
+			if ui_overlay.toggle_manual():
+				camera.stop_drag()
 			return
 		if ui_overlay.show_manual_modal:
 			if event.keycode == KEY_ESCAPE:
@@ -128,20 +138,20 @@ func _unhandled_input(event: InputEvent) -> void:
 				camera.stop_drag()
 			return
 		if event.keycode == KEY_C:
-			center_camera_on_map()
+			_on_center_requested()
 			SoundManager.play("ui_click")
-		elif event.keycode == KEY_E and GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not _is_animating_move:
+		elif event.keycode == KEY_E:
 			_on_end_turn_requested()
-		elif event.keycode == KEY_R and GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not _is_animating_move:
+		elif event.keycode == KEY_R:
 			_on_wait_refuel_requested()
-		elif event.keycode == KEY_T and _can_rotate_selected_unit() and not _is_animating_move:
+		elif event.keycode == KEY_T:
 			_rotate_selected_unit()
-		elif (event.keycode == KEY_TAB or event.keycode == KEY_SPACE) and GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not _is_animating_move:
+		elif event.keycode == KEY_TAB or event.keycode == KEY_SPACE:
 			_select_next_player_unit()
 		elif event.keycode == KEY_ESCAPE:
 			_deselect_unit()
 
-	if ui_overlay.show_manual_modal:
+	if ui_overlay.modal_open():
 		camera.stop_drag()
 		return
 
@@ -268,9 +278,8 @@ func _selected_is_valid() -> bool:
 	return selected_unit != null and is_instance_valid(selected_unit) and selected_unit.mech_data != null and selected_unit.mech_data.is_alive()
 
 func _can_rotate_selected_unit() -> bool:
-	return (GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and selected_unit != null
-		and is_instance_valid(selected_unit) and selected_unit.mech_data.faction == MechData.Faction.PLAYER
-		and not _is_animating_move)
+	return (can_command() and selected_unit != null
+		and is_instance_valid(selected_unit) and selected_unit.mech_data.faction == MechData.Faction.PLAYER)
 
 func _has_ready_player_selection() -> bool:
 	return (GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and selected_unit != null
@@ -289,7 +298,7 @@ func strike_plan_for(coords: Vector2i) -> StrikePlan:
 	var m := selected_unit.mech_data
 	if m.has_moved and absi(coords.x - m.grid_pos.x) + absi(coords.y - m.grid_pos.y) != 1:
 		return null
-	var key := [m, m.grid_pos, m.current_fuel, m.has_moved, coords, u_at, u_at.mech_data.grid_pos]
+	var key := [m, m.grid_pos, m.current_fuel, m.has_moved, coords, u_at, u_at.mech_data.grid_pos, unit_container.occupancy_epoch]
 	var cached: StrikePlan = _strike_plans.get(key, null)
 	if cached != null:
 		return cached
@@ -305,7 +314,7 @@ func strike_plan_for(coords: Vector2i) -> StrikePlan:
 	return plan
 
 func _on_tile_clicked(coords: Vector2i, _tile: GridTileData) -> void:
-	if GlobalState.current_phase != GlobalState.TurnPhase.PLAYER_PHASE or _is_animating_move:
+	if not can_command():
 		return
 
 	var clicked_unit := unit_container.get_unit_at(coords)
@@ -446,7 +455,7 @@ func _on_unit_movement_finished(unit: MechUnit, target_coords: Vector2i, fuel_sp
 		_process_next_ai_unit()
 
 func _on_wait_refuel_requested() -> void:
-	if GlobalState.current_phase != GlobalState.TurnPhase.PLAYER_PHASE or _is_animating_move:
+	if not can_command():
 		return
 	if selected_unit == null or selected_unit.mech_data.faction != MechData.Faction.PLAYER or selected_unit.mech_data.is_order_complete():
 		return
@@ -481,10 +490,18 @@ func _has_unmoved_player_units() -> bool:
 func _start_auto_advance_timer(delay: float = 0.45) -> void:
 	_auto_advance_token += 1
 	var token: int = _auto_advance_token
-	var timer := get_tree().create_timer(delay)
-	timer.timeout.connect(func():
-		if token == _auto_advance_token and GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not _is_animating_move:
+	_after(delay, func():
+		if token == _auto_advance_token and not _is_animating_move:
 			_begin_ai_phase()
+	, GlobalState.TurnPhase.PLAYER_PHASE)
+
+## Runs `fn` after `delay` seconds unless the mission was restarted / ended meanwhile or the game is
+## no longer in `phase` (the AI phase by default).
+func _after(delay: float, fn: Callable, phase: GlobalState.TurnPhase = GlobalState.TurnPhase.AI_PHASE) -> void:
+	var tok := _mission_token
+	get_tree().create_timer(delay).timeout.connect(func():
+		if tok == _mission_token and GlobalState.current_phase == phase:
+			fn.call()
 	)
 
 func _check_auto_advance_player_phase(auto_select_unmoved: bool = true) -> void:
@@ -502,6 +519,8 @@ func _check_auto_advance_player_phase(auto_select_unmoved: bool = true) -> void:
 	_start_auto_advance_timer(0.45)
 
 func _select_next_player_unit() -> void:
+	if not can_command():
+		return
 	var p_units := unit_container.get_faction_units(MechData.Faction.PLAYER)
 	if p_units.is_empty():
 		return
@@ -523,7 +542,7 @@ func _select_next_player_unit() -> void:
 			return
 
 func _on_end_turn_requested() -> void:
-	if GlobalState.current_phase != GlobalState.TurnPhase.PLAYER_PHASE or _is_animating_move:
+	if not can_command():
 		return
 	_begin_ai_phase()
 
@@ -608,12 +627,7 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 		if not _has_unmoved_player_units():
 			_start_auto_advance_timer(0.45)
 	elif _phase_before_resolution == GlobalState.TurnPhase.AI_PHASE:
-		var tok := _mission_token
-		var t := get_tree().create_timer(0.35)
-		t.timeout.connect(func():
-			if tok == _mission_token and GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
-				_process_next_ai_unit()
-		)
+		_after(0.35, _process_next_ai_unit)
 
 # =============================================================================
 # TURN FLOW: SYNDICATE AI PHASE
@@ -634,12 +648,7 @@ func _begin_ai_phase() -> void:
 	# Mirror the player: no refuel/repair upkeep before a faction's first phase
 	_apply_turn_upkeep(_ai_queue, GlobalState.turn_number > 1)
 
-	var tok := _mission_token
-	var t := get_tree().create_timer(0.65)
-	t.timeout.connect(func():
-		if tok == _mission_token and GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
-			_process_next_ai_unit()
-	)
+	_after(0.65, _process_next_ai_unit)
 
 func _process_next_ai_unit() -> void:
 	if GlobalState.current_phase != GlobalState.TurnPhase.AI_PHASE:
@@ -679,7 +688,7 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 				ai_unit.mech_data.callsign, ai_unit.mech_data.grid_pos.x, ai_unit.mech_data.grid_pos.y
 			])
 			ai_unit.queue_redraw()
-			_continue_ai_after(0.32, tok)
+			_after(0.32, _process_next_ai_unit)
 		elif action_type == "ENGAGE":
 			var target_pos: Vector2i = decision["target_pos"]
 			var target_unit := unit_container.get_unit_at(target_pos, ai_unit)
@@ -687,7 +696,7 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 				# The decision's target is gone: skip this walker rather than stall the phase
 				_pending_ai_target = null
 				_pending_ai_attack_fuel = 0
-				_continue_ai_after(0.32, tok)
+				_after(0.32, _process_next_ai_unit)
 				return
 			var move_pos: Vector2i = decision.get("move_pos", ai_unit.mech_data.grid_pos)
 			var move_path: Array[Vector2i] = decision.get("move_path", [ai_unit.mech_data.grid_pos]).duplicate()
@@ -708,12 +717,6 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			var path: Array[Vector2i] = decision["path"].duplicate()
 			var fuel_spent: int = int(decision["fuel_spent"])
 			_execute_unit_movement(ai_unit, target_pos, path, fuel_spent)
-	)
-
-func _continue_ai_after(delay: float, tok: int) -> void:
-	get_tree().create_timer(delay).timeout.connect(func():
-		if tok == _mission_token and GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
-			_process_next_ai_unit()
 	)
 
 func _finish_ai_phase() -> void:

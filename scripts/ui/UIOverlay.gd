@@ -15,6 +15,8 @@ signal action_center_camera_requested()
 signal action_return_menu_requested()
 signal action_restart_mission_requested()
 signal skirmish_modal_closed(result: SkirmishEngine.SkirmishResult)
+## A modal opened or closed (skirmish, field manual or debrief): Battlefield gates the camera on it.
+signal modal_changed()
 
 const LEFT_W := 152       # fits the widest battle sprite (136px) inside its portrait frame
 const RIGHT_W := 164
@@ -22,45 +24,9 @@ const LOG_H := 64
 const TOP_H := 30
 const BLOCKER := "block"   # hotspot id of a plain panel: swallows the click, does nothing
 
-## The H Field Manual. Numbers are read from the game data (GridTileData, MechData, SkirmishEngine,
-## BalanceProbe defaults) so it agrees with the Rules of Engagement page after a balance change.
+## The H Field Manual (content lives in RulesContent).
 static func manual_lines() -> Array[String]:
-	var S := SkirmishEngine
-	var lines: Array[String] = [
-		"1. TURN FLOW & FUEL MOBILITY:",
-		"   - Each Turn follows: PLAYER COMMAND PHASE -> COMBAT ENCOUNTER PHASE -> SYNDICATE AI PHASE.",
-		"   - Moving consumes Diesel Fuel based on Terrain + Uphill Elevation Climb (+2 Fuel per 100m climbed).",
-		"   - On its turn, a walker can face & entrench, move and then face or attack, or face and attack in place. Attacking an adjacent enemy costs its tile's step fuel (terrain + chassis surcharge + climb) and never moves onto its tile.",
-		"   - [WAIT / REFUEL] entrenches (%+d%% DEF, %+d%% EVA, %+d%% Hit, +%d SPD) & restores +%d Fuel / +%d EN (+%d Hull in a City). Cities repair +%d Hull, +%d Fuel, +%d EN each turn." % [
-			Rules.entrench_def_pct(0), S.ENTRENCHED_EVA_BONUS, S.ENTRENCHED_ACC_BONUS, S.ENTRENCHED_SPD_BONUS,
-			MechData.WAIT_FUEL, MechData.WAIT_ENERGY, Rules.patch_armor(0), Rules.upkeep_armor(0), MechData.CITY_FUEL, MechData.CITY_ENERGY],
-		"   - Objective captures must be held through the enemy phase: objective victories are checked at turn end.",
-		"",
-		"2. TERRAIN CHART (FUEL COST / ATTACK / DEFENSE / EVASION MOD):",
-	]
-	var fuel_mult: int = GlobalState.chassis_catalog["vanguard"].fuel_usage if GlobalState.chassis_catalog.has("vanguard") else 2
-	for t in RulesContent.TERRAIN_ORDER:
-		var td := GridTileData.new(Vector2i.ZERO, t, 1)
-		lines.append("   - %s (%s): %d Fuel / %+d%% ATK / %+d%% DEF / %+d%% EVA" % [
-			td.get_terrain_name().to_upper(), td.get_terrain_short_code(), td.get_base_fuel_cost() * fuel_mult, td.get_attack_modifier_pct(), td.get_defense_modifier_pct(), td.get_evasion_modifier_pct()])
-	lines.append_array([
-		"",
-		"3. ELEVATION & HIGH GROUND ADVANTAGE:",
-		"   - Attacking from higher elevation down onto an enemy grants +%d%% Firepower, +%d%% Armor, +%d%% Hit, +%d%% EVA and +%d%% Crit per level!" % [
-			S.ELEV_HIGH_FP_PCT, S.ELEV_HIGH_ARMOR_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_EVA_PER_LEVEL, S.ELEV_CRIT_PER_LEVEL],
-		"   - Attacking uphill suffers -%d%% Firepower and -%d%% Hit Accuracy per elevation level (the defender above gains +%d%% Firepower & Armor)." % [
-			S.ELEV_CLIMB_FP_PCT, S.ELEV_ACC_PER_LEVEL, S.ELEV_CLIMB_ENEMY_FP_PCT],
-		"",
-		"4. TURN-BASED RPG COMBAT (ATTACK / TECH / DEFEND / RETREAT):",
-		"   - Attacking an adjacent enemy triggers a classic Final Fantasy turn-based battle; both walkers remain on their own tiles.",
-		"   - Turn order each round is determined by Speed (SPD). Round 1 gives the Attacker +%d SPD; an Entrenched Defender answers with +%d." % [
-			S.ROUND1_ATTACKER_SPD_BONUS, S.ROUND1_ENTRENCHED_SPD_BONUS + S.ENTRENCHED_SPD_BONUS],
-		"   - Choose ATTACK (0 EN), TECH (uses Reactor Energy EN for heavy weapons & support buffs), DEFEND (-%d%% DMG on the enemy's next hit, +%d EN), or RETREAT." % [
-			100 - int(round(S.GUARD_DAMAGE_MULT * 100.0)), S.DEFEND_EN_GAIN],
-		"   - ARMOR/TACTIC TECHs deploy once per battle. A DEFEND guard, like a shield, holds through misses and support turns and is spent by the first shot that lands; it cannot be stacked.",
-		"   - Full rules: RULES OF ENGAGEMENT on the Command HQ screen (press R there).",
-	])
-	return lines
+	return RulesContent.manual_lines()
 
 
 var root_ctrl: CrtScreen
@@ -69,54 +35,43 @@ var skirmish_modal: BattleScreen
 # HUD state set by Battlefield. Every assignment queues a redraw: the HUD is drawn on change (plus
 # the animated portrait and banner), not every frame.
 var selected_mech: MechData = null:
-	set(v): selected_mech = v; _dirty = true
+	set(v): selected_mech = v; _mark_dirty()
 var hovered_mech: MechData = null:
-	set(v): hovered_mech = v; _dirty = true
+	set(v): hovered_mech = v; _mark_dirty()
 var hovered_tile: GridTileData = null:
-	set(v): hovered_tile = v; _dirty = true
+	set(v): hovered_tile = v; _mark_dirty()
 var hovered_reach_info: Dictionary = {}:
-	set(v): hovered_reach_info = v; _dirty = true
+	set(v): hovered_reach_info = v; _mark_dirty()
 var current_forecast: Dictionary = {}:
-	set(v): current_forecast = v; _dirty = true
+	set(v): current_forecast = v; _mark_dirty()
 var strike_plan: StrikePlan = null:       # why the hovered enemy can't be struck (Battlefield.strike_plan_for)
-	set(v): strike_plan = v; _dirty = true
+	set(v): strike_plan = v; _mark_dirty()
 var step_cost_mech: MechData = null:      # ready selected walker whose real step cost the sector panel shows
-	set(v): step_cost_mech = v; _dirty = true
+	set(v): step_cost_mech = v; _mark_dirty()
 
 var map_def: MapDefinition = null:
-	set(v): map_def = v; _dirty = true
+	set(v): map_def = v; _mark_dirty()
 var player_unit_count: int = 0:
-	set(v): player_unit_count = v; _dirty = true
+	set(v): player_unit_count = v; _mark_dirty()
 var ai_unit_count: int = 0:
-	set(v): ai_unit_count = v; _dirty = true
+	set(v): ai_unit_count = v; _mark_dirty()
 var player_obj_count: int = 0:
-	set(v): player_obj_count = v; _dirty = true
+	set(v): player_obj_count = v; _mark_dirty()
 var total_obj_count: int = 0:
-	set(v): total_obj_count = v; _dirty = true
+	set(v): total_obj_count = v; _mark_dirty()
 
 ## Set by Battlefield while a walker is mid-move: orders are refused, so the commands render disabled.
 var commands_locked: bool = false:
-	set(v): commands_locked = v; _dirty = true
+	set(v): commands_locked = v; _mark_dirty()
 var show_manual_modal: bool = false:
-	set(v): show_manual_modal = v; _dirty = true; _manual_cache = []   # re-read balance values on open
+	set(v): show_manual_modal = v; _mark_dirty(); _manual_cache = []; modal_changed.emit()   # re-read balance values on open
 var show_game_over_modal: bool = false:
-	set(v): show_game_over_modal = v; _dirty = true
+	set(v): show_game_over_modal = v; _mark_dirty(); modal_changed.emit()
 var _banner_timer: float = 0.0
 var _banner_text: String = ""
 var _anim_time: float = 0.0
-# The CRT screen state lives on root_ctrl (a CrtScreen); these forward to it so the HUD code reads as before.
-var _scale: int:
-	get: return root_ctrl._scale if root_ctrl != null else 2
-	set(v): root_ctrl._scale = v
-var _hot: CrtHotspots:
-	get: return root_ctrl._hot
-var _dirty: bool:
-	get: return root_ctrl == null or root_ctrl._dirty
-	set(v):
-		if root_ctrl != null:
-			root_ctrl._dirty = v
 var _debrief_row: int = 0
-# Redraw scheduling: _dirty is set by HUD state changes, input and GlobalState signals; the idle
+# Redraw scheduling: the dirty flag is set by HUD state changes, input and GlobalState signals; the idle
 # portrait redraws when its frame steps; the heartbeat picks up in-place MechData changes (fuel,
 # armor) that no setter sees.
 const REDRAW_HEARTBEAT := 0.25
@@ -138,6 +93,7 @@ func _ready() -> void:
 	skirmish_modal = BattleScreen.new()
 	skirmish_modal.resolution_confirmed.connect(func(res): skirmish_modal_closed.emit(res))
 	skirmish_modal.visibility_changed.connect(_mark_dirty)
+	skirmish_modal.visibility_changed.connect(modal_changed.emit)
 	add_child(skirmish_modal)
 	GlobalState.phase_changed.connect(func(_p, _t): _mark_dirty())
 	GlobalState.log_added.connect(func(_e): _mark_dirty())
@@ -152,7 +108,7 @@ func _process(delta: float) -> void:
 		if _banner_timer > 0.0:
 			_banner_timer = maxf(0.0, _banner_timer - delta)
 			if _banner_timer == 0.0:
-				_dirty = true
+				_mark_dirty()
 		return
 	_anim_time += delta
 	_since_redraw += delta
@@ -162,8 +118,8 @@ func _process(delta: float) -> void:
 	var frame: int = 0
 	for chassis in _portraits:
 		frame += MechSpriteBank.idle_frame(chassis, _anim_time * 1000.0)
-	if _dirty or banner_live or frame != _portrait_frame or _since_redraw >= REDRAW_HEARTBEAT:
-		_dirty = false
+	if root_ctrl.dirty or banner_live or frame != _portrait_frame or _since_redraw >= REDRAW_HEARTBEAT:
+		root_ctrl.dirty = false
 		_since_redraw = 0.0
 		_portrait_frame = frame
 		root_ctrl.queue_redraw()
@@ -177,9 +133,26 @@ func show_skirmish_session(session: SkirmishEngine.BattleSession) -> void:
 	skirmish_modal.start_session(session)
 
 func trigger_game_over() -> void:
+	show_manual_modal = false   # the debrief replaces the manual; leaving it up would hide the debrief's rows
 	show_game_over_modal = true
 	_debrief_row = 0
 	root_ctrl.queue_redraw()
+
+## True while any modal (skirmish battle, debrief or field manual) is up.
+func modal_open() -> bool:
+	return skirmish_modal.visible or show_game_over_modal or show_manual_modal
+
+## True while a modal that owns ALL input is up (skirmish battle, debrief): the manual still takes H / Esc.
+func modal_blocks_map() -> bool:
+	return skirmish_modal.visible or show_game_over_modal
+
+## Opens or closes the Field Manual; refused (false) while the skirmish or the debrief is up.
+func toggle_manual() -> bool:
+	if modal_blocks_map():
+		return false
+	SoundManager.play("ui_click")
+	show_manual_modal = not show_manual_modal
+	return true
 
 func _is_player_command_time() -> bool:
 	return GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE and not skirmish_modal.visible and not show_game_over_modal and not commands_locked
@@ -201,14 +174,14 @@ func _input(event: InputEvent) -> void:
 	if skirmish_modal.visible:
 		return
 	if event is InputEventKey or event is InputEventMouseButton:
-		_dirty = true
+		_mark_dirty()
 	if event is InputEventMouseMotion:
 		var id := root_ctrl.track_pointer(event)
 		if id.begins_with("debrief:"):
 			_debrief_row = int(id.substr(8))
 	elif event is InputEventMouseButton:
 		var id := root_ctrl.hit_id(event)
-		_hot.hovered = id   # keep pointer_over_hud() right for clicks that arrive without a motion event
+		root_ctrl.hot.hovered = id   # keep pointer_over_hud() right for clicks that arrive without a motion event
 		if id != "" and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 			# Mark it handled first: MENU / debrief rows change scene and take this overlay out of the tree.
 			get_viewport().set_input_as_handled()
@@ -226,20 +199,20 @@ func _input(event: InputEvent) -> void:
 
 ## True while the pointer is over any HUD panel or command: the map must not see it.
 func pointer_over_hud() -> bool:
-	return _hot.hovered != ""
+	return root_ctrl.hot.hovered != ""
 
 func _activate(id: String) -> void:
 	if id == BLOCKER:
 		return
-	# A modal owns the screen: only its own controls respond
-	if show_manual_modal and id != "manual":
-		return
-	if show_game_over_modal and not id.begins_with("debrief:"):
+	# A modal owns the screen: only its own controls respond (the debrief outranks the manual)
+	if show_game_over_modal:
+		if not id.begins_with("debrief:"):
+			return
+	elif show_manual_modal and id != "manual":
 		return
 	match id:
 		"manual":
-			SoundManager.play("ui_click")
-			show_manual_modal = not show_manual_modal
+			toggle_manual()
 		"cam":
 			SoundManager.play("ui_click")
 			action_center_camera_requested.emit()
@@ -274,18 +247,18 @@ func _tr(s: String, right_x: float, y: float, col: Color) -> void:
 
 ## A clickable menu row: cursor on hover (or when forced), hover colour, hotspot.
 func _row(id: String, label: String, pos: Vector2, width: float, key_hint: String = "", force_cursor: bool = false) -> void:
-	var hot := _hot.hovered == id
+	var hot := root_ctrl.hot.hovered == id
 	if hot or force_cursor:
 		CrtUI.cursor(root_ctrl, pos)
 	_t(label, pos + Vector2(10, 0), CrtUI.C_CURSOR if hot else CrtUI.C_NAME)
 	if key_hint != "":
 		_tr(key_hint, pos.x + width, pos.y, CrtUI.C_LABEL_DIM)
-	_hot.add(id, Rect2(pos.x - 2, pos.y - 3, width + 4, CrtUI.ROW + 2))
+	root_ctrl.hot.add(id, Rect2(pos.x - 2, pos.y - 3, width + 4, CrtUI.ROW + 2))
 
 ## A HUD panel that also swallows clicks and hover, so they never reach the map underneath.
 func _panel(r: Rect2, border: Color = CrtUI.C_BORDER, alpha: float = 1.0) -> void:
 	CrtUI.panel(root_ctrl, r, border, alpha)
-	_hot.add(BLOCKER, r)
+	root_ctrl.hot.add(BLOCKER, r)
 
 func _phase_color() -> Color:
 	match GlobalState.current_phase:
@@ -298,10 +271,10 @@ func _phase_color() -> Color:
 # ---------------------------------------------------------------- drawing
 func _on_root_draw() -> void:
 	var vp: Vector2 = get_viewport().get_visible_rect().size
-	_scale = CrtUI.pixel_scale(vp)
-	var v := CrtUI.virtual_size(vp, _scale)
-	CrtUI.begin(root_ctrl, _scale)
-	_hot.clear()
+	root_ctrl.px_scale = CrtUI.pixel_scale(vp)
+	var v := CrtUI.virtual_size(vp, root_ctrl.px_scale)
+	CrtUI.begin(root_ctrl, root_ctrl.px_scale)
+	root_ctrl.hot.clear()
 	_portraits.clear()
 
 	_draw_top_bar(v)
@@ -331,14 +304,14 @@ func _on_root_draw() -> void:
 
 	# A modal owns the screen: drop the HUD's hotspots, swallow everything, keep only its own controls
 	if show_manual_modal:
-		var manual_rect: Rect2 = _hot.rect_of("manual")
-		_hot.clear()
-		_hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
-		_hot.add("manual", manual_rect)   # the MANUAL [H] button still closes it
+		var manual_rect: Rect2 = root_ctrl.hot.rect_of("manual")
+		root_ctrl.hot.clear()
+		root_ctrl.hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
+		root_ctrl.hot.add("manual", manual_rect)   # the MANUAL [H] button still closes it
 		_draw_manual_modal(v)
 	if show_game_over_modal:
-		_hot.clear()
-		_hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
+		root_ctrl.hot.clear()
+		root_ctrl.hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
 		_draw_game_over_modal(v)
 
 func _draw_top_bar(v: Vector2) -> void:
@@ -396,10 +369,10 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	# Portrait: the battle sprite at 1:1, in its own frame, facing the way it fights.
 	var port := Rect2(x, y, w, cell.y + 8)
 	CrtUI.frame(root_ctrl, port)
-	CrtUI.mech(root_ctrl, m.chassis_id, int(m.faction), Rect2(x, y + 4, w, cell.y), not is_player, _anim_time * 1000.0, _scale)
+	CrtUI.mech(root_ctrl, m.chassis_id, int(m.faction), Rect2(x, y + 4, w, cell.y), not is_player, _anim_time * 1000.0, root_ctrl.px_scale)
 	_portraits.append(m.chassis_id)
 	y += port.size.y + 4
-	var status_txt := "ENTRENCHED +15% DEF" if m.is_entrenched else ("READY TO STRIKE" if (m.has_moved and not m.has_attacked) else ("ORDER COMPLETE" if m.is_order_complete() else "SYSTEMS READY"))
+	var status_txt := ("ENTRENCHED %+d%% DEF" % Rules.entrench_def_pct(int(m.faction))) if m.is_entrenched else ("READY TO STRIKE" if (m.has_moved and not m.has_attacked) else ("ORDER COMPLETE" if m.is_order_complete() else "SYSTEMS READY"))
 	_t(status_txt, Vector2(x, y), CrtUI.C_LABEL if not m.is_order_complete() else CrtUI.C_LABEL_DIM)
 	_tr(m.get_facing_arrow(), x + w, y, CrtUI.C_CURSOR)
 	y += 12
@@ -567,7 +540,7 @@ func _draw_commands(rect: Rect2) -> void:
 	if _can_turn():
 		rows.append(["turn", "TURN / FACE", "T"])
 	if _can_wait():
-		rows.append(["wait", "WAIT / REFUEL +5F", "R"])
+		rows.append(["wait", "WAIT / REFUEL +%dF" % MechData.WAIT_FUEL, "R"])
 	elif _can_hold():
 		rows.append(["wait", "HOLD POSITION", "R"])
 	if _can_next_mech():

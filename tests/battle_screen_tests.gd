@@ -1191,14 +1191,14 @@ func test_overlay_click_that_leaves_scene() -> void:
 	ov.root_ctrl.queue_redraw()
 	await get_tree().process_frame
 	var rect := Rect2()
-	for sp in ov._hot._spots:
+	for sp in ov.root_ctrl.hot._spots:
 		if sp["id"] == "menu":
 			rect = sp["rect"]
 	_check(rect.size != Vector2.ZERO, "precondition: MENU hotspot exists")
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
 	ev.pressed = true
-	ev.position = rect.get_center() * ov._scale
+	ev.position = rect.get_center() * ov.root_ctrl.px_scale
 	ov._input(ev)
 	_check(not bf.is_inside_tree(), "the click took the battlefield out of the tree")
 	bf.queue_free()
@@ -1775,12 +1775,12 @@ func test_hud_state_changes_queue_redraw() -> void:
 	for prop in ["selected_mech", "hovered_mech", "hovered_tile", "hovered_reach_info", "current_forecast",
 			"strike_plan", "step_cost_mech", "map_def", "player_unit_count", "ai_unit_count", "player_obj_count",
 			"total_obj_count", "show_manual_modal", "show_game_over_modal"]:
-		ui._dirty = false
+		ui.root_ctrl.dirty = false
 		ui.set(prop, ui.get(prop))
-		_check(ui._dirty, "assigning UIOverlay.%s marks the HUD dirty" % prop)
-	ui._dirty = false
+		_check(ui.root_ctrl.dirty, "assigning UIOverlay.%s marks the HUD dirty" % prop)
+	ui.root_ctrl.dirty = false
 	GlobalState.add_log("redraw probe")
-	_check(ui._dirty, "a new log line marks the HUD dirty")
+	_check(ui.root_ctrl.dirty, "a new log line marks the HUD dirty")
 	bf.queue_free()
 	await get_tree().process_frame
 
@@ -2069,6 +2069,39 @@ func test_victory_rules_evaluate() -> void:
 	_check(limit.get("winner", -1) == 1, "a minority of bridgeheads at the turn limit loses (got %s)" % [limit])
 	var held := VictoryRules.evaluate(m, null, 3, 3, 3, 3, 2, true)
 	_check(held.get("winner", -1) == 0, "holding every bridgehead at turn end wins (got %s)" % [held])
+	# even split at the turn limit goes to the side with more walkers left (ties to the player)
+	for ac in [3, 2]:   # equal walkers, then the player ahead
+		var pm: MapDefinition = null
+		for cand: MapDefinition in GlobalState.maps:
+			if cand.strategy_mode == MapDefinition.StrategyMode.PITCHED_BATTLE:
+				pm = cand
+		var r := VictoryRules.evaluate(pm, null, 3, ac, 2, 4, pm.turn_limit, true)
+		_check(r.get("winner", -1) == 0, "an even objective split with %d walkers vs %d goes to the player (got %s)" % [3, ac, r])
+	var pm2: MapDefinition = GlobalState.maps[0]
+	var lost_split := VictoryRules.evaluate(pm2, null, 2, 3, 2, 4, pm2.turn_limit, true)
+	_check(lost_split.get("winner", -1) == 1, "an even split with fewer walkers loses (got %s)" % [lost_split])
+	# DEFENSE: overrun loses at turn end, holding through the limit wins, otherwise undecided
+	var dm: MapDefinition = null
+	var om_idx := -1
+	for i in GlobalState.maps.size():
+		var cand: MapDefinition = GlobalState.maps[i]
+		if cand.strategy_mode == MapDefinition.StrategyMode.DEFENSE:
+			dm = cand
+		elif cand.strategy_mode == MapDefinition.StrategyMode.OFFENSE:
+			om_idx = i
+	_check(dm != null and om_idx >= 0, "precondition: a DEFENSE and an OFFENSE map ship")
+	_check(VictoryRules.evaluate(dm, null, 3, 3, 0, 2, 2, true).get("winner", -1) == 1, "DEFENSE: losing every Citadel node loses")
+	_check(VictoryRules.evaluate(dm, null, 3, 3, 1, 2, dm.turn_limit, true).get("winner", -1) == 0, "DEFENSE: holding a node through the turn limit wins")
+	_check(VictoryRules.evaluate(dm, null, 3, 3, 1, 2, 2, true).is_empty(), "DEFENSE: holding a node before the limit is undecided")
+	# OFFENSE on a real grid: an HQ bunker held by the player wins, otherwise the turn limit loses
+	var om: MapDefinition = GlobalState.maps[om_idx]
+	var og := _grid(om_idx)
+	_check(VictoryRules.evaluate(om, og, 3, 3, 0, 2, 2, true).is_empty(), "OFFENSE: HQ not held, before the limit is undecided")
+	_check(VictoryRules.evaluate(om, og, 3, 3, 0, 2, om.turn_limit, true).get("winner", -1) == 1, "OFFENSE: HQ not held at the turn limit loses")
+	og.get_tile(om.hq_positions[0]).controlled_by = MechData.Faction.PLAYER
+	_check(VictoryRules.evaluate(om, og, 3, 3, 1, 2, 2, true).get("winner", -1) == 0, "OFFENSE: holding an HQ bunker at turn end wins")
+	_check(VictoryRules.evaluate(om, og, 3, 3, 1, 2, 2, false).is_empty(), "OFFENSE: objectives are only judged at the end of a full turn")
+	og.free()
 
 func test_catalogs_are_consistent() -> void:
 	_check(not GlobalState.ability_catalog.is_empty(), "ability catalog is filled")
@@ -2082,6 +2115,15 @@ func test_catalogs_are_consistent() -> void:
 		var ch: MechData = GlobalState.chassis_catalog[id]
 		for ab: CombatAbility in ch.abilities:
 			_check(GlobalState.ability_catalog.has(ab.ability_id), "%s ability %s exists in the ability catalog" % [id, ab.ability_id])
+	for md: MapDefinition in GlobalState.maps:
+		var inb := func(c: Vector2i) -> bool: return c.x >= 0 and c.y >= 0 and c.x < md.width and c.y < md.height
+		for sp in md.spawns:
+			_check(GlobalState.chassis_catalog.has(str(sp.get("chassis", ""))), "%s spawn %s uses a known chassis" % [md.map_name, sp.get("callsign", "?")])
+			_check(inb.call(sp["pos"]), "%s spawn %s is in bounds" % [md.map_name, sp.get("callsign", "?")])
+		for ob in md.objectives:
+			_check(inb.call(ob["pos"]), "%s objective %s is in bounds" % [md.map_name, ob.get("label", "?")])
+		for hq in md.hq_positions:
+			_check(inb.call(hq), "%s HQ %s is in bounds" % [md.map_name, hq])
 # ---------------------------------------------------------------- terrain grid / data table
 func _plan_diff(a: StrikePlan, b: StrikePlan) -> String:
 	if a.severity != b.severity: return "severity"
@@ -2240,3 +2282,83 @@ func test_overlay_hover_does_not_rebuild_base_list() -> void:
 		_check(gm._extra_keys.size() <= 2, "at most two extra overlay keys (got %d)" % gm._extra_keys.size())
 	bf.queue_free()
 	await get_tree().process_frame
+
+## Points the (headless) mouse at tile `c` so Battlefield's click path, which reads the live mouse
+## position, can land on the map: the camera is moved so that tile sits under the viewport origin.
+func _aim_mouse_at_tile(bf: Battlefield, c: Vector2i) -> void:
+	var world := bf.grid_map.to_global(bf.grid_map.grid_to_screen(c))
+	var vp := bf.get_viewport().get_visible_rect().size
+	bf.camera.position = world + vp / 2.0 / bf.camera.zoom.x
+	await get_tree().process_frame
+
+func _click_event(pos: Vector2) -> InputEventMouseButton:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	ev.position = pos
+	return ev
+
+func _hotspot_rect(ov: UIOverlay, id: String) -> Rect2:
+	for sp in ov.root_ctrl.hot._spots:
+		if sp["id"] == id:
+			return sp["rect"]
+	return Rect2()
+
+func test_modal_input_gating() -> void:
+	var bf := await _spawn_iron_bridge()
+	var ov := bf.ui_overlay
+	var clicks: Array = []
+	bf.grid_map.tile_clicked.connect(func(c, _t): clicks.append(c))
+	await _aim_mouse_at_tile(bf, Vector2i(3, 3))
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	# Control: with the pointer on the map and not over the HUD, a click reaches the map
+	ov.root_ctrl.hot.hovered = ""
+	bf._unhandled_input(_click_event(Vector2(300, 300)))
+	_check(clicks.size() == 1, "control: a click off the HUD reaches the map (got %d)" % clicks.size())
+	# (1) a click over a HUD panel (hotspot BLOCKER) is not a map click
+	var top := _hotspot_rect(ov, UIOverlay.BLOCKER)
+	_check(top.size != Vector2.ZERO, "precondition: a HUD panel hotspot exists")
+	var ev := _click_event(top.get_center() * ov.root_ctrl.px_scale)
+	ov._input(ev)   # the overlay marks it hovered (and handled)
+	_check(ov.pointer_over_hud(), "the overlay sees the pointer over a HUD panel")
+	bf._unhandled_input(ev)
+	_check(clicks.size() == 1, "a click on a HUD panel does not reach grid_map.handle_click (got %d)" % clicks.size())
+	# (2) END TURN while the manual is open does not change the phase
+	ov.root_ctrl.hot.hovered = ""
+	var end_r := _hotspot_rect(ov, "end_turn")
+	_check(end_r.size != Vector2.ZERO, "precondition: END TURN hotspot exists")
+	ov.show_manual_modal = true
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	_check(not bf.camera.input_enabled, "the camera is gated while the manual is open")
+	var phase_before := GlobalState.current_phase
+	var click := _click_event(end_r.get_center() * ov.root_ctrl.px_scale)
+	ov._input(click)
+	bf._unhandled_input(click)
+	_check(GlobalState.current_phase == phase_before, "END TURN click while the manual is open changes nothing")
+	bf._on_end_turn_requested()
+	_check(GlobalState.current_phase == phase_before and not bf.can_command(), "can_command() is false and END TURN refused while the manual is open")
+	_check(clicks.size() == 1, "no map click reached the map while the manual was open")
+	# (3) game over with the manual open closes the manual and leaves the debrief reachable
+	ov.trigger_game_over()
+	_check(not ov.show_manual_modal and ov.show_game_over_modal, "game over closes the manual and shows the debrief")
+	_check(not ov.toggle_manual() and not ov.show_manual_modal, "the manual cannot be reopened over the debrief")
+	ov.root_ctrl.queue_redraw()
+	await get_tree().process_frame
+	_check(_hotspot_rect(ov, "debrief:1").size != Vector2.ZERO, "the debrief rows are hotspots after game over")
+	var fired: Array = []
+	ov.action_return_menu_requested.disconnect(bf._on_return_menu_requested)
+	ov.action_return_menu_requested.connect(func(): fired.append("menu"))
+	ov._activate("debrief:1")
+	_check(fired == ["menu"], "debrief:1 is activatable after game over with the manual open (fired %s)" % [fired])
+	bf._auto_advance_token += 1
+	bf.queue_free()
+	await get_tree().process_frame
+
+func test_recon_colors_cover_every_terrain() -> void:
+	for t: int in GridTileData.TerrainType.values():
+		_check(MainMenu.RECON_COLORS.has(t), "recon preview has a colour for terrain %d" % t)
+	for code in ["P", "D", "R_D", "r_d", "R", "F", "C", "M", "?"]:
+		_check(MainMenu.RECON_COLORS.has(TerrainDefs.parse_code(code)), "recon code %s resolves to a terrain colour" % code)
+	_check(TerrainDefs.parse_code("R_D") == GridTileData.TerrainType.ROAD, "the R_D alias renders as road in the recon map")
