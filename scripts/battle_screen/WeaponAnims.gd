@@ -84,7 +84,7 @@ static func hit_reaction(_stage: BattleStage, d: Dictionary, dt: float, size: fl
 		d["pose"] = "hit"
 
 static func _muzzle(stage: BattleStage, a: Dictionary, id: String) -> Vector2:
-	return stage.point(a, "muzzles/" + id)
+	return stage.point(a, MechSpriteBank.muzzle_name(id))
 
 # ---------------------------------------------------------------- single heavy shell (88mm, 105mm)
 static func _shell(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
@@ -288,7 +288,7 @@ static func _flame(stage: BattleStage, a: Dictionary, d: Dictionary, id: String,
 # ---------------------------------------------------------------- Hydraulic pile-bunker ram
 static func _ram(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p: Dictionary, t: float, fire: float, imp: float, hit: bool) -> void:
 	var dir: int = a["dir"]
-	var tip_rest := stage.point(a, "muzzles/" + id)
+	var tip_rest := stage.point(a, MechSpriteBank.muzzle_name(id))
 	var target := stage.point(d, "glacis")
 	var gap := maxf(0.0, (target.x - tip_rest.x) * dir + 2.0)
 	var out := 0.0
@@ -308,7 +308,7 @@ static func _ram(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p
 		a["pose"] = "brace"
 	a["offset"] += Vector2(roundf(out * dir), 0)
 	if t >= imp and t < imp + 0.12:
-		var tip := stage.point(a, "muzzles/" + id)
+		var tip := stage.point(a, MechSpriteBank.muzzle_name(id))
 		stage.fx(func(ci):
 			ci.draw_rect(Rect2(tip.x - (0 if dir > 0 else 16), tip.y - 1, 16, 3), Color.WHITE)
 			BattleFX.blob(ci, tip, 6, BattleFX.FLASH_YELLOW))

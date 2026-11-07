@@ -70,6 +70,10 @@ func append_step(step: SkirmishEngine.TurnStep) -> Dictionary:
 			"def": step.def_en_after
 		},
 		"soften_from": step.soften_from,
+		# combatant status right after this step (see TurnStep), for the HUD panels
+		"badges": {"atk": step.atk_badges, "def": step.def_badges},
+		"spd": {"atk": step.atk_spd_after, "def": step.def_spd_after},
+		"eva": {"atk": step.atk_eva_after, "def": step.def_eva_after},
 	}
 	beats.append(beat)
 	return beat
