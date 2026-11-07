@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs every automated check: the battle unit tests and the seeded playtest. Exits non-zero if any
-# of them fails. Honours $GODOT (path to the Godot executable, default: godot).
+# of them fails. SCALE=1 also prints the scalability benchmark table (timings only, no assertions). Honours $GODOT (path to the Godot executable, default: godot).
 set -u
 cd "$(dirname "$0")/.."
 GODOT="${GODOT:-godot}"
@@ -22,5 +22,9 @@ if [[ $code -ne 0 || $errors -ne 0 ]] || ! grep -q " 0 failures" "$log"; then
 else
 	echo "[PLAYTEST] ok"
 	rm -f "$log"
+fi
+if [[ "${SCALE:-0}" == "1" ]]; then
+	echo "== scale benchmark =="
+	"$GODOT" --headless --path . res://tests/ScaleBench.tscn 2>&1 | grep "SCALE BENCH"
 fi
 exit $status

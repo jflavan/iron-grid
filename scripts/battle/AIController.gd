@@ -5,6 +5,11 @@ extends RefCounted
 ## Evaluates reachable tiles, approach vectors, terrain/elevation modifiers, and combat forecasts
 ## to choose between attacking player walkers, capturing objectives, holding high ground, or refueling.
 
+## Decision "type" values (consumers compare against these strings).
+const ACTION_WAIT := "WAIT_ENTRENCH"
+const ACTION_MOVE := "MOVE"
+const ACTION_ENGAGE := "ENGAGE"
+
 static func choose_best_action(
 	ai_unit: MechUnit,
 	grid_map: IsoGridMap,
@@ -26,11 +31,12 @@ static func choose_best_action(
 	var deny_tiles := _imminent_defeat_tiles(grid_map, map_def)
 	var garrison: bool = (map_def.strategy_mode == MapDefinition.StrategyMode.OFFENSE)
 
+	var wait_path: Array[Vector2i] = [start_pos]
 	# In-place baseline score (holding / entrenching & refueling)
 	var best_action: Dictionary = {
-		"type": "WAIT_ENTRENCH",
+		"type": ACTION_WAIT,
 		"target_pos": start_pos,
-		"path": [start_pos],
+		"path": wait_path,
 		"fuel_spent": 0,
 		"score": _score_positional_tile(start_tile, m_data, foe_positions, map_def, obj_targets) + (18.0 if m_data.current_fuel <= 4 else 4.0)
 	}
@@ -59,7 +65,7 @@ static func choose_best_action(
 
 		if pos_score > best_action["score"]:
 			best_action = {
-				"type": "MOVE",
+				"type": ACTION_MOVE,
 				"target_pos": dest_pos,
 				"path": path,
 				"fuel_spent": fuel_spent,
@@ -140,7 +146,7 @@ static func choose_best_action(
 				var full_path: Array[Vector2i] = move_path.duplicate()
 				full_path.append(dest_pos)
 				best_action = {
-					"type": "ENGAGE",
+					"type": ACTION_ENGAGE,
 					"move_pos": from_pos,
 					"move_path": move_path,
 					"move_fuel": move_fuel,

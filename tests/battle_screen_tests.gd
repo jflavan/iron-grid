@@ -1689,6 +1689,8 @@ func test_dijkstra_matches_bellman_ford_on_large_map() -> void:
 			e.append(str(rng.randi_range(0, 4)))
 		md.terrain_codes.append(" ".join(t))
 		md.elevation_rows.append(" ".join(e))
+	md.objectives.append({"pos": Vector2i(0, 0)})
+	md.spawns = [{"chassis": "vanguard", "pos": Vector2i(1, 1), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(2, 2), "faction": 1}]
 	var gm := IsoGridMap.new()
 	add_child(gm)
 	gm.load_from_definition(md)
@@ -2337,8 +2339,12 @@ func test_iso_key_round_trips() -> void:
 	var rows := PackedStringArray()
 	for y in 48:
 		rows.append(" ".join(_repeat("1", 48)))
-	md.terrain_codes = rows
+	md.terrain_codes = PackedStringArray()
+	for i in 48:
+		md.terrain_codes.append(" ".join(_repeat("P", 48)))
 	md.elevation_rows = rows
+	md.objectives.append({"pos": Vector2i(0, 0)})
+	md.spawns = [{"chassis": "vanguard", "pos": Vector2i(1, 1), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(2, 2), "faction": 1}]
 	var gm := IsoGridMap.new()
 	gm.load_from_definition(md)
 	var seen := {}
@@ -2601,3 +2607,104 @@ func test_support_text_and_descriptions_match_the_mods() -> void:
 			desc_figs.sort()
 			_check(desc_figs == mod_figs, "%s description figures %s equal the mods %s" % [id, desc_figs, mod_figs])
 		_check(matched > 0, "%s has a catalog ability" % et)
+func test_terrain_defs_invariants() -> void:
+	var letters := {}
+	var dup := 0
+	var bad_fuel := 0
+	for tname in GridTileData.TerrainType.keys():
+		var t: int = GridTileData.TerrainType[tname]
+		_check(TerrainDefs.TABLE.has(t), "terrain %s has a TerrainDefs row" % tname)
+		if not TerrainDefs.TABLE.has(t):
+			continue
+		var r: Dictionary = TerrainDefs.TABLE[t]
+		if int(r["fuel"]) < 1:
+			bad_fuel += 1
+		for l: String in r["letters"]:
+			if letters.has(l):
+				dup += 1
+			letters[l] = t
+	_check(TerrainDefs.TABLE.size() == GridTileData.TerrainType.size(), "no extra TerrainDefs rows")
+	_check(dup == 0, "map letters are unique across terrain rows (%d duplicates)" % dup)
+	_check(bad_fuel == 0, "every terrain costs at least 1 fuel")
+
+func _valid_two_tile_map() -> MapDefinition:
+	var g := MapDefinition.new()
+	g.map_id = "t"
+	g.width = 2
+	g.height = 1
+	g.terrain_codes = PackedStringArray(["P P"])
+	g.elevation_rows = PackedStringArray(["1 1"])
+	g.objectives = [{"pos": Vector2i(0, 0)}]
+	g.spawns = [{"chassis": "vanguard", "pos": Vector2i(0, 0), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(1, 0), "faction": 1}]
+	return g
+
+func test_map_validate_extended_rules() -> void:
+	_check(_valid_two_tile_map().validate().is_empty(), "minimal valid map is clean (%s)" % [_valid_two_tile_map().validate()])
+	var m := _valid_two_tile_map()
+	m.objectives = [{"pos": Vector2i(0, 0)}, {"pos": Vector2i(0, 0)}]
+	_check(not m.validate().is_empty(), "duplicate objectives flagged")
+	m = _valid_two_tile_map()
+	m.objectives = []
+	_check(not m.validate().is_empty(), "pitched battle without objectives flagged")
+	m = _valid_two_tile_map()
+	m.strategy_mode = MapDefinition.StrategyMode.OFFENSE
+	_check(not m.validate().is_empty(), "offense map without HQ flagged")
+	m.hq_positions = [Vector2i(1, 0)]
+	_check(m.validate().is_empty(), "offense map with an HQ is clean (%s)" % [m.validate()])
+	m = _valid_two_tile_map()
+	m.spawns[1]["faction"] = 2
+	_check(m.validate().size() >= 1, "spawn faction 2 flagged")
+	m = _valid_two_tile_map()
+	m.spawns[1]["chassis"] = "nope"
+	_check(m.validate().size() == 1, "unknown chassis flagged (%s)" % [m.validate()])
+	_check(m.validate(["nope", "vanguard"]).is_empty(), "known_chassis parameter overrides the catalog")
+	m = _valid_two_tile_map()
+	m.spawns[1]["faction"] = 0
+	_check(m.validate().size() == 1, "faction with zero spawns flagged (%s)" % [m.validate()])
+	m = _valid_two_tile_map()
+	m.width = 5000
+	m.height = 5000
+	_check(not m.validate().is_empty(), "map of 1<<24 tiles or more flagged")
+
+func test_visible_band_search_matches_brute_force() -> void:
+	var md := MapDefinition.new()
+	md.width = 48
+	md.height = 48
+	for y in 48:
+		md.terrain_codes.append(" ".join(_repeat("P", 48)))
+		var e := PackedStringArray()
+		for x in 48:
+			e.append(str((x * 7 + y * 3) % 5))
+		md.elevation_rows.append(" ".join(e))
+	md.objectives.append({"pos": Vector2i(0, 0)})
+	md.spawns = [{"chassis": "vanguard", "pos": Vector2i(1, 1), "faction": 0}, {"chassis": "vanguard", "pos": Vector2i(2, 2), "faction": 1}]
+	var gm := IsoGridMap.new()
+	add_child(gm)
+	gm.load_from_definition(md)
+	var all := {}
+	for c: Vector2i in gm.tiles.keys():
+		all[c] = {"fuel_spent": 1, "fuel_left": 0, "path": [c] as Array[Vector2i], "is_attack": false}
+	gm.reachable_info = all
+	gm._rebuild_base()
+	_check(gm._base_keys.size() == 48 * 48, "every tile is in the base list (%d)" % gm._base_keys.size())
+	var rects: Array[Rect2] = [
+		Rect2(-200, 300, 400, 200), Rect2(-2000, -2000, 8000, 8000), Rect2(900, 1200, 300, 250),
+		Rect2(-3000, 100, 500, 120), Rect2(0, 0, 50, 50), Rect2(-100, 2800, 600, 400)]
+	var narrower := false
+	for rect in rects:
+		var band: Vector2i = gm._visible_base_range(rect)
+		var from_band := {}
+		for i in range(band.x, band.y):
+			var c: Vector2i = gm._base_coords[i]
+			if rect.has_point(gm._tile_top[c]):
+				from_band[c] = true
+		var brute := {}
+		for c: Vector2i in gm.tiles.keys():
+			if rect.has_point(gm._tile_top[c]):
+				brute[c] = true
+		_check(from_band.size() == brute.size() and from_band.keys().all(func(c): return brute.has(c)),
+				"band search yields exactly the tiles inside %s (%d vs %d)" % [rect, from_band.size(), brute.size()])
+		narrower = narrower or (band.y - band.x) < gm._base_keys.size()
+	_check(narrower, "the band search skips tiles outside the view")
+	gm.queue_free()
+	await get_tree().process_frame

@@ -10,11 +10,21 @@ const DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), 
 
 const _NO_FUEL_CAP: int = 1 << 30
 const _SEQ_BITS: int = 24
+const TERRAIN_COUNT: int = 6   # GridTileData.TerrainType values
+const ELEV_COUNT: int = 5      # elevation 0..GridTileData.MAX_ELEVATION
 
-var width: int = 10
-var height: int = 8
+## Read-only outside load_from_definition (a resize without a reload would desync the flat arrays).
+var width: int:
+	get: return _width
+var height: int:
+	get: return _height
+var _width: int = 10
+var _height: int = 8
 var tiles: Dictionary = {} # Vector2i -> GridTileData
 var _flat: Array[GridTileData] = [] # same tiles, indexed y * width + x
+var _terrain_flat := PackedByteArray() # terrain type per flat index (search hot path)
+var _elev_flat := PackedByteArray()    # elevation per flat index
+var _probe_tiles: Array[GridTileData] = [] # [terrain * ELEV_COUNT + elevation], for the step-cost table
 
 func is_valid_coords(coords: Vector2i) -> bool:
 	return coords.x >= 0 and coords.x < width and coords.y >= 0 and coords.y < height
@@ -22,7 +32,8 @@ func is_valid_coords(coords: Vector2i) -> bool:
 func get_tile(coords: Vector2i) -> GridTileData:
 	if coords.x < 0 or coords.x >= width or coords.y < 0 or coords.y >= height:
 		return null
-	return _flat[coords.y * width + coords.x] if not _flat.is_empty() else tiles.get(coords, null)
+	assert(_flat.size() == _width * _height, "TerrainGrid.get_tile before load_from_definition")
+	return _flat[coords.y * _width + coords.x]
 
 func get_tile_elevation(coords: Vector2i) -> int:
 	var td: GridTileData = get_tile(coords)
@@ -30,17 +41,24 @@ func get_tile_elevation(coords: Vector2i) -> int:
 
 ## Parses the map's terrain / elevation rows and objectives into tiles.
 func load_from_definition(map_def: MapDefinition) -> void:
-	width = map_def.width
-	height = map_def.height
+	for msg in map_def.validate():
+		push_error(msg)
+	_width = map_def.width
+	_height = map_def.height
 	tiles.clear()
+	assert(_width * _height < (1 << _SEQ_BITS), "map too large for the search's discovery-order key")
 	_flat = []
 	_flat.resize(width * height)
+	_terrain_flat.resize(width * height)
+	_elev_flat.resize(width * height)
 	for y in range(height):
 		for x in range(width):
 			var c := Vector2i(x, y)
 			var td := GridTileData.new(c, map_def.terrain_at(x, y), map_def.elevation_at(x, y), false, "")
 			tiles[c] = td
 			_flat[y * width + x] = td
+			_terrain_flat[y * width + x] = td.terrain_type
+			_elev_flat[y * width + x] = td.elevation
 
 	for obj in map_def.objectives:
 		var pos: Vector2i = obj["pos"]
@@ -60,26 +78,28 @@ func find_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Diction
 	var max_budget: int = unit.current_fuel
 
 	if not unit.has_moved:
-		var search: Array = shortest_costs(unit, occupied_units, max_budget)
-		var best_cost: Dictionary = search[0]
-		var came_from: Dictionary = search[1]
+		var res: Array = _search(unit, occupied_units, max_budget)
+		var cost: PackedInt32Array = res[0]
+		var came: PackedInt32Array = res[1]
+		var order: Array[int] = res[2]
+		var start_idx: int = start.y * width + start.x
 
-		# Build reachable dictionary for unoccupied tiles only
-		for pos_key in best_cost.keys():
-			var pos: Vector2i = pos_key
-			if pos != start and occupied_units.has(pos):
+		# Build reachable dictionary for unoccupied tiles only, in discovery order
+		for idx in order:
+			var pos := Vector2i(idx % width, idx / width)
+			if idx != start_idx and occupied_units.has(pos):
 				continue # Cannot end move on any occupied tile (friendly or enemy)
 
 			# Reconstruct path in O(N) using append + reverse
 			var path: Array[Vector2i] = []
-			var curr: Vector2i = pos
-			while curr != start:
-				path.append(curr)
-				curr = came_from[curr]
+			var curr: int = idx
+			while curr != start_idx:
+				path.append(Vector2i(curr % width, curr / width))
+				curr = came[curr]
 			path.append(start)
 			path.reverse()
 
-			var spent: int = best_cost[pos]
+			var spent: int = cost[idx]
 			reachable[pos] = {
 				"fuel_spent": spent,
 				"fuel_left": max_budget - spent,
@@ -107,64 +127,155 @@ func find_reachable_tiles(unit: MechData, occupied_units: Dictionary) -> Diction
 						}
 	return reachable
 
-## Dijkstra over fuel cost from unit.grid_pos, shared by movement ranges and strike plans so both
-## always agree. Returns [best_cost, came_from] (Vector2i -> int / Vector2i). Rules: never step onto
-## an enemy node, and drop any step whose running cost would exceed `budget`.
-## `settle`, when given, stops the search once every listed node has been popped (its cost is final).
-func shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
-	var start: Vector2i = unit.grid_pos
-	var best_cost: Dictionary = { start: 0 }
-	var came_from: Dictionary = { start: start }
-	var pending: Dictionary = {}
-	for p in settle:
-		pending[p] = true
+## Fuel Dijkstra over flat tile indices (y * width + x), shared by movement ranges and strike plans
+## so both always agree. Rules: never step onto an enemy node, and drop any step whose running cost
+## would exceed `budget`. `settle`, when given, stops the search once every listed node has been
+## popped (its cost is final).
+## Returns [cost: PackedInt32Array (-1 = unreached), came_from: PackedInt32Array, order: Array[int]]
+## where `order` lists the reached tile indices in discovery order (start first).
+## Step costs come from a 6 x 5 x 5 table ([to_terrain][from_elev][to_elev]) filled once per search
+## from the real MechData.get_step_fuel_cost, so the rule itself lives in one place.
+func _search(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
+	var w: int = width
+	var h: int = height
+	var n: int = w * h
+	var start_idx: int = unit.grid_pos.y * w + unit.grid_pos.x
 
-	# Binary min-heap of (cost, discovery order) packed into one int; a node pushed again after a
-	# cheaper path was found leaves a stale entry behind that is skipped when popped. Ties pop in
-	# discovery order, so paths (and the facing they produce) stay deterministic.
+	var cost := PackedInt32Array()
+	cost.resize(n)
+	cost.fill(-1)
+	var came := PackedInt32Array()
+	came.resize(n)
+	var seq := PackedInt32Array() # discovery order of each node, kept across re-pushes
+	seq.resize(n)
+	var closed := PackedByteArray()
+	closed.resize(n)
+	var blocked := PackedByteArray() # enemy-occupied nodes: never entered
+	blocked.resize(n)
+	for p: Vector2i in occupied_units.keys():
+		if is_valid_coords(p) and occupied_units[p].faction != unit.faction:
+			blocked[p.y * w + p.x] = 1
+
+	var pending := PackedByteArray()
+	var pending_left: int = 0
+	if not settle.is_empty():
+		pending.resize(n)
+		for p in settle:
+			if not is_valid_coords(p):
+				pending_left += 1 # can never be popped: the search runs to the end, as it always did
+			elif pending[p.y * w + p.x] == 0:
+				pending[p.y * w + p.x] = 1
+				pending_left += 1
+
+	var steps: PackedInt32Array = _step_cost_table(unit)
+	var terr: PackedByteArray = _terrain_flat
+	var elev: PackedByteArray = _elev_flat
+
+	# Binary min-heap of (cost, discovery order) packed into one int plus a parallel tile index; a
+	# node pushed again after a cheaper path was found leaves a stale entry behind that is skipped
+	# when popped. Ties pop in discovery order, so paths (and the facing they produce) stay
+	# deterministic.
 	var heap: Array[int] = []
-	var heap_pos: Array[Vector2i] = []
-	var seq_of: Dictionary = { start: 0 }   # Vector2i -> discovery order
-	var closed: Dictionary = {}
-	_heap_push(heap, heap_pos, 0, start)
+	var heap_idx: Array[int] = []
+	var order: Array[int] = [start_idx]
+	cost[start_idx] = 0
+	came[start_idx] = start_idx
+	seq[start_idx] = 0
+	_heap_push(heap, heap_idx, 0, start_idx)
 
 	while not heap.is_empty():
 		var top: int = heap[0]
-		var current: Vector2i = heap_pos[0]
-		_heap_pop(heap, heap_pos)
-		if closed.has(current) or (top >> _SEQ_BITS) != best_cost[current]:
+		var cur: int = heap_idx[0]
+		_heap_pop(heap, heap_idx)
+		if closed[cur] != 0 or (top >> _SEQ_BITS) != cost[cur]:
 			continue # stale entry
-		closed[current] = true
-		if not pending.is_empty():
-			pending.erase(current)
-			if pending.is_empty():
+		closed[cur] = 1
+		if pending_left > 0 and pending[cur] == 1:
+			pending_left -= 1
+			if pending_left == 0:
 				break
 
-		var cur_cost: int = best_cost[current]
-		var cur_tile: GridTileData = get_tile(current)
-
-		for d in DIRS:
-			var next_pos: Vector2i = current + d
-			if not is_valid_coords(next_pos) or closed.has(next_pos):
+		var cur_cost: int = cost[cur]
+		var cx: int = cur % w
+		var cy: int = cur / w
+		var from_e: int = elev[cur] * 5
+		# Neighbours in DIRS order: +x, -x, +y, -y.
+		for k in 4:
+			var ni: int
+			match k:
+				0:
+					if cx + 1 >= w:
+						continue
+					ni = cur + 1
+				1:
+					if cx == 0:
+						continue
+					ni = cur - 1
+				2:
+					if cy + 1 >= h:
+						continue
+					ni = cur + w
+				_:
+					if cy == 0:
+						continue
+					ni = cur - w
+			if closed[ni] != 0 or blocked[ni] != 0:
 				continue
-			# Never step onto an enemy-occupied tile during movement
-			if occupied_units.has(next_pos) and occupied_units[next_pos].faction != unit.faction:
-				continue
-			var next_tile: GridTileData = get_tile(next_pos)
-			var step_fuel: int = unit.get_step_fuel_cost(cur_tile, next_tile)
-			var new_cost: int = cur_cost + step_fuel
+			var new_cost: int = cur_cost + steps[terr[ni] * 25 + from_e + elev[ni]]
 			if new_cost > budget:
 				continue
+			var old: int = cost[ni]
+			if old == -1 or new_cost < old:
+				cost[ni] = new_cost
+				came[ni] = cur
+				if old == -1:
+					seq[ni] = order.size()
+					order.append(ni)
+				_heap_push(heap, heap_idx, (new_cost << _SEQ_BITS) | seq[ni], ni)
+	return [cost, came, order]
 
-			if not best_cost.has(next_pos) or new_cost < best_cost[next_pos]:
-				best_cost[next_pos] = new_cost
-				came_from[next_pos] = current
-				if not seq_of.has(next_pos):
-					seq_of[next_pos] = seq_of.size()
-				_heap_push(heap, heap_pos, (new_cost << _SEQ_BITS) | int(seq_of[next_pos]), next_pos)
+## [to_terrain][from_elev][to_elev] -> fuel, filled from the unit's own step rule.
+func _step_cost_table(unit: MechData) -> PackedInt32Array:
+	if _probe_tiles.is_empty():
+		for t in TERRAIN_COUNT:
+			for e in ELEV_COUNT:
+				_probe_tiles.append(GridTileData.new(Vector2i.ZERO, t as GridTileData.TerrainType, e))
+	var table := PackedInt32Array()
+	table.resize(TERRAIN_COUNT * ELEV_COUNT * ELEV_COUNT)
+	for t in TERRAIN_COUNT:
+		for fe in ELEV_COUNT:
+			for te in ELEV_COUNT:
+				table[t * 25 + fe * 5 + te] = unit.get_step_fuel_cost(_probe_tiles[fe], _probe_tiles[t * ELEV_COUNT + te])
+	return table
+
+## Dictionary view of a _search result: Vector2i -> cost, in discovery order.
+func _costs_dict(res: Array) -> Dictionary:
+	var cost: PackedInt32Array = res[0]
+	var order: Array[int] = res[2]
+	var w: int = width
+	var d: Dictionary = {}
+	for i in order:
+		d[Vector2i(i % w, i / w)] = cost[i]
+	return d
+
+## Dictionary view of shortest paths: returns [best_cost, came_from] (Vector2i -> int / Vector2i),
+## best_cost in discovery order. Same search as movement ranges and strike plans.
+func shortest_costs(unit: MechData, occupied_units: Dictionary, budget: int, settle: Array[Vector2i] = []) -> Array:
+	var res: Array = _search(unit, occupied_units, budget, settle)
+	var cost: PackedInt32Array = res[0]
+	var came: PackedInt32Array = res[1]
+	var order: Array[int] = res[2]
+	var w: int = width
+	var best_cost: Dictionary = {}
+	var came_from: Dictionary = {}
+	for i in order:
+		var p := Vector2i(i % w, i / w)
+		best_cost[p] = cost[i]
+		var f: int = came[i]
+		came_from[p] = Vector2i(f % w, f / w)
 	return [best_cost, came_from]
 
-static func _heap_push(heap: Array[int], heap_pos: Array[Vector2i], key: int, pos: Vector2i) -> void:
+static func _heap_push(heap: Array[int], heap_pos: Array[int], key: int, pos: int) -> void:
 	var i: int = heap.size()
 	heap.append(key)
 	heap_pos.append(pos)
@@ -178,10 +289,10 @@ static func _heap_push(heap: Array[int], heap_pos: Array[Vector2i], key: int, po
 	heap[i] = key
 	heap_pos[i] = pos
 
-static func _heap_pop(heap: Array[int], heap_pos: Array[Vector2i]) -> void:
+static func _heap_pop(heap: Array[int], heap_pos: Array[int]) -> void:
 	var last: int = heap.size() - 1
 	var key: int = heap[last]
-	var pos: Vector2i = heap_pos[last]
+	var pos: int = heap_pos[last]
 	heap.resize(last)
 	heap_pos.resize(last)
 	if last == 0:
@@ -202,10 +313,11 @@ static func _heap_pop(heap: Array[int], heap_pos: Array[Vector2i]) -> void:
 	heap_pos[i] = pos
 
 ## Cheapest fuel (uncapped, no early exit) from unit.grid_pos to every tile it can path to, as
-## Vector2i -> int. It depends only on the unit, its position and the occupancy, never on a strike
+## Vector2i -> int (a Dictionary because Battlefield caches it as one; the search itself runs on flat
+## arrays and this is a single pass over the reached tiles). It depends only on the unit, its position and the occupancy, never on a strike
 ## target, so one field serves every compute_strike_plan call of a selection.
 func strike_cost_field(unit: MechData, occupied_units: Dictionary) -> Dictionary:
-	return shortest_costs(unit, occupied_units, _NO_FUEL_CAP)[0]
+	return _costs_dict(_search(unit, occupied_units, _NO_FUEL_CAP))
 
 ## Explains whether `unit` can strike the enemy at `target` this turn, and if not, why and what to
 ## do (see StrikePlan). Uses the same search and costs as find_reachable_tiles, without its fuel
@@ -227,7 +339,7 @@ func compute_strike_plan(unit: MechData, target: Vector2i, occupied_units: Dicti
 				continue
 			neighbours.append(l)
 		if not neighbours.is_empty():
-			costs = shortest_costs(unit, occupied_units, _NO_FUEL_CAP, neighbours)[0]
+			costs = _costs_dict(_search(unit, occupied_units, _NO_FUEL_CAP, neighbours))
 	var target_tile := get_tile(target)
 
 	# Launch tiles: enemy neighbours the search reached that the attacker may stand on and fire from.

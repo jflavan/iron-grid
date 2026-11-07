@@ -17,10 +17,8 @@ const BASE_THICKNESS: float = 20.0
 var grid := TerrainGrid.new()
 var grid_width: int:
 	get: return grid.width
-	set(v): grid.width = v
 var grid_height: int:
 	get: return grid.height
-	set(v): grid.height = v
 var tiles: Dictionary: # Vector2i -> GridTileData
 	get: return grid.tiles
 
@@ -75,6 +73,15 @@ var _overlay_dirty: bool = true
 # Canvas transform and viewport size the overlay was last culled against.
 var _view_xform := Transform2D()
 var _view_size := Vector2.ZERO
+# Overlay level of detail: below this canvas scale a river / city tile is one flat static tint
+# instead of animated ripples / window lights (invisible at that size, and each costs 2-5 commands).
+const LOD_SCALE: float = 0.5
+var _lod: bool = false
+# True when the last recording contained something animated (pulsing range highlight, river ripple,
+# city lights); only then does the 30 Hz re-record have any visible effect.
+var _anim_visible: bool = true
+var _sel_loop := PackedVector2Array()
+var _hov_loop := PackedVector2Array()
 # Path preview polyline + fuel tag, rebuilt only when the preview or reachable set changes.
 var _path_dirty: bool = true
 var _path_pts := PackedVector2Array()
@@ -106,10 +113,15 @@ func _process(delta: float) -> void:
 	var xf: Transform2D = get_global_transform_with_canvas()
 	var vs: Vector2 = get_viewport_rect().size
 	if xf != _view_xform or vs != _view_size:
+		_view_xform = xf
+		_view_size = vs
+		queue_redraw()
+	# State changes record at once; the 30 Hz tick is only for ambient motion that is in view.
+	if _base_dirty or _overlay_dirty or _path_dirty:
 		queue_redraw()
 	if _since_redraw < 1.0 / AMBIENT_FPS:
 		return
-	if not reachable_info.is_empty() or not current_path_preview.is_empty() or hovered_coords != Vector2i(-1, -1) or selected_coords != Vector2i(-1, -1):
+	if _anim_visible:
 		_since_redraw = 0.0
 		queue_redraw()
 
@@ -274,11 +286,16 @@ func _draw() -> void:
 		_rebuild_extras()
 	_view_xform = get_global_transform_with_canvas()
 	_view_size = get_viewport_rect().size
+	_lod = _view_xform.get_scale().x < LOD_SCALE
+	_anim_visible = false
 	var view: Rect2 = (_view_xform.affine_inverse() * get_viewport_rect()).grow(maxf(TILE_W, TILE_H * 2.0))
 	var inset_poly: PackedVector2Array = _inset_diamond(4.0, false)
 	var inset_loop: PackedVector2Array = _inset_diamond(4.0, true)
+	_sel_loop = _inset_diamond(3.0, true)
+	_hov_loop = _inset_diamond(2.0, true)
 	var ei: int = 0
-	for i in _base_coords.size():
+	var band: Vector2i = _visible_base_range(view)
+	for i in range(band.x, band.y):
 		var k: int = _base_keys[i]
 		while ei < _extra_keys.size() and _extra_keys[ei] < k:
 			_draw_overlay_at(_decode_key(_extra_keys[ei]), view, pulse, inset_poly, inset_loop)
@@ -305,6 +322,20 @@ func _draw() -> void:
 		draw_rect(tag_rect, CrtUI.C_FILL, true)
 		draw_rect(tag_rect, line_col, false, 1.2)
 		PixelFont.draw_text(self, _path_tag, (dest_pos + Vector2(6, 3)).round(), line_col)
+
+## Index range [lo, hi) of _base_keys whose tiles can lie inside `view` (local coordinates). Keys sort
+## by x + y, and a tile's top-centre y is (x + y) * TILE_H / 2 minus its elevation lift, so a
+## vertical window of the view is a contiguous key range found by two binary searches. Conservative:
+## the per-tile has_point test in _draw_overlay_at stays the exact filter.
+func _visible_base_range(view: Rect2) -> Vector2i:
+	var hh: float = TILE_H * 0.5
+	var s_lo: int = maxi(0, int(floor(view.position.y / hh)))
+	var s_hi: int = int(ceil((view.end.y + float(GridTileData.MAX_ELEVATION) * ELEV_STEP) / hh))
+	if s_hi < s_lo:
+		return Vector2i.ZERO
+	var lo: int = _base_keys.bsearch(s_lo * grid_width)
+	var hi: int = _base_keys.bsearch((s_hi + 1) * grid_width)
+	return Vector2i(lo, maxi(lo, hi))
 
 func _decode_key(k: int) -> Vector2i:
 	var x: int = k % grid_width
@@ -411,11 +442,19 @@ func _draw_overlay_at(coords: Vector2i, view: Rect2, pulse: float, inner_poly: P
 
 func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, top_center: Vector2, pulse: float, inner_poly: PackedVector2Array, inner_loop: PackedVector2Array) -> void:
 	# River animated ripples & city pulsating bunker slits
-	if td.terrain_type == GridTileData.TerrainType.RIVER:
+	if _lod:
+		# Zoomed out: one static tint command per river / city tile.
+		if td.terrain_type == GridTileData.TerrainType.RIVER:
+			draw_rect(Rect2(top_center + Vector2(-18, -5), Vector2(36, 10)), Color(0.38, 0.65, 0.72, 0.35), true)
+		elif td.terrain_type == GridTileData.TerrainType.CITY:
+			draw_rect(Rect2(top_center + Vector2(-13, -10), Vector2(23, 5)), Color(0.95, 0.72, 0.22, 0.6), true)
+	elif td.terrain_type == GridTileData.TerrainType.RIVER:
+		_anim_visible = true
 		var wave_offset: float = sin(_anim_time * 2.5 + float(td.coords.x + td.coords.y)) * 4.0
 		draw_line(top_center + Vector2(-18 + wave_offset, -4), top_center + Vector2(6 + wave_offset, -4), Color(0.38, 0.65, 0.72, 0.55), 2.0)
 		draw_line(top_center + Vector2(-8 - wave_offset, 5), top_center + Vector2(18 - wave_offset, 5), Color(0.38, 0.65, 0.72, 0.55), 2.0)
 	elif td.terrain_type == GridTileData.TerrainType.CITY:
+		_anim_visible = true
 		var win_col := Color(0.95, 0.72, 0.22, 0.7 + 0.3 * pulse)
 		draw_rect(Rect2(top_center + Vector2(-13, -10), Vector2(4, 2)), win_col, true)
 		draw_rect(Rect2(top_center + Vector2(-6, -10), Vector2(4, 2)), win_col, true)
@@ -423,6 +462,7 @@ func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, top_center: Vector2,
 
 	# Reachable Fuel / Attack Target Highlights
 	if reachable_info.has(coords) and coords != selected_coords:
+		_anim_visible = true
 		var info: Dictionary = reachable_info[coords]
 		draw_set_transform(top_center)
 		if info["is_attack"]:
@@ -440,13 +480,13 @@ func _draw_dynamic_tile(coords: Vector2i, td: GridTileData, top_center: Vector2,
 	# Selected Unit Tile Highlight
 	if coords == selected_coords:
 		draw_set_transform(top_center)
-		draw_polyline(_inset_diamond(3.0, true), Color(1.0, 0.84, 0.32, 0.95), 2.8)
+		draw_polyline(_sel_loop, Color(1.0, 0.84, 0.32, 0.95), 2.8)
 		draw_set_transform(Vector2.ZERO)
 
 	# Hovered Tile Cursor Outline
 	if coords == hovered_coords:
 		draw_set_transform(top_center)
-		draw_polyline(_inset_diamond(2.0, true), Color(1.0, 0.95, 0.75, 0.95), 2.5)
+		draw_polyline(_hov_loop, Color(1.0, 0.95, 0.75, 0.95), 2.5)
 		draw_set_transform(Vector2.ZERO)
 
 	# Objective Badges
