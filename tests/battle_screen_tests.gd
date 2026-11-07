@@ -1908,6 +1908,103 @@ func test_replacing_a_finished_session_applies_it() -> void:
 	_check(dfn.current_armor == sess.result.def_armor_after and dfn.current_armor < start_def, "a concluded session replaced on screen is written back to the units first")
 	screen.queue_free()
 
+## A replaced finished session also reaches the listeners, once, whether or not it was fully played.
+func test_replaced_finished_session_emits_resolution() -> void:
+	for played in [false, true]:
+		var screen := BattleScreen.new()
+		add_child(screen)
+		await get_tree().process_frame
+		var emitted: Array = []
+		screen.resolution_confirmed.connect(func(r): emitted.append(r))
+		var sess := _flat_session("vanguard", "moloch")
+		sess.auto_resolve()
+		screen.start_session(sess)
+		if played:
+			screen._on_skip_pressed()   # played out, waiting for the confirm
+		screen.start_showdown(_fight("falke", "goliath"))
+		_check(emitted.size() == 1 and emitted[0] == sess.result, "a replaced finished session emits resolution_confirmed once (fully played: %s)" % played)
+		screen.start_showdown(_fight("falke", "goliath"))
+		_check(emitted.size() == 1, "replacing a showdown emits nothing")
+		screen.queue_free()
+
+func test_screen_only_processes_while_active() -> void:
+	var screen := BattleScreen.new()
+	add_child(screen)
+	await get_tree().process_frame
+	_check(not screen.is_processing(), "an idle battle screen does not process")
+	screen.start_showdown(_fight("vanguard", "moloch"))
+	_check(screen.is_processing(), "a running fight processes")
+	screen._on_skip_pressed()
+	screen._on_confirm_pressed()
+	_check(not screen.is_processing(), "a confirmed fight stops processing")
+	screen.queue_free()
+
+func test_hud_status_follows_the_animation() -> void:
+	var sess := _flat_session("falke", "goliath")
+	sess.execute_next_turn(SkirmishEngine.CommandType.TECH, "gyro_thruster")   # atk gets HASTE
+	sess.auto_resolve()
+	var tl := BattleTimeline.build(sess.result)
+	_check(not tl.start_status.is_empty() and tl.start_status["badges"]["atk"].is_empty(), "the timeline carries a start status with no badges")
+	var st := BattleStage.new()
+	add_child(st)
+	st.setup(sess.result, tl, null)
+	_check(st._status_src() == tl.start_status, "an intro shows the start status (SPD/EVA row) even for a showdown")
+	var first: Dictionary = tl.beats[0]
+	_check(first["badges"]["atk"].has("HASTE") or first["badges"]["def"].has("HASTE"), "beat 0 snapshots the haste its step grants")
+	st.beat_idx = 0
+	for p in [BattleStage.PHASE_MENU, BattleStage.PHASE_SUPPORT]:
+		st.phase = p
+		_check(st._status_src() == tl.start_status, "during %s the previous beat's status (the start) is shown" % p)
+	st.phase = BattleStage.PHASE_ATTACK
+	st._impact_done = false
+	_check(st._status_src() == tl.start_status, "an attack before impact still shows the previous status")
+	st._impact_done = true
+	_check(st._status_src() == first, "after impact the beat's own snapshot is shown")
+	st.phase = BattleStage.PHASE_SETTLE
+	_check(st._status_src() == first, "settling shows the beat's snapshot")
+	st.beat_idx = 1
+	st.phase = BattleStage.PHASE_MENU
+	_check(st._status_src() == first, "beat 1's menu cue shows beat 0's snapshot")
+	st.beat_idx = tl.beats.size()
+	st.phase = BattleStage.PHASE_RESULT
+	_check(st._status_src() == tl.beats.back(), "the result screen shows the last recorded beat")
+	# the joined badge text is cached per side until the array changes
+	var b1: Array = ["A", "B", "C"]
+	_check(st._badge_text("atk", b1) == "A B", "badge text shows the first two badges")
+	var cached: Array = st._badge_cache["atk"]
+	_check(st._badge_text("atk", b1) == "A B" and is_same(st._badge_cache["atk"], cached), "an unchanged badge array is served from the cache")
+	var b2: Array = ["X"]
+	_check(st._badge_text("atk", b2) == "X", "a new badge array rebuilds the text")
+	st.queue_free()
+
+func test_static_phases_redraw_only_when_something_moves() -> void:
+	var screen := _screen_for(_fight("vanguard", "moloch"))
+	var st: BattleStage = screen.stage
+	st.skip_to_end()
+	_check(st.phase == BattleStage.PHASE_RESULT, "a skipped fight rests on the result screen")
+	st.numbers.clear()
+	st._redraw_key = []
+	st._redraw_if_animated()
+	var key: Array = st._redraw_key
+	_check(not key.is_empty(), "the first static tick records what it drew")
+	# a tiny step inside the same blink / idle / smoke slot changes nothing
+	st.clock = floorf(st.clock / 1.0) + 0.011
+	st._redraw_if_animated()
+	var base: Array = st._redraw_key.duplicate()
+	st.clock += 0.001
+	st._redraw_if_animated()
+	_check(st._redraw_key == base, "no repaint key change inside one slot")
+	st.clock += 0.06   # past one smoke tick
+	st._redraw_if_animated()
+	_check(st._redraw_key != base, "crossing a tick changes the key and repaints")
+	screen.queue_free()
+
+func test_pixel_font_loads_its_index() -> void:
+	PixelFont.warm()
+	_check(PixelFont.has_glyph("A") and PixelFont.has_glyph("?"), "the font index loaded (a failed meta load would leave every glyph a '?')")
+	_check(BattleLayout.W == BattleStage.W and BattleLayout.H == BattleStage.H and BattleLayout.GROUND_Y == BattleStage.GROUND_Y and BattleLayout.FEET_X == BattleStage.FEET_X,
+		"BattleStage geometry constants alias BattleLayout's")
+
 func test_backdrop_cache_never_holds_null() -> void:
 	for t in BattleLayout.BACKDROP_BY_TERRAIN:
 		_check(BattleLayout.get_backdrop(t) != null, "backdrop for terrain %d loads" % t)
@@ -1933,8 +2030,8 @@ func test_hud_status_comes_from_the_beat() -> void:
 	screen.stage.skip_to_end()
 	for side in ["atk", "def"]:
 		var live := sess.get_combatant(side)
-		var shown := screen.stage._status_of(side)
-		_check(shown["badges"] == live.get_status_badges() and shown["spd"] == live.get_effective_speed() and shown["eva"] == live.get_effective_evasion(),
+		var shown: Dictionary = screen.stage._status_src()
+		_check(shown["badges"][side] == live.get_status_badges() and shown["spd"][side] == live.get_effective_speed() and shown["eva"][side] == live.get_effective_evasion(),
 			"showdown HUD status for %s matches the live fight" % side)
 	# a step keeps the status it had, even once the session has moved on
 	var early: SkirmishEngine.TurnStep = sess.result.steps[0]

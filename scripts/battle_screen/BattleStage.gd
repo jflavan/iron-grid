@@ -10,10 +10,10 @@ extends Node2D
 ## 2. Pre-resolved SkirmishResult playback (used by BattlePreview, tests, and skip_to_end):
 ##    intro -> [menu -> support OR attack -> settle] xN -> ending -> result
 
-const W := 360
-const H := 225
-const GROUND_Y := 141.0
-const FEET_X := {"left": 92.0, "right": 268.0}
+const W := BattleLayout.W
+const H := BattleLayout.H
+const GROUND_Y := BattleLayout.GROUND_Y
+const FEET_X := BattleLayout.FEET_X
 const MENU_Y := 153
 
 const C_LABEL := CrtUI.C_LABEL
@@ -62,6 +62,9 @@ var result: SkirmishEngine.SkirmishResult
 var session: SkirmishEngine.BattleSession = null
 var timeline: BattleTimeline
 var mechs: Dictionary = {}          # "atk"/"def" -> state Dictionary
+var _mech_list: Array = []          # mechs.values(), cached by setup() (the per-frame loops walk it)
+var _redraw_key: Array = []         # what last made a static phase (command select / result) repaint
+var _badge_cache: Dictionary = {}   # side -> [badge array it was joined from, joined text]
 var hull_display: Dictionary = {"atk": 0, "def": 0}
 var true_hull: Dictionary = {"atk": 0, "def": 0}
 var energy_display: Dictionary = {"atk": 0, "def": 0}
@@ -135,6 +138,9 @@ func setup(
 		"atk": _make_mech("atk", result.attacker, atk_left, lift.x),
 		"def": _make_mech("def", result.defender, not atk_left, lift.y),
 	}
+	_mech_list = mechs.values()
+	_redraw_key = []
+	_badge_cache.clear()
 	queue_redraw()
 
 func _make_mech(side: String, data: MechData, on_left: bool, lift: int) -> Dictionary:
@@ -214,13 +220,13 @@ func advance(delta: float) -> void:
 			numbers.remove_at(ni)
 		ni -= 1
 	if phase == PHASE_RESULT:
-		queue_redraw()
+		_redraw_if_animated()
 		return
 	if phase == PHASE_COMMAND_SELECT:
 		if auto_pilot:
 			_trigger_auto_player_command()
 		else:
-			queue_redraw()
+			_redraw_if_animated()
 			return
 	phase_t += delta
 	while true:
@@ -237,6 +243,19 @@ func advance(delta: float) -> void:
 			push_error("BattleStage: phase '%s' made no progress (duration 0); aborting advance" % phase)
 			break
 	queue_redraw()
+
+## Seconds per exhaust-smoke repaint while the stage is otherwise static (smoke steps ~1px per 50ms).
+const STATIC_TICK := 0.05
+
+## Command select and the result screen only move through blinks, idle sprite frames and exhaust
+## smoke, so repaint when one of those steps (or damage numbers are still floating) instead of 60x/s.
+func _redraw_if_animated() -> void:
+	var key: Array = [int(clock / 0.2), int(clock / 0.5), int(clock / STATIC_TICK), numbers.size()]
+	for m in _mech_list:
+		key.append(MechSpriteBank.idle_frame(sheet_of(m), clock * 1000.0 + float(m["idle_shift_ms"])))
+	if not numbers.is_empty() or key != _redraw_key:
+		_redraw_key = key
+		queue_redraw()
 
 func current_beat() -> Dictionary:
 	if beat_idx >= 0 and beat_idx < timeline.beats.size():
@@ -576,20 +595,27 @@ func _pair_text(slot: String, fmt: String, a: int, b: int) -> String:
 		e[2] = fmt % [a, b]
 	return e[2]
 
-## The status the HUD panels show for `side`: the snapshot stored on the beat being shown (so it can
-## never run ahead of the animation, and showdown playback matches a live fight). Before the first
-## beat of a live fight the session itself is still at its starting state; a showdown shows nothing.
-## Returns {} when there is nothing to show, else {"badges": Array, "spd": int, "eva": int}.
-func _status_of(side: String) -> Dictionary:
-	var b := current_beat()
-	if b.is_empty() and beat_idx >= timeline.beats.size() and not timeline.beats.is_empty():
-		b = timeline.beats.back()   # command_select / ending / result: the last recorded step
-	if not b.is_empty():
-		return {"badges": b["badges"][side], "spd": int(b["spd"][side]), "eva": int(b["eva"][side])}
-	if session != null:
-		var st := session.get_combatant(side)
-		return {"badges": st.get_status_badges(), "spd": st.get_effective_speed(), "eva": st.get_effective_evasion()}
-	return {}
+## The status snapshot the HUD panels read ({"badges"/"spd"/"eva": {"atk", "def"}}): it follows the
+## animation instead of running ahead of it. A beat's snapshot is the state after its step, so while
+## that beat's menu cue, support animation or pre-impact attack is still playing the previous beat's
+## snapshot is shown (the timeline's start status before beat 0, so an intro matches a live fight).
+## Command select, ending and result show the last recorded beat. {} when there is nothing to show.
+func _status_src() -> Dictionary:
+	var n := timeline.beats.size()
+	var i := mini(beat_idx, n - 1)
+	if beat_idx >= 0 and beat_idx < n:
+		var landed: bool = phase == PHASE_SETTLE or (phase == PHASE_ATTACK and _impact_done)
+		if not landed:
+			i = beat_idx - 1
+	return timeline.beats[i] if i >= 0 else timeline.start_status
+
+## Badges of `side` joined for the HUD ("A B"), rebuilt only when the badge array changes.
+func _badge_text(side: String, badges: Array) -> String:
+	var e = _badge_cache.get(side)
+	if e == null or not is_same(e[0], badges):
+		e = [badges, " ".join(badges.slice(0, 2))]
+		_badge_cache[side] = e
+	return e[1]
 
 ## Loads everything a battle can draw (sheets, silhouettes, variants and attachments of the given
 ## chassis, both factions' attachment art, the backdrops of the given terrains, the font and the
@@ -624,7 +650,7 @@ func _wrapped_headline(text: String, px: int) -> PackedStringArray:
 	return _wrap_lines
 
 func _animate() -> void:
-	for m in mechs.values():
+	for m in _mech_list:
 		m["pose"] = ""
 		m["offset"] = m["end_offset"]
 		m["white"] = false
@@ -720,15 +746,18 @@ func _animate_ending() -> void:
 func _draw() -> void:
 	if result == null or mechs.is_empty():
 		return
+	# _animate() runs inside _draw so it sees the frame's final phase/clock; it mutates the mech
+	# dictionaries that phase code (point(), tests) reads between frames, which therefore lag one
+	# frame behind the draw. Accepted: every consumer tolerates a one-frame-old pose.
 	_animate()
 	if _backdrop != null:
 		draw_texture(_backdrop, Vector2.ZERO)
-	for m in mechs.values():
+	for m in _mech_list:
 		var feet := point(m, "feet")
 		BattleFX.shadow(self, feet.x, GROUND_Y, int(MechSpriteBank.cell_size(m["sheet"]).x * 0.32))
 	for side in ["def", "atk"] if phase != PHASE_ATTACK or current_beat().get("actor", "atk") == "atk" else ["atk", "def"]:
 		_draw_mech(mechs[side])
-	for m in mechs.values():
+	for m in _mech_list:
 		if m["slab"]:
 			SupportAnims.draw_slab(self, self, m)
 		for att in m["attach"]:
@@ -820,9 +849,9 @@ func _draw_menu() -> void:
 	_right_text(_pair_text("syn_hull", "%d/%d", syn_hull, sd.max_armor), 104, MENU_Y + 40, C_NUM)
 
 	PixelFont.draw_text(self, _labels["tile"], Vector2(8, MENU_Y + 56), C_LABEL)
-	var syn_status := _status_of(syn_side)
-	if not syn_status.is_empty():
-		var syn_badges: Array = syn_status["badges"]
+	var status := _status_src()
+	if not status.is_empty():
+		var syn_badges: Array = status["badges"][syn_side]
 		if not syn_badges.is_empty():
 			_right_text(syn_badges[0], 104, MENU_Y + 56, C_CURSOR)
 
@@ -846,13 +875,12 @@ func _draw_menu() -> void:
 	_gauge(Rect2(284, MENU_Y + 43, 66, 4), clampf(float(coa_en) / maxf(1.0, float(cd.max_energy)), 0.0, 1.0), C_EN)
 	_right_text(_pair_text("coa_en", "%d/%d", coa_en, cd.max_energy), 350, MENU_Y + 50, C_NUM)
 
-	var coa_status := _status_of(coa_side)
-	if not coa_status.is_empty():
-		var coa_badges: Array = coa_status["badges"]
+	if not status.is_empty():
+		var coa_badges: Array = status["badges"][coa_side]
 		if not coa_badges.is_empty():
-			PixelFont.draw_text(self, " ".join(coa_badges.slice(0, 2)), Vector2(200, MENU_Y + 58), C_CURSOR)
+			PixelFont.draw_text(self, _badge_text(coa_side, coa_badges), Vector2(200, MENU_Y + 58), C_CURSOR)
 		else:
-			PixelFont.draw_text(self, _pair_text("coa_spd_eva", "SPD %d  EVA %d%%", int(coa_status["spd"]), int(coa_status["eva"])), Vector2(200, MENU_Y + 58), C_LABEL.darkened(0.2))
+			PixelFont.draw_text(self, _pair_text("coa_spd_eva", "SPD %d  EVA %d%%", int(status["spd"][coa_side]), int(status["eva"][coa_side])), Vector2(200, MENU_Y + 58), C_LABEL.darkened(0.2))
 
 	# Command Menu (Interactive or Automated Beat Preview)
 	var b := current_beat()

@@ -90,7 +90,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 				var k := (t - SLAB_DROP) / (dur - SLAB_DROP)
 				if k < 0.5:
 					a["offset"] += Vector2(0, 1 if int(t / 0.04) % 2 == 0 else 0)
-				stage.fx(func(ci): BattleFX.ellipse(ci, Vector2(front.x + 20 * (1 if not a["mirrored"] else -1), BattleStage.GROUND_Y), int(10 + k * 46), int(2 + k * 4), Color(0.55, 0.47, 0.32, 0.75 * (1.0 - k))))
+				stage.fx(func(ci): BattleFX.ellipse(ci, Vector2(front.x + 20 * (1 if not a["mirrored"] else -1), BattleLayout.GROUND_Y), int(10 + k * 46), int(2 + k * 4), Color(0.55, 0.47, 0.32, 0.75 * (1.0 - k))))
 		"anchor_strut":
 			var braced := braced_sheet(a)
 			if t >= 0.4 and braced != "":
@@ -100,7 +100,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 				var feet := stage.point(a, "feet")
 				stage.fx(func(ci):
 					for s in [-1, 1]:
-						BattleFX.ellipse(ci, Vector2(feet.x + s * (30 + k * 18), BattleStage.GROUND_Y), int(4 + k * 10), int(1 + k * 3), Color(0.55, 0.47, 0.32, 0.8 * (1.0 - k))))
+						BattleFX.ellipse(ci, Vector2(feet.x + s * (30 + k * 18), BattleLayout.GROUND_Y), int(4 + k * 10), int(1 + k * 3), Color(0.55, 0.47, 0.32, 0.8 * (1.0 - k))))
 			if t > 0.4 and t < 0.5:
 				a["offset"] += Vector2(0, 1)
 		"ablative_shield":
@@ -143,7 +143,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 		"plunging_comp":
 			var hull := stage.point(a, "hull")
 			var box := Rect2((hull + Vector2(-22, -58)).round(), Vector2(44, 26))
-			box.position.x = clampf(box.position.x, 2, BattleStage.W - 46)
+			box.position.x = clampf(box.position.x, 2, BattleLayout.W - 46)
 			box.position.y = maxf(box.position.y, 26)
 			stage.fx(func(ci):
 				BattleFX.panel(ci, box)
@@ -174,7 +174,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 				stage.fx(func(ci):
 					var msg := "HQ: FIRE MISSION CONFIRMED"
 					var w := PixelFont.text_width(msg) + 12
-					var r := Rect2(roundf((BattleStage.W - w) / 2.0), 28, w, 14)
+					var r := Rect2(roundf((BattleLayout.W - w) / 2.0), 28, w, 14)
 					BattleFX.panel(ci, r)
 					PixelFont.draw_text(ci, msg, r.position + Vector2(6, 4), C_HQ_GREEN))
 		"defend":
@@ -190,7 +190,7 @@ static func run(stage: BattleStage, a: Dictionary, d: Dictionary, ability_id: St
 			a["offset"] += Vector2(roundf(-14.0 * k * dir), 0)
 			var feet := stage.point(a, "feet")
 			stage.fx(func(ci):
-				BattleFX.ellipse(ci, Vector2(feet.x, BattleStage.GROUND_Y), int(8 + k * 18), 3, Color(0.55, 0.47, 0.32, 0.7 * (1.0 - k))))
+				BattleFX.ellipse(ci, Vector2(feet.x, BattleLayout.GROUND_Y), int(8 + k * 18), 3, Color(0.55, 0.47, 0.32, 0.7 * (1.0 - k))))
 
 ## Dotted ballistic arc from the actor's basic weapon to the target (Elevation Ballistics).
 static func draw_plot_arc(stage: BattleStage, a: Dictionary, d: Dictionary, k: float) -> void:
@@ -237,7 +237,7 @@ static func _slab_pos(stage: BattleStage, a: Dictionary) -> Vector2:
 	var att := MechSpriteBank.anchor(a["sheet"], "attach/slab", "idle0", a["mirrored"])
 	var w := 40.0
 	var x := base.x + att.x - (w if not a["mirrored"] else 0.0)
-	return Vector2(roundf(x), BattleStage.GROUND_Y - 54)
+	return Vector2(roundf(x), BattleLayout.GROUND_Y - 54)
 
 static func draw_slab(stage: BattleStage, ci: CanvasItem, a: Dictionary) -> void:
 	_draw_attach(ci, _attach_tex("slab", a), _slab_pos(stage, a), a["mirrored"])

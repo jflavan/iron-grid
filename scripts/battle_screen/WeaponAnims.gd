@@ -204,7 +204,7 @@ static func _lob(stage: BattleStage, a: Dictionary, d: Dictionary, id: String, p
 			var k := (t - imp) / 0.9
 			var feet := stage.point(d, "feet")
 			stage.fx(func(ci):
-				BattleFX.ellipse(ci, Vector2(feet.x, BattleStage.GROUND_Y), int(20 + k * 40), int(3 + k * 4), Color(0.45, 0.38, 0.25, 0.7 * (1.0 - k)))
+				BattleFX.ellipse(ci, Vector2(feet.x, BattleLayout.GROUND_Y), int(20 + k * 40), int(3 + k * 4), Color(0.45, 0.38, 0.25, 0.7 * (1.0 - k)))
 				BattleFX.explosion(ci, target, k, 1.6))
 
 # ---------------------------------------------------------------- Nebelwerfer rocket salvo

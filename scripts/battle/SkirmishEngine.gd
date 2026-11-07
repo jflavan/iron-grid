@@ -167,6 +167,9 @@ class SkirmishResult extends RefCounted:
 	var defender_pushed_back: bool = false
 	var summary_headline: String = ""
 	var approach_summary: String = ""
+	## Combatant status before the first step ({"badges"/"spd"/"eva": {"atk", "def"}}, the shape of a
+	## timeline beat's snapshot); empty for sessions that do not record presentation.
+	var start_status: Dictionary = {}
 	var approach_angle: String = "FRONT" # FRONT, FLANK, REAR
 	var atk_directional_mod_pct: int = 0
 	var def_directional_mod_pct: int = 0
@@ -289,6 +292,12 @@ class BattleSession extends RefCounted:
 		result.atk_effective_speed = round1[0]
 		result.def_effective_speed = round1[1]
 		result.first_striker = turn_queue[0]
+		if record_presentation:
+			result.start_status = {
+				"badges": {"atk": atk_state.get_status_badges(), "def": def_state.get_status_badges()},
+				"spd": {"atk": atk_state.get_effective_speed(), "def": def_state.get_effective_speed()},
+				"eva": {"atk": atk_state.get_effective_evasion(), "def": def_state.get_effective_evasion()},
+			}
 
 	func _make_combatant(
 		side: String,

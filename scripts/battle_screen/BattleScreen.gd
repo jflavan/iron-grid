@@ -35,6 +35,7 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
+	set_process(false)   # nothing to advance until a fight starts
 	var bg := ColorRect.new()
 	bg.color = Color.BLACK
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -74,15 +75,23 @@ func _screen_to_stage(screen_pos: Vector2) -> Vector2:
 	var rel := screen_pos - _view.position
 	return Vector2(rel.x * float(NATIVE.x) / _view.size.x, rel.y * float(NATIVE.y) / _view.size.y)
 
-## A session that is replaced while still on screen must not lose its result: a concluded one is
-## written back to the units now; an unfinished one cannot be applied, so say so.
+## A live session that is replaced while still on screen must not lose its result: a concluded one
+## (finished in the engine, or fully played and waiting for the confirm) is written back to the units
+## and handed to the listeners via resolution_confirmed, exactly as if the player had confirmed it.
+## An unfinished one cannot be applied, so say so. A replaced showdown is only a preview: no signal.
 func _flush_active_session() -> void:
-	if not _is_active or current_session == null or _all_steps_done:
+	if not _is_active or current_session == null:
 		return
-	if current_session.is_finished:
-		_finish()
-	else:
+	if not (current_session.is_finished or _all_steps_done):
 		push_warning("BattleScreen: replacing an unfinished battle session; its progress is discarded")
+		return
+	if not _all_steps_done:
+		_finish()
+	var res := current_result
+	_is_active = false
+	current_result = null
+	current_session = null
+	resolution_confirmed.emit(res)
 
 ## Starts a live interactive turn-based BattleSession.
 func start_session(session: SkirmishEngine.BattleSession) -> void:
@@ -96,6 +105,7 @@ func start_session(session: SkirmishEngine.BattleSession) -> void:
 	stage.auto_pilot = _auto_pilot
 	stage.setup(session.result, tl, session)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	set_process(true)
 	stage.speed_label = "2X" if _fast_mode else ""
 	SoundManager.play("radar_lock")
 
@@ -110,6 +120,7 @@ func start_showdown(result: SkirmishEngine.SkirmishResult) -> void:
 	stage.auto_pilot = _auto_pilot
 	stage.setup(result, BattleTimeline.build(result), null)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	set_process(true)
 	stage.speed_label = "2X" if _fast_mode else ""
 	SoundManager.play("radar_lock")
 
@@ -223,6 +234,7 @@ func _on_confirm_pressed() -> void:
 	SoundManager.play("ui_confirm")
 	_is_active = false
 	visible = false
+	set_process(false)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	var res := current_result
 	current_result = null

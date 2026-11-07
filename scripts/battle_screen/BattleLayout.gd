@@ -5,6 +5,12 @@ extends RefCounted
 ## gap between the walkers is fixed; only the side (from the isometric screen-x of the approach)
 ## and the elevation lift vary.
 
+## Native battle canvas and the ground line the walkers stand on (BattleStage aliases these).
+const W := 360
+const H := 225
+const GROUND_Y := 141.0
+const FEET_X := {"left": 92.0, "right": 268.0}
+
 const PX_PER_LEVEL := 4
 const MAX_LIFT := 12
 
