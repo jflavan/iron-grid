@@ -1,11 +1,13 @@
 extends Node
 
-## Headless scalability benchmark: synthetic maps from 10x10 to 48x48 with a walker on roughly
+## Headless scalability benchmark: synthetic maps from 10x10 to 100x100 with a walker on roughly
 ## every 12th tile, timing the CPU-side systems that grow with map and army size: map load (incl.
 ## the terrain mesh bake), movement ranges, strike plans and full AI decisions. Times are medians.
 ## Run: godot --headless --path . res://tests/ScaleBench.tscn
 
-const SIZES: Array[int] = [10, 20, 32, 48]
+const SIZES: Array[int] = [10, 20, 32, 48, 64, 100]
+## Unit cap for the big maps so ai_decision_ms stays measurable (units ~ n*n/12 below it).
+const MAX_UNITS := 240
 const REPEATS := 5
 
 func _ready() -> void:
@@ -100,7 +102,7 @@ func _synthetic_map(n: int) -> MapDefinition:
 		md.objectives.append({"pos": Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1)), "label": "OBJ", "owner": -1})
 	var chassis := ["vanguard", "goliath", "falke", "donner", "kommandant", "moloch"]
 	var taken := {}
-	var count: int = maxi(4, n * n / 12)
+	var count: int = clampi(n * n / 12, 4, MAX_UNITS)
 	while taken.size() < count:
 		var p := Vector2i(rng.randi_range(0, n - 1), rng.randi_range(0, n - 1))
 		if taken.has(p):
