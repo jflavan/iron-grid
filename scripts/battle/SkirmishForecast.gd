@@ -29,6 +29,7 @@ static func mech_key(m: MechData) -> Array:
 		m.chassis_id, m.basic_weapon_id, int(m.faction), m.is_entrenched,
 		m.current_armor, m.max_armor, m.current_energy, m.max_energy,
 		m.firepower, m.armor_rating, m.speed, m.evasion, m.crit_chance, ability_ids,
+		m.plot_armor,
 	]
 
 ## `atk_key` / `def_key` are mech_key(attacker) / mech_key(defender) when the caller already built them

@@ -13,8 +13,13 @@ static func draw(
 	faction: int,
 	scale_f: float = 1.0,
 	anim_t: float = 0.0,
-	dim: float = 1.0
+	dim: float = 1.0,
+	livery: String = ""
 ) -> void:
+	if chassis_id == "ragnarok":
+		# The throne walker is drawn as an outsized dreadnought.
+		chassis_id = "goliath"
+		scale_f *= 1.32
 	if not _checked.has(chassis_id):
 		_checked[chassis_id] = true
 		if not ChassisCatalog.ORDER.has(chassis_id):
@@ -35,6 +40,13 @@ static func draw(
 		hull_light = Color(0.64 * dim, 0.30 * dim, 0.27 * dim)
 		hull_dark = Color(0.28 * dim, 0.13 * dim, 0.12 * dim)
 		visor_col = Color(1.0, 0.25, 0.20)
+
+	if livery == "blackclaw":
+		# Black Claw command livery: near-black plate, whichever side it now fights for.
+		hull_base = Color(0.13 * dim, 0.13 * dim, 0.15 * dim)
+		hull_light = Color(0.30 * dim, 0.30 * dim, 0.34 * dim)
+		hull_dark = Color(0.06 * dim, 0.06 * dim, 0.07 * dim)
+		visor_col = Color(1.0, 0.16, 0.14)
 
 	var metal_col := Color(0.42 * dim, 0.43 * dim, 0.40 * dim)
 	var dark_metal := Color(0.20 * dim, 0.21 * dim, 0.19 * dim)

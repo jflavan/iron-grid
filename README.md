@@ -18,6 +18,10 @@
 
 *Rules of Engagement (press `R` in Command HQ): seven chapters on how the battle works, with every number read live from the game's data.*
 
+![Story Mode](screenshot_story.png)
+
+*Story Mode (press `S` in Command HQ): a twelve-mission campaign with staged cutscenes before and after each battle and portrait dialog during it.*
+
 ---
 
 ## Core Gameplay & Turn Loop
@@ -141,6 +145,26 @@ Stats are read from `autoload/GlobalState.gd`; `EN (+n)` is the reactor pool and
 
 ---
 
+## Story Mode (12 Missions)
+
+Press **`S`** in Command HQ. *Iron Ghost* is a linear campaign in three acts with a prologue and an epilogue: Lt. Leon Hammerfeld of the 8th Iron Division fights his way to the Syndikat capital and learns who the masked commander of the Black Claw corps really is. Each mission runs **title card → briefing cutscene → map briefing → battle → debrief cutscene**. A cutscene is a painted backdrop with the two most recent speakers on stage (the one talking lit, the other dimmed) and the typed dialog underneath; progress is saved to `user://story_save.json` and cleared chapters can be replayed from the campaign screen.
+
+| Act | Missions |
+| :--- | :--- |
+| **Act 1: The Iron Division** | Proving Ground Aschefeld (tutorial) · Operation: Iron Bridge · Bastion Redoubt |
+| **Act 2: The Black Claw** | Breakthrough at Kessel-9 · Pursuit at Ravensfurt · The Eisenhammer Foundry · The Tauber Causeway · Wolf's Pass |
+| **Act 3: Iron Ghost** | The Kaiserwall · Crown Boulevard · Gate of the Eisenthron · Iron Ghost |
+
+- **Named pilots** fly fixed walkers (Leon: Sturmjäger, Mira: Spähfalke, Chad: Brenner, Old Iron: Siegebreaker, Ilse: Spinne, Wolfram: a black Kaiserstuhl, Grau: the story-only super-heavy **Ragnarök**). Their portrait shows on the battle screen when they fight. Line-ups are fixed per mission; a named pilot who is shot down bails out and is back for the next one.
+- **Mid-mission events** are triggers in the mission script: turn starts, a named pilot entering a skirmish, a pilot's hull dropping, an objective changing hands. They play dialog over the map and can apply effects: reinforcements, a scripted withdrawal, shelling, a called-off duel, a scripted ending, or a **side switch** that hands a formation to the player mid-battle.
+- **Must-survive pilots**: most missions fail if Leon is shot down (Chad, on the causeway). Such a pilot gets one **second wind** per mission: the first battle that would wreck them leaves the walker crippled at 35% hull instead, and the next killing blow counts.
+- **Bosses stand their ground**: a walker with a hold turn (Wolfram in the pass and at the gate, Grau on the parade court) waits where it is until that turn unless the Coalition closes with it, so the escorts fight first.
+- **Decisive Engagement** is a story-only strategy mode: destroy the enemy force (or the mission's scripted target) inside the turn limit.
+
+The script lives in `scripts/story/` as plain data: `StoryCampaign.gd` (chapters, dialog, triggers), `StoryMaps.gd` (the twelve maps; missions 2–4 reuse the skirmish theaters), `StoryCast.gd` (speakers and portraits). `StoryCampaign.validate()` reports unknown speakers, malformed maps and triggers that name a pilot the mission never fields.
+
+---
+
 ## Controls
 
 | Input | Action |
@@ -155,6 +179,8 @@ Stats are read from `autoload/GlobalState.gd`; `EN (+n)` is the reactor pool and
 | **`E`** | End Player Command Phase |
 | **`C`** | Reset & center camera on battlefield |
 | **`H`** | Toggle Tactical Field Manual & Terrain Chart (closes automatically at mission end) |
+| **`S`** (Command HQ) | Open **Story Mode**: `Up` / `Down` + `Enter` pick a chapter, `N` twice starts a new campaign, `Esc` returns |
+| **`Space` / `Enter` / Left Click** (dialog) | Finish typing the line, then advance; `Esc` skips the scene |
 | **`R`** (Command HQ) | Open the **Rules of Engagement** page: 7 chapters on winning, fuel, terrain & high ground, the clash, its aftermath, chassis roles and field tips. `Up` / `Down` / `1`–`7` pick a chapter, `Esc` returns |
 | **`Up` / `Down` / Mouse Hover** | Battle screen: highlight `ATTACK` / `TECH` / `DEFEND` / `RETREAT` |
 | **`Space` / `Enter` / Left Click** | Battle screen: confirm command or confirm battle result |
@@ -173,6 +199,7 @@ iron-grid/
 ├── screenshot_main_menu.png        # Command HQ briefing & codex screenshot
 ├── screenshot_rules.png            # Rules of Engagement page screenshot
 ├── screenshot_gameplay.png         # Tactical isometric battlefield screenshot
+├── screenshot_story.png            # Story mode briefing dialog screenshot
 ├── autoload/
 │   ├── GlobalState.gd              # Turn/phase state, combat log, battle seed; catalogs filled from scripts/data builders
 │   └── SoundManager.gd             # Procedural retro/dieselpunk WAV audio synthesizer
@@ -181,14 +208,25 @@ iron-grid/
 │   ├── backdrops/                  # 360x152 terrain backdrops (plain, road, river, forest, city, mountain)
 │   ├── fx/                         # Slab, radio mast & rangefinder attachments per faction
 │   └── font/                       # 5x7 bitmap font
+├── assets/story/                   # Generated story art (same generator)
+│   ├── portraits/                  # 48x48 pilot portraits
+│   └── backdrops/                  # 354x142 cutscene backdrops (briefing room, burning village, memorial, ...)
 ├── tools/
 │   ├── battle_sprites/             # Stdlib-only Python generator for everything in assets/battle
 │   └── ui_snapshot/                # snapshot.gd: renders 1440x900 screenshots of any scene/state
 ├── scenes/
 │   ├── MainMenu.tscn               # Command HQ briefing console, 3-map selector, Mech Hangar Codex & Rules of Engagement
 │   ├── Battlefield.tscn            # Root battle scene (GridMap, UnitContainer, BattleCamera, UIOverlay)
+│   ├── Story.tscn                  # Story mode: campaign list, cutscenes, mission briefing (StoryScreen)
 │   └── dev/BattlePreview.tscn      # Dev-only battle screen preview (every chassis, ability, terrain)
 └── scripts/
+    ├── story/
+    │   ├── StoryCampaign.gd        # The campaign script: chapters, dialog lines, mid-mission triggers; validate()
+    │   ├── StoryMaps.gd            # The twelve story MapDefinitions and their named line-ups
+    │   ├── StoryCast.gd            # Speakers: display names, sides, portraits
+    │   ├── StoryDirector.gd        # One mission's script at run time: trigger matching, win / loss overrides
+    │   ├── StoryDialog.gd          # Draws a portrait dialog line (Story screen and tactical HUD)
+    │   └── StoryProgress.gd        # Campaign progress in user://story_save.json
     ├── data/
     │   ├── AbilityCatalog.gd       # Builds the ability catalog (weapons, armor & tactical TECH)
     │   ├── ChassisCatalog.gd       # Builds the six chassis templates; ORDER is the canonical chassis list
@@ -279,6 +317,17 @@ $env:PLAYTEST_POLICIES = 'greedy'; $env:PLAYTEST_VERBOSE = '1'; godot --headless
 Remove-Item Env:PLAYTEST_POLICIES, Env:PLAYTEST_VERBOSE
 ```
 
+### Story tests
+
+`tests/StoryTests.tscn` validates the campaign script, the progress save, and the scripted effects (side switch, called-off duel, scripted ending, plot armour), then plays all twelve story missions with their dialog and triggers running.
+
+```bash
+godot --headless --path . res://tests/StoryTests.tscn
+STORY_POLICIES=greedy,g2,turtle STORY_MISSIONS=m08,m11 godot --headless --path . res://tests/StoryTests.tscn
+```
+
+`tactical:<seed>` is the competent commander (`tests/TacticalBot.gd`), which also keeps a must-survive pilot out of the line once its hull is below half and never walks a garrison off its objective; any other name that is not `turtle`, `holdout*` or `random:*` is the greedy commander under a different battle seed. The default run is one of each. The suite asserts that every mission reaches a conclusion without errors, not that the commander wins. For balance work, run eight `tactical` seeds and four greedy ones per mission and read the win rates: the campaign was tuned so the tactical commander wins most runs of every mission except Iron Bridge, where it tends to lose on objectives at the turn limit.
+
 ## Hardware Frame Time Budget Benchmark
 
 `tests/Benchmark.tscn` validates that the game strictly complies with the **60 FPS / 16.666 ms frame time budget** across both rendering pipelines (2.5D Isometric Map View and 2D Battle View). It executes a two-pass benchmark:
@@ -343,13 +392,16 @@ godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/Battlefield.tscn
 godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/MainMenu.tscn screenshot_main_menu.png
 godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/MainMenu.tscn screenshot_rules.png rules
 godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/dev/BattlePreview.tscn screenshot_battle.png
+godot --path . -s tools/ui_snapshot/snapshot.gd -- res://scenes/Story.tscn screenshot_story.png story:m03:6
 ```
+
+Story states are `story[:<chapter id>[:<what>]]`: on `Story.tscn`, `story` is the campaign list, a chapter id plays its opening dialog (`<what>` = lines to skip, or `briefing`); on `Battlefield.tscn` it loads that story mission (`<what>` = `battle` opens a skirmish with Leon).
 
 ## Battle Art Pipeline
 
 All battle screen art is generated pixel art. `tools/battle_sprites/generate.py` builds every chassis from shaded parts. The legs are a two-bone hip→knee→ankle IK rig, re-solved for every pose so the feet stay planted.
 
-The generator renders each pose and writes palette-swapped sheets for the Coalition and Syndikat factions. It also writes the backdrops, attachments and font. It uses only the Python standard library, and its output is deterministic.
+The generator renders each pose and writes palette-swapped sheets for the Coalition and Syndikat factions. It also writes the backdrops, attachments and font, the Black Claw livery of the Kaiserstuhl, and the story mode's art: pilot portraits (`portraits.py` → `assets/story/portraits/`) and cutscene backdrops (`story_backdrops.py` → `assets/story/backdrops/`); `--story-out` redirects both. It uses only the Python standard library, and its output is deterministic.
 
 ```bash
 python3 tools/battle_sprites/generate.py           # regenerate assets/battle

@@ -30,6 +30,7 @@ func _generate_all_samples() -> void:
 	_samples["buff_up"] = _make_dual_beep(600.0, 960.0, 0.13, 0.38)
 	_samples["cannon_fire"] = _make_explosion(0.28, 190.0)
 	_samples["mech_destroy"] = _make_explosion(0.55, 95.0)
+	_samples["type_blip"] = _make_tone_burst(980.0, 760.0, 0.016, 0.10, "square")   # story dialog typewriter
 	_samples["phase_shift"] = _make_dual_beep(330.0, 495.0, 0.22, 0.3)
 
 func play(sfx_name: String, pitch_scale: float = 1.0) -> void:

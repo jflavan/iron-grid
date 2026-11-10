@@ -7,7 +7,8 @@ extends RefCounted
 enum StrategyMode {
 	PITCHED_BATTLE = 0,
 	DEFENSE = 1,
-	OFFENSE = 2
+	OFFENSE = 2,
+	ASSAULT = 3   # story missions: destroy the enemy force (or the mission's scripted goal) inside the turn limit
 }
 
 var map_id: String = ""
@@ -34,6 +35,11 @@ var spawns: Array[Dictionary] = []
 # OFFENSE maps: objective nodes whose capture (held through the enemy turn) wins the mission
 var hq_positions: Array[Vector2i] = []
 
+# Story overrides ("" = the strategy mode's stock wording)
+var objective_text: String = ""   # replaces get_victory_condition_text()
+var win_text: String = ""         # replaces the victory reason (objective, turn limit, or no enemy left on the field)
+var lose_text: String = ""        # replaces the objective / turn-limit defeat reason
+
 func get_strategy_name() -> String:
 	match strategy_mode:
 		StrategyMode.PITCHED_BATTLE:
@@ -42,9 +48,13 @@ func get_strategy_name() -> String:
 			return "FORTIFIED DEFENSE"
 		StrategyMode.OFFENSE:
 			return "BLITZKRIEG OFFENSE"
+		StrategyMode.ASSAULT:
+			return "DECISIVE ENGAGEMENT"
 	return "TACTICAL ENGAGEMENT"
 
 func get_victory_condition_text() -> String:
+	if objective_text != "":
+		return objective_text
 	match strategy_mode:
 		StrategyMode.PITCHED_BATTLE:
 			return "Destroy all Syndicate mechs, hold every Objective City at turn end, OR control the majority when Turn %d ends." % turn_limit
@@ -52,6 +62,8 @@ func get_victory_condition_text() -> String:
 			return "Hold at least one Citadel node until Turn %d ends OR eliminate all attackers." % turn_limit
 		StrategyMode.OFFENSE:
 			return "Capture a Syndicate HQ Bunker and hold it through the enemy turn, OR destroy all defenders within %d Turns." % turn_limit
+		StrategyMode.ASSAULT:
+			return "Destroy all Syndicate walkers before Turn %d ends." % turn_limit
 	return "Eliminate enemy forces."
 
 
@@ -84,7 +96,8 @@ func elevation_at(x: int, y: int) -> int:
 	return int(row[x])
 
 ## Data problems of this map, one message each; empty when the map is well-formed.
-## `known_chassis` lists the valid spawn chassis ids (default: ChassisCatalog.ORDER).
+## `known_chassis` lists the valid spawn chassis ids (default: ChassisCatalog.ORDER; story maps pass
+## the boss chassis too).
 func validate(known_chassis: Array = []) -> PackedStringArray:
 	var errs := PackedStringArray()
 	var label: String = map_id if map_id != "" else map_name

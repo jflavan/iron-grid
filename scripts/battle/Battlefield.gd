@@ -36,6 +36,11 @@ var _ai_queue: Array[MechUnit] = []
 var _auto_advance_token: int = 0
 var _mission_token: int = 0
 
+## Story mode: the running mission's script (null in a skirmish theater). See StoryDirector.
+var _story: StoryDirector = null
+var _story_down: Array = []            # story pilots wrecked since the last victory check
+var _story_cancel_skirmish: bool = false   # set by a "cancel_skirmish" effect while a battle is pending
+
 func _ready() -> void:
 	grid_map.tile_hovered.connect(_on_tile_hovered)
 	grid_map.tile_clicked.connect(_on_tile_clicked)
@@ -47,6 +52,7 @@ func _ready() -> void:
 	ui_overlay.action_center_camera_requested.connect(_on_center_requested)
 	ui_overlay.action_return_menu_requested.connect(_on_return_menu_requested)
 	ui_overlay.action_restart_mission_requested.connect(_on_restart_mission_requested)
+	ui_overlay.action_story_continue_requested.connect(_on_story_continue_requested)
 	ui_overlay.skirmish_modal_closed.connect(_on_skirmish_modal_closed)
 	ui_overlay.modal_changed.connect(_on_modal_changed)
 	_on_modal_changed()
@@ -74,14 +80,30 @@ func start_mission(map_idx: int) -> void:
 	_strike_cache.clear()
 	grid_map.suppress_redraw = false
 	MechUnit.suppress_redraw = false
-	var idx: int = clampi(map_idx, 0, GlobalState.maps.size() - 1)
-	current_map_def = GlobalState.maps[idx]
+	var mission := GlobalState.story_mission()
+	if mission.is_empty():
+		_story = null
+		current_map_def = GlobalState.maps[clampi(map_idx, 0, GlobalState.maps.size() - 1)]
+	else:
+		_story = StoryDirector.new(mission)
+		current_map_def = mission["map"]
+	_story_down.clear()
+	_story_cancel_skirmish = false
+	ui_overlay.close_story_dialog()
+	ui_overlay.story_mode = _story != null
+	ui_overlay.story_heroes = mission.get("lose_if_lost", [])
 	SkirmishEngine.clear_forecast_cache()
 	ui_overlay.map_def = current_map_def
 	ui_overlay.show_game_over_modal = false
 
 	grid_map.load_from_definition(current_map_def)
 	unit_container.spawn_units_for_map(current_map_def, grid_map)
+	if _story != null:
+		# A pilot the mission cannot lose survives one killing blow (see _second_wind_lines)
+		for p: String in _second_wind_pilots():
+			var hero := unit_container.unit_of_pilot(p)
+			if hero != null:
+				hero.mech_data.plot_armor = maxi(hero.mech_data.plot_armor, 1)
 	var chassis_ids: Array = []
 	for sp in current_map_def.spawns:
 		var cid := str(sp.get("chassis", "vanguard"))
@@ -177,6 +199,10 @@ func _begin_player_phase(is_first_turn: bool = false) -> void:
 	# Auto-select first available player unit for convenience
 	if p_units.size() > 0:
 		_select_unit(p_units[0])
+	_story_poll({"turn": GlobalState.turn_number}, func(fired: bool):
+		if fired:
+			_check_victory_conditions()
+	)
 
 ## Start-of-phase upkeep shared by both factions: snaps sprites to their grid tiles and applies
 ## Rules.apply_upkeep (order reset, then optional refuel / energy regen / City Depot resupply).
@@ -413,7 +439,17 @@ func _on_unit_movement_finished(unit: MechUnit, target_coords: Vector2i, fuel_sp
 		]
 	)
 	_update_all_objective_ownership()
+	_story_poll({}, func(_fired: bool): _after_movement(unit))
+
+## The rest of a finished move, once any story beat it set off has played out.
+func _after_movement(unit: MechUnit) -> void:
 	if _check_victory_conditions():
+		return
+	if not MechUnit.is_live(unit):
+		# A scripted event took the walker off the map mid-order
+		_clear_pending_ai()
+		if GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
+			_process_next_ai_unit()
 		return
 
 	if GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE:
@@ -421,7 +457,11 @@ func _on_unit_movement_finished(unit: MechUnit, target_coords: Vector2i, fuel_sp
 		grid_map.compute_reachable_tiles(unit.mech_data, occ)
 		_select_unit(unit)
 	elif GlobalState.current_phase == GlobalState.TurnPhase.AI_PHASE:
-		if MechUnit.is_live(_pending_ai_target):
+		if unit.mech_data.faction != MechData.Faction.AI:
+			_clear_pending_ai()   # it changed sides: its Syndikat order is void
+			_process_next_ai_unit()
+			return
+		if MechUnit.is_live(_pending_ai_target) and _pending_ai_target.mech_data.faction != unit.mech_data.faction:
 			var tgt := _pending_ai_target
 			var atk_f := _pending_ai_attack_fuel
 			_clear_pending_ai()
@@ -546,6 +586,18 @@ func _trigger_skirmish_resolution(attacker: MechUnit, defender: MechUnit, from_c
 	_pending_defender = defender
 	_pending_target_coords = target_coords
 
+	_story_cancel_skirmish = false
+	_story_poll({"skirmish": [attacker.mech_data.pilot_id, defender.mech_data.pilot_id]},
+		func(_fired: bool): _open_skirmish(attacker, defender, from_coords, target_coords))
+
+func _open_skirmish(attacker: MechUnit, defender: MechUnit, from_coords: Vector2i, target_coords: Vector2i) -> void:
+	# A story beat may have called the fight off (a side switch, a scripted interception)
+	if (_story_cancel_skirmish or not MechUnit.is_live(attacker) or not MechUnit.is_live(defender)
+			or attacker.mech_data.faction == defender.mech_data.faction
+			or (_story != null and not _story.forced.is_empty())):   # a scripted ending: no fight
+		_story_cancel_skirmish = false
+		_resume_after_skirmish(attacker if MechUnit.is_live(attacker) and attacker.mech_data.faction == MechData.Faction.PLAYER else null)
+		return
 	var from_tile := grid_map.get_tile(from_coords)
 	var target_tile := grid_map.get_tile(target_coords)
 
@@ -568,12 +620,15 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 	var atk_alive: bool = MechUnit.is_live(_pending_attacker)
 	var def_alive: bool = MechUnit.is_live(_pending_defender)
 
+	var down: Array = []
 	if not def_alive and _pending_defender != null:
 		GlobalState.add_log("%s WRECKED at Sector (%d,%d)!" % [_pending_defender.mech_data.callsign, _pending_target_coords.x, _pending_target_coords.y])
+		_note_story_down(_pending_defender, down)
 		unit_container.remove_destroyed_unit(_pending_defender)
 
 	if not atk_alive and _pending_attacker != null:
 		GlobalState.add_log("%s WRECKED during assault!" % [_pending_attacker.mech_data.callsign])
+		_note_story_down(_pending_attacker, down)
 		unit_container.remove_destroyed_unit(_pending_attacker)
 
 	if selected_unit != null and not _selected_is_valid():
@@ -594,12 +649,61 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 	if atk_alive and _pending_attacker != null and _pending_attacker.mech_data.faction == MechData.Faction.PLAYER:
 		surviving_player_attacker = _pending_attacker
 
+	_update_all_objective_ownership()
+	grid_map.queue_redraw()
+	var after := func(): _story_poll({"down": down}, func(_fired: bool): _resume_after_skirmish(surviving_player_attacker))
+	var wind := _second_wind_lines([_pending_attacker, _pending_defender])
+	if wind.is_empty():
+		after.call()
+	else:
+		var tok := _mission_token
+		ui_overlay.show_story_dialog(wind, func():
+			if tok == _mission_token:
+				after.call()
+		)
+
+## Second wind: a pilot whose loss fails the mission is not wrecked by the first battle that would
+## have killed them. Their plot armour is spent, the walker limps on at SECOND_WIND_HULL of its hull,
+## and the next killing blow counts. Returns the dialog lines to show (empty when nobody was saved).
+const SECOND_WIND_HULL := 0.35
+const SECOND_WIND_LINES := {
+	"leon": "...Hull breach. Emergency seals are holding. I can take one more like that. Only one.",
+	"chad": "WHOA! Okay! That one HURT! Field patch is holding. Big Rig does not get a third chance, people!",
+}
+
+## Pilots who get a second wind this mission: the must-survive ones, plus any the script names.
+func _second_wind_pilots() -> Array:
+	return (_story.mission.get("lose_if_lost", []) as Array) + (_story.mission.get("second_wind", []) as Array)
+
+func _second_wind_lines(fighters: Array) -> Array:
+	var lines: Array = []
+	if _story == null:
+		return lines
+	var heroes := _second_wind_pilots()
+	for u in fighters:
+		if not MechUnit.is_live(u):
+			continue
+		var m: MechData = u.mech_data
+		if m.plot_armor <= 0 or m.current_armor > m.plot_armor or not heroes.has(m.pilot_id):
+			continue
+		m.plot_armor = 0
+		m.current_armor = maxi(m.current_armor, ceili(m.max_armor * SECOND_WIND_HULL))
+		SkirmishEngine.clear_forecast_cache()   # forecasts against this walker assumed the floor
+		u.queue_redraw()
+		GlobalState.add_log("%s is crippled but still standing (%d hull). The next killing blow will finish it." % [m.callsign, m.current_armor])
+		lines.append({"who": m.pilot_id, "text": SECOND_WIND_LINES.get(m.pilot_id, "Still standing. Barely. Not again.")})
+	return lines
+
+## Ends the combat encounter phase: victory check, then back to the phase the fight interrupted.
+## Also the path of a fight a story beat called off (nothing was fought, the attacker's order is spent).
+func _resume_after_skirmish(surviving_player_attacker: MechUnit) -> void:
 	_pending_attacker = null
 	_pending_defender = null
 	_clear_pending_ai()
-
-	_update_all_objective_ownership()
-	grid_map.queue_redraw()
+	if not (MechUnit.is_live(surviving_player_attacker) and surviving_player_attacker.mech_data.faction == MechData.Faction.PLAYER):
+		surviving_player_attacker = null
+	if selected_unit != null and not _selected_is_valid():
+		_deselect_unit()
 
 	if _check_victory_conditions():
 		return
@@ -661,7 +765,7 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			_process_next_ai_unit()
 			return
 		_clear_pending_ai()
-		var decision: Dictionary = AIController.choose_best_action(
+		var decision: Dictionary = {"type": AIController.ACTION_WAIT} if _ai_holds_position(ai_unit) else AIController.choose_best_action(
 			ai_unit, grid_map, unit_container, current_map_def
 		)
 		if decision.has("facing"):
@@ -698,6 +802,17 @@ func _execute_single_ai_turn(ai_unit: MechUnit) -> void:
 			var fuel_spent: int = int(decision["fuel_spent"])
 			_execute_unit_movement(ai_unit, target_pos, path, fuel_spent)
 	)
+
+## A story walker told to stand its ground (MechData.hold_until_turn) waits out its turn until that
+## turn comes, unless a Coalition walker is already next to it.
+func _ai_holds_position(ai_unit: MechUnit) -> bool:
+	var m := ai_unit.mech_data
+	if GlobalState.turn_number >= m.hold_until_turn:
+		return false
+	for u in unit_container.get_faction_units(MechData.Faction.PLAYER):
+		if TerrainGrid.manhattan(u.mech_data.grid_pos, m.grid_pos) == 1:
+			return false
+	return true
 
 func _finish_ai_phase() -> void:
 	_update_all_objective_ownership()
@@ -741,22 +856,36 @@ func _count_state() -> Dictionary:
 
 func _check_victory_conditions(end_of_full_turn: bool = false) -> bool:
 	var c := _count_state()
-	var result := VictoryRules.evaluate(current_map_def, grid_map, c["player"], c["ai"],
-		c["player_obj"], c["total_obj"], GlobalState.turn_number, end_of_full_turn)
+	var result: Dictionary = {}
+	if _story != null:
+		# The mission's own rules outrank the map's: a scripted ending, a pilot who must survive,
+		# the target whose fall wins it.
+		result = _story.verdict(_story_down)
+		_story_down.clear()
+	if result.is_empty():
+		result = VictoryRules.evaluate(current_map_def, grid_map, c["player"], c["ai"],
+			c["player_obj"], c["total_obj"], GlobalState.turn_number, end_of_full_turn)
 	if result.is_empty():
 		return false
-	_declare_game_over(result["winner"], result["reason"])
+	if _story != null and int(result["winner"]) == 0 and not _story.win_allowed():
+		return false   # the mission's story beat has not happened yet: the battle goes on until it does
+	_declare_game_over(result["winner"], result["reason"], str(result.get("title", "")))
 	return true
 
-func _declare_game_over(winner: int, reason: String) -> void:
+func _declare_game_over(winner: int, reason: String, title: String = "") -> void:
 	_mission_token += 1
 	GlobalState.last_battle_winner = winner
 	GlobalState.last_battle_reason = reason
+	GlobalState.last_battle_title = title
+	if _story != null and winner == 0:
+		# Saved now, not after the debrief scene: leaving from the debrief must not lose the win
+		StoryProgress.mark_cleared(GlobalState.story_chapter)
 	GlobalState.set_phase(GlobalState.TurnPhase.GAME_OVER)
 	GlobalState.add_log("OPERATION CONCLUDED: " + reason)
 	ui_overlay.trigger_game_over()
 
 func _on_return_menu_requested() -> void:
+	GlobalState.leave_story()
 	get_tree().change_scene_to_file(GlobalState.MAIN_MENU_SCENE)
 
 func _on_restart_mission_requested() -> void:
@@ -774,3 +903,157 @@ func _rotate_selected_unit() -> void:
 		_refresh_hover_telemetry(grid_map.hovered_coords)
 	if not _has_unmoved_player_units():
 		_start_auto_advance_timer(1.2)
+
+# =============================================================================
+# STORY MODE: SCRIPTED BEATS (see StoryDirector for the trigger and effect vocabulary)
+# =============================================================================
+## A won story mission's debrief: on to the Story scene for the post-mission dialog.
+func _on_story_continue_requested() -> void:
+	GlobalState.story_stage = "post"
+	get_tree().change_scene_to_file(GlobalState.STORY_SCENE)
+
+func _note_story_down(u: MechUnit, down: Array) -> void:
+	if u.mech_data.pilot_id != "":
+		down.append(u.mech_data.pilot_id)
+		_story_down.append(u.mech_data.pilot_id)
+		if u.mech_data.faction == MechData.Faction.PLAYER and _story != null:
+			_story.lost[u.mech_data.pilot_id] = true
+		GlobalState.add_log("%s bailed out of the wreck." % StoryCast.display_name(u.mech_data.pilot_id))
+
+## Asks the story which triggers `ctx` sets off, plays them in order (dialog, then effects), and
+## calls `then(fired)` when the last one is done; at once, with false, when nothing fires or no
+## story is running. Everything the caller does after a possible story beat belongs in `then`.
+func _story_poll(ctx: Dictionary, then: Callable) -> void:
+	if _story == null:
+		then.call(false)
+		return
+	var fired := _story.poll(ctx, unit_container, grid_map)
+	if fired.is_empty():
+		then.call(false)
+		return
+	_play_story(fired, 0, _mission_token, then)
+
+func _play_story(fired: Array[Dictionary], i: int, tok: int, then: Callable) -> void:
+	if tok != _mission_token:
+		return   # the mission was restarted or ended under the dialog
+	if i >= fired.size():
+		_settle_after_story()
+		# An effect can itself set off the next beat (a wreck, a thinned-out enemy line)
+		var more := _story.poll({"down": _story_down.duplicate()}, unit_container, grid_map)
+		if more.is_empty():
+			then.call(true)
+		else:
+			_play_story(more, 0, tok, then)
+		return
+	var trig: Dictionary = fired[i]
+	var apply := func():
+		if tok != _mission_token:
+			return
+		for e: Dictionary in trig.get("effects", []):
+			_apply_story_effect(e)
+		_play_story(fired, i + 1, tok, then)
+	# A pilot who has bailed out of a wreck this mission no longer speaks on the battle net
+	var lines: Array = (trig.get("lines", []) as Array).filter(func(l: Dictionary): return not _story.lost.has(str(l.get("who", ""))))
+	if lines.is_empty():
+		apply.call()
+	else:
+		ui_overlay.show_story_dialog(lines, apply)
+
+## Brings the board's derived state back in line after effects moved, flipped or removed walkers.
+func _settle_after_story() -> void:
+	_update_all_objective_ownership()
+	_count_state()
+	_strike_cache.clear()
+	SkirmishEngine.clear_forecast_cache()
+	if GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE:
+		if _selected_is_valid():
+			_select_unit(selected_unit)
+		else:
+			_select_unit(_first_ready_player_unit())
+
+## One scripted effect. Selectors are {"pilot": id} and / or {"group": tag} (UnitContainer.select_units).
+##   {"convert": sel}                 those walkers join the Coalition (the side switch)
+##   {"rename": {"pilot", "to", "callsign"}}   the walker of `pilot` gets a new pilot id / callsign
+##   {"withdraw": sel}                they leave the map intact
+##   {"destroy": sel}                 they are wrecked where they stand
+##   {"damage": {..sel, "amount"}}    they lose hull (never below 1)
+##   {"friendly_fire": {"near": pilot, "amount"}}   the Syndikat walker nearest that pilot loses hull (never below 1)
+##   {"spawn": [spawn entries]}       reinforcements, each on the free tile nearest its "pos"
+##   {"plot_armor": {..sel, "value"}} sets MechData.plot_armor
+##   {"cancel_skirmish": true}        the battle about to start does not happen
+##   {"win": reason, "title": text} / {"lose": reason, "title": text}   ends the mission
+##   {"log": text}                    a Comms Log line
+func _apply_story_effect(e: Dictionary) -> void:
+	if e.has("spawn"):
+		for sp: Dictionary in e["spawn"]:
+			var entry := sp.duplicate()
+			entry["pos"] = unit_container.free_tile_near(sp.get("pos", Vector2i.ZERO), grid_map)
+			var u := unit_container.spawn_unit(entry, grid_map)
+			GlobalState.add_log("%s has entered the field at (%d,%d)!" % [u.mech_data.callsign, entry["pos"].x, entry["pos"].y])
+	if e.has("convert"):
+		for u in unit_container.select_units(e["convert"]):
+			if u.mech_data.faction == MechData.Faction.PLAYER:
+				continue
+			unit_container.convert_unit(u, MechData.Faction.PLAYER)
+			_ai_queue.erase(u)
+			if _pending_ai_target == u:
+				_clear_pending_ai()
+			GlobalState.add_log("%s has turned its guns on the Syndikat!" % u.mech_data.callsign)
+	if e.has("rename"):
+		var r: Dictionary = e["rename"]
+		var u := unit_container.unit_of_pilot(str(r.get("pilot", "")))
+		if u != null:
+			u.mech_data.pilot_id = str(r.get("to", u.mech_data.pilot_id))
+			u.mech_data.callsign = str(r.get("callsign", u.mech_data.callsign))
+			u.refresh_plate()
+	if e.has("withdraw"):
+		for u in unit_container.select_units(e["withdraw"]):
+			GlobalState.add_log("%s withdrew from the field." % u.mech_data.callsign)
+			_ai_queue.erase(u)
+			unit_container.withdraw_unit(u)
+	if e.has("destroy"):
+		for u in unit_container.select_units(e["destroy"]):
+			GlobalState.add_log("%s WRECKED!" % u.mech_data.callsign)
+			u.mech_data.plot_armor = 0
+			u.mech_data.current_armor = 0
+			if u.mech_data.pilot_id != "":
+				_story_down.append(u.mech_data.pilot_id)
+			_ai_queue.erase(u)
+			SoundManager.play("mech_destroy")
+			unit_container.remove_destroyed_unit(u)
+	if e.has("damage"):
+		for u in unit_container.select_units(e["damage"]):
+			_story_damage(u, int(e["damage"].get("amount", 0)))
+	if e.has("friendly_fire"):
+		var ff: Dictionary = e["friendly_fire"]
+		var anchor := unit_container.unit_of_pilot(str(ff.get("near", "")))
+		var best: MechUnit = null
+		for u in unit_container.get_faction_units(MechData.Faction.AI):
+			if u.mech_data.pilot_id != "":
+				continue   # named Syndikat pilots are never the ones shelled
+			if best == null or (anchor != null and TerrainGrid.manhattan(u.mech_data.grid_pos, anchor.mech_data.grid_pos)
+					< TerrainGrid.manhattan(best.mech_data.grid_pos, anchor.mech_data.grid_pos)):
+				best = u
+		if best != null:
+			_story_damage(best, int(ff.get("amount", 0)))
+	if e.has("plot_armor"):
+		for u in unit_container.select_units(e["plot_armor"]):
+			u.mech_data.plot_armor = int(e["plot_armor"].get("value", 0))
+	if e.has("cancel_skirmish"):
+		_story_cancel_skirmish = true
+	if e.has("win"):
+		_story.forced = {"winner": 0, "reason": str(e["win"]), "title": str(e.get("title", ""))}
+	if e.has("lose"):
+		_story.forced = {"winner": 1, "reason": str(e["lose"]), "title": str(e.get("title", ""))}
+	if e.has("log"):
+		GlobalState.add_log(str(e["log"]))
+
+func _story_damage(u: MechUnit, amount: int) -> void:
+	var m := u.mech_data
+	var dealt: int = mini(amount, m.current_armor - 1)
+	if dealt <= 0:
+		return
+	m.current_armor -= dealt
+	SoundManager.play("cannon_fire")
+	GlobalState.add_log("%s took %d hull damage from a shell out of nowhere!" % [m.callsign, dealt])
+	u.queue_redraw()

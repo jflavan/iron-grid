@@ -12,6 +12,7 @@ import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import chassis  # noqa: E402
 import generate  # noqa: E402
 import png  # noqa: E402
 import rig  # noqa: E402
@@ -40,6 +41,8 @@ class GeneratorTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp()
         generate.generate_all(cls.tmp)
+        cls.tmp_story = tempfile.mkdtemp()
+        generate.generate_story(cls.tmp_story)
 
     def test_knee_is_forward(self):
         hip, knee, ankle = (42, 57), (41, 77), (32, 94)
@@ -97,6 +100,65 @@ class GeneratorTests(unittest.TestCase):
         with open(os.path.join(self.tmp, "mechs", "falke.json")) as f:
             self.assertIn("rangefinder", json.load(f)["anchors"]["attach"])
 
+    def test_portraits(self):
+        ids = ["leon", "leon_child", "mira", "chad", "brann", "wolfram", "konrad", "ilse", "grau", "hq", "syndikat"]
+        files = sorted(os.listdir(os.path.join(self.tmp_story, "portraits")))
+        self.assertEqual(files, sorted(i + ".png" for i in ids))
+        for i in ids:
+            p = os.path.join(self.tmp_story, "portraits", i + ".png")
+            self.assertEqual(png_size(p), (48, 48), i)
+            rows = generate._png_payload(p)[1]
+            # RGBA, filter byte 0 per row: every alpha must be 255
+            stride = 1 + 48 * 4
+            alphas = {rows[r * stride + 1 + x * 4 + 3] for r in range(48) for x in range(48)}
+            self.assertEqual(alphas, {255}, i)
+        self.assertNotEqual(generate._png_payload(os.path.join(self.tmp_story, "portraits", "leon.png")),
+                            generate._png_payload(os.path.join(self.tmp_story, "portraits", "konrad.png")))
+
+    def test_story_backdrops(self):
+        ids = ["briefing_room", "village_fire", "memorial", "motor_pool", "records_room", "office",
+               "field_camp", "snow_pass", "causeway", "capital_street", "throne_gate", "parade_court"]
+        d = os.path.join(self.tmp_story, "backdrops")
+        self.assertEqual(sorted(os.listdir(d)), sorted(i + ".png" for i in ids))
+        seen = set()
+        for i in ids:
+            p = os.path.join(d, i + ".png")
+            self.assertEqual(png_size(p), (354, 142), i)
+            raw = generate._png_payload(p)[1]
+            seen.add(raw)
+            stride = 1 + 354 * 4
+            for r in range(142):
+                row = raw[r * stride + 1:(r + 1) * stride]
+                self.assertEqual(set(row[3::4]), {255}, i)
+                self.assertLess(max(max(row[0::4]), max(row[1::4]), max(row[2::4])), 235, i)  # no pure-white areas
+        self.assertEqual(len(seen), len(ids))
+
+    def test_ragnarok_mirrors_goliath(self):
+        g, r = chassis.GOLIATH["anchors"], chassis.RAGNAROK["anchors"]
+        self.assertEqual(set(r), set(g))
+        self.assertEqual(set(r["muzzles"]), set(g["muzzles"]))
+        self.assertEqual(set(r["attach"]), set(g["attach"]))
+        for k in ("muzzles", "attach"):
+            for name in g[k]:
+                if k == "muzzles":
+                    self.assertEqual(r[k][name]["grp"], g[k][name]["grp"])
+        self.assertLessEqual(chassis.RAGNAROK["w"], 152)
+        self.assertLessEqual(chassis.RAGNAROK["h"], 128)
+        self.assertGreater(chassis.RAGNAROK["w"] * chassis.RAGNAROK["h"], max(d["w"] * d["h"] for n, d in chassis.CHASSIS.items() if n != "ragnarok"))
+        with open(os.path.join(self.tmp, "mechs", "ragnarok.json")) as f:
+            meta = json.load(f)
+        with open(os.path.join(self.tmp, "mechs", "goliath.json")) as f:
+            self.assertEqual(meta["poses"], json.load(f)["poses"])
+        for suffix in ("coalition", "syndikat", "white"):
+            self.assertEqual(png_size(os.path.join(self.tmp, "mechs", "ragnarok_%s.png" % suffix)), (meta["w"] * len(meta["poses"]), meta["h"]))
+
+    def test_blackclaw_livery(self):
+        a = os.path.join(self.tmp, "mechs", "kommandant_blackclaw.png")
+        b = os.path.join(self.tmp, "mechs", "kommandant_syndikat.png")
+        self.assertEqual(png_size(a), png_size(b))
+        self.assertNotEqual(generate._png_payload(a)[1], generate._png_payload(b)[1])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "mechs", "vanguard_blackclaw.png")))
+
     def test_backdrops_and_font(self):
         for t in ("plain", "road", "river", "forest", "city", "mountain"):
             self.assertEqual(png_size(os.path.join(self.tmp, "backdrops", t + ".png")), (360, 152), t)
@@ -134,6 +196,9 @@ class GeneratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             generate.generate_all(d)
             self.assertEqual(all_files(d), all_files(self.tmp))
+        with tempfile.TemporaryDirectory() as d:
+            generate.generate_story(d)
+            self.assertEqual(all_files(d), all_files(self.tmp_story))
 
 
 if __name__ == "__main__":

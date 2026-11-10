@@ -27,22 +27,102 @@ func clear_units() -> void:
 
 func spawn_units_for_map(map_def: MapDefinition, grid_map: IsoGridMap) -> void:
 	clear_units()
-	var idx: int = 0
+	_spawn_serial = 0
 	for sp in map_def.spawns:
-		idx += 1
-		var chassis_id: String = str(sp.get("chassis", "vanguard"))
-		var callsign: String = str(sp.get("callsign", "UNIT-%d" % idx))
-		var pos: Vector2i = sp.get("pos", Vector2i.ZERO)
-		var fac_int: int = int(sp.get("faction", 0))
-		var fac: MechData.Faction = MechData.Faction.PLAYER if fac_int == 0 else MechData.Faction.AI
+		spawn_unit(sp, grid_map)
 
-		var m_data := GlobalState.create_mech_instance(chassis_id, fac, callsign, pos, str(idx))
-		m_data.facing = Vector2i(1, 0) if fac == MechData.Faction.PLAYER else Vector2i(-1, 0)
-		var m_node := MechUnit.new()
-		add_child(m_node)
-		m_node.setup(m_data, grid_map.grid_to_screen(pos, true))
-		units.append(m_node)
+var _spawn_serial: int = 0
+
+## Adds one walker from a spawn entry ({chassis, callsign, pos, faction} plus the story keys below)
+## and returns it. Story keys: "pilot" (StoryCast id), "group" (formation tag), "livery", "plot_armor",
+## "hold_until" (the walker stands its ground until that turn unless a foe closes with it),
+## "stats" ({MechData field: value}; hull, energy and fuel start full at the new maxima), "facing".
+func spawn_unit(sp: Dictionary, grid_map: IsoGridMap) -> MechUnit:
+	_spawn_serial += 1
+	var chassis_id: String = str(sp.get("chassis", "vanguard"))
+	var callsign: String = str(sp.get("callsign", "UNIT-%d" % _spawn_serial))
+	var pos: Vector2i = sp.get("pos", Vector2i.ZERO)
+	var fac: MechData.Faction = MechData.Faction.PLAYER if int(sp.get("faction", 0)) == 0 else MechData.Faction.AI
+
+	var m_data := GlobalState.create_mech_instance(chassis_id, fac, callsign, pos, str(_spawn_serial))
+	m_data.facing = sp.get("facing", Vector2i(1, 0) if fac == MechData.Faction.PLAYER else Vector2i(-1, 0))
+	m_data.pilot_id = str(sp.get("pilot", ""))
+	m_data.group = str(sp.get("group", ""))
+	m_data.livery = str(sp.get("livery", ""))
+	m_data.plot_armor = int(sp.get("plot_armor", 0))
+	m_data.hold_until_turn = int(sp.get("hold_until", 0))
+	var stats: Dictionary = sp.get("stats", {})
+	for k in stats:
+		m_data.set(k, stats[k])
+	if not stats.is_empty():
+		m_data.current_armor = m_data.max_armor
+		m_data.current_energy = m_data.max_energy
+		m_data.current_fuel = m_data.max_fuel
+	var m_node := MechUnit.new()
+	add_child(m_node)
+	m_node.setup(m_data, grid_map.grid_to_screen(pos, true))
+	units.append(m_node)
 	occupancy_epoch += 1
+	return m_node
+
+## The living walker flown by story pilot `pilot_id`, or null.
+func unit_of_pilot(pilot_id: String) -> MechUnit:
+	if pilot_id == "":
+		return null
+	for u in units:
+		if MechUnit.is_live(u) and u.mech_data.pilot_id == pilot_id:
+			return u
+	return null
+
+## Living walkers matching a story selector: {"pilot": id} or {"group": tag} (both may be given; a
+## walker matching either is included).
+func select_units(sel: Dictionary) -> Array[MechUnit]:
+	var out: Array[MechUnit] = []
+	var pilot: String = str(sel.get("pilot", ""))
+	var grp: String = str(sel.get("group", ""))
+	for u in units:
+		if not MechUnit.is_live(u):
+			continue
+		var m := u.mech_data
+		if (pilot != "" and m.pilot_id == pilot) or (grp != "" and m.group == grp):
+			out.append(u)
+	return out
+
+## Hands a walker to the other side (story side switch): it keeps its tile, hull and livery; its
+## order flags are cleared, so it can act at once if the switch happens in its new side's phase;
+## and any plot armour it carried for its old side is dropped (the script re-arms it if needed).
+func convert_unit(u: MechUnit, to_faction: MechData.Faction) -> void:
+	var m := u.mech_data
+	m.faction = to_faction
+	m.has_moved = false
+	m.has_attacked = false
+	m.is_entrenched = false
+	m.plot_armor = 0
+	u.refresh_plate()
+	occupancy_epoch += 1
+
+## Takes a walker off the map without wrecking it (a scripted withdrawal).
+func withdraw_unit(u: MechUnit) -> void:
+	units.erase(u)
+	occupancy_epoch += 1
+	if is_instance_valid(u):
+		u.queue_free()
+
+## The free tile nearest to `want` (itself when free), so a scripted reinforcement never lands on a walker.
+func free_tile_near(want: Vector2i, grid_map: IsoGridMap) -> Vector2i:
+	var occ := build_occupied_map()
+	if not occ.has(want) and grid_map.is_valid_coords(want):
+		return want
+	var best := want
+	var best_d: int = 1 << 30
+	for c: Vector2i in grid_map.tiles.keys():
+		if occ.has(c):
+			continue
+		var d: int = TerrainGrid.manhattan(c, want)
+		if d < best_d:
+			best_d = d
+			best = c
+	return best
 
 func get_unit_at(coords: Vector2i, exclude_unit: MechUnit = null) -> MechUnit:
 	for u in units:

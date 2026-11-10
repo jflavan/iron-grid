@@ -63,6 +63,13 @@ var has_attacked: bool = false
 var is_entrenched: bool = false
 var lore_blurb: String = ""
 
+# Story mode (all empty / zero in skirmish theaters)
+var pilot_id: String = ""      # StoryCast id of the named pilot: portrait in battle, story triggers
+var group: String = ""         # story tag shared by a formation (side-switch and scripted events target it)
+var livery: String = ""        # sprite livery override ("blackclaw"); "" = the faction's own sheet
+var plot_armor: int = 0        # hull floor a battle cannot take this walker below (a pilot the plot still needs)
+var hold_until_turn: int = 0   # a Syndikat walker with this set holds its tile until that turn, unless a foe is adjacent
+
 func _init(
 	p_id: String = "",
 	p_name: String = "",

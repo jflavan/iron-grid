@@ -140,6 +140,56 @@ GOLIATH = {
     },
 }
 
+# ---- Pz.Kpfw-X Ragnarök: Supreme Marshal Grau's super-heavy walker (twin siege barrels, command tower) ----
+RAGNAROK = {
+    "w": 152, "h": 128, "idle_ms": 260,
+    "idle": [[0, 0], [0, 1], [1, 2], [1, 4], [1, 3], [0, 1]],
+    "legs": [
+        {"hip": [52, 88], "knee": [58, 104], "ankle": [48, 120], "tw": 12, "sw": 10, "kr": 9, "k": "rear",
+         "foot": [[26, 120], [68, 120], [74, 127], [22, 127]]},
+        {"hip": [94, 88], "knee": [104, 105], "ankle": [96, 120], "tw": 12.5, "sw": 11, "kr": 10, "k": "hull", "piston": True,
+         "foot": [[72, 120], [118, 120], [126, 127], [68, 127]], "toe": [120, 123, 7, 4]},
+    ],
+    "parts": [
+        # three exhaust stacks, staggered
+        {"r": [14, 14, 7, 30], "k": "metal", "ph": [8, 18]}, {"r": [12, 11, 11, 4], "k": "dark"},
+        {"r": [24, 20, 6, 26], "k": "metal", "ph": [8]}, {"r": [22, 17, 10, 3], "k": "dark"},
+        {"r": [33, 26, 5, 20], "k": "metal"}, {"r": [31, 24, 9, 3], "k": "dark"},
+        {"leg": 0},
+        {"r": [40, 82, 72, 12], "k": "metal", "rivet": True},
+        {"r": [4, 52, 13, 30], "k": "dark", "ph": [9, 19]},
+        {"p": [[14, 44], [116, 44], [132, 58], [130, 88], [18, 88], [10, 64]], "k": "hull", "rivet": True, "pv": [34, 70], "ph": [24]},
+        {"r": [12, 82, 118, 8], "k": "dark", "rivet": True},
+        {"r": [16, 68, 110, 3], "k": "trim"},
+        {"p": [[26, 52], [38, 52], [32, 60]], "k": "trim"}, {"p": [[44, 52], [56, 52], [50, 60]], "k": "trim"},
+        # command tower
+        {"r": [58, 0, 1, 6], "k": "metal", "grp": "turret"},
+        {"p": [[50, 8], [72, 8], [76, 14], [76, 44], [46, 44], [46, 14]], "k": "hull", "rivet": True, "pv": [14], "grp": "turret"},
+        {"r": [44, 4, 34, 5], "k": "dark", "grp": "turret"},
+        {"r": [52, 16, 20, 3], "k": "glow", "grp": "turret"}, {"r": [52, 28, 20, 2], "k": "glow", "grp": "turret"},
+        {"r": [62, 1, 8, 3], "k": "metal", "grp": "turret"},
+        # siege casemate carrying the twin barrels
+        {"p": [[76, 20], [108, 20], [116, 28], [116, 46], [74, 46], [74, 28]], "k": "hull", "rivet": True, "pv": [20], "grp": "turret"},
+        {"r": [88, 26, 12, 3], "k": "glow", "grp": "turret"},
+        {"r": [104, 24, 9, 22], "k": "metal", "ph": [8], "grp": "gun"},
+        {"p": [[110, 22], [140, 10], [144, 18], [114, 30]], "k": "metal", "grp": "gun"},
+        {"p": [[110, 34], [140, 24], [144, 32], [114, 44]], "k": "metal", "grp": "gun"},
+        {"p": [[137, 7], [147, 4], [150, 20], [141, 22]], "k": "dark", "grp": "gun"},
+        {"p": [[137, 21], [147, 18], [150, 34], [141, 36]], "k": "dark", "grp": "gun"},
+        # Quad Flak-38 sponson
+        {"r": [116, 58, 14, 18], "k": "metal", "rivet": True},
+        {"r": [130, 59, 18, 2], "k": "metal"}, {"r": [130, 64, 18, 2], "k": "metal"},
+        {"r": [130, 69, 18, 2], "k": "metal"}, {"r": [130, 74, 18, 2], "k": "metal"},
+        {"leg": 1},
+    ],
+    "anchors": {
+        "feet": [72, 127], "hull": [70, 64], "glacis": [122, 56], "viewport": [98, 27],
+        "stacks": [[17, 11], [27, 17], [35, 24]],
+        "muzzles": {"morser_210": {"p": [147, 12], "grp": "gun"}, "flak_38": {"p": [147, 68], "grp": ""}},
+        "attach": {"slab": [140, 127]},
+    },
+}
+
 # ---- Sd.Kfz-22 Spähfalke: light recon strider, 50mm autocannon, gyro thrusters ----
 FALKE = {
     "w": 96, "h": 92, "idle_ms": 130,
@@ -270,7 +320,11 @@ CHASSIS = {
     "donner": DONNER,
     "kommandant": KOMMANDANT,
     "moloch": MOLOCH,
+    "ragnarok": RAGNAROK,  # boss-only; not one of the six playable chassis
 }
+
+# Extra palette sheets: (chassis, livery name in raster.FACTIONS)
+LIVERIES = [("kommandant", "blackclaw")]
 
 # Variant sheets: name -> (base chassis, flags, braced)
 VARIANTS = {

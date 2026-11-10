@@ -7,6 +7,12 @@ extends SceneTree
 ##                "manual" opens the field manual, "gameover" shows the debrief.
 ##   MainMenu:    "rules" opens Rules of Engagement on Chapter 2 (or "rules:<0-6>").
 ##   BattlePreview: auto-hides development overlay HUD.
+##   Story mode ("story[:<chapter id>[:<what>]]", e.g. "story:m03:briefing"):
+##     Story.tscn:  "story" is the campaign list (shown with five chapters cleared); with a chapter id
+##                  its opening dialog, <what> = a number skips that many lines, "card" shows the
+##                  chapter title card, "briefing" the mission briefing page.
+##     Battlefield: the story mission with its turn-1 dialog up; <what> = "battle" opens a skirmish
+##                  between Leon (or the first named pilot) and the nearest Syndikat walker.
 ## Needs a display (not --headless): the headless renderer produces empty images.
 
 func _initialize() -> void:
@@ -19,11 +25,60 @@ func _initialize() -> void:
 
 func _run(scene_path: String, out_path: String, state: String) -> void:
 	await process_frame
+	var story: PackedStringArray = state.split(":") if state.begins_with("story") else PackedStringArray()
+	if not story.is_empty():
+		# Loaded by path: this script compiles before the autoloads exist, so it must not name a
+		# class whose script (or whose dependencies) refers to GlobalState.
+		var gs := root.get_node("GlobalState")
+		var progress = load("res://scripts/story/StoryProgress.gd")
+		progress.path = "user://story_snapshot_save.json"
+		progress.reset()
+		progress.mark_cleared(4)
+		gs.story_chapter = load("res://scripts/story/StoryCampaign.gd").index_of(story[1]) if story.size() > 1 else -1
+		gs.story_stage = "pre" if gs.story_chapter >= 0 else "list"
 	change_scene_to_file(scene_path)
 	for i in 30:
 		await process_frame
 	var scene := current_scene
-	if scene != null:
+	if scene != null and not story.is_empty():
+		var what: String = story[2] if story.size() > 2 else ""
+		if scene.has_method("start_chapter"):
+			if what == "briefing":
+				scene.advance(true)
+			elif what != "card":
+				scene.advance()   # dismiss the title card
+				for i in int(what):
+					scene.advance()
+					scene.advance()
+				await create_timer(0.7).timeout   # let the scene fade in
+				scene.advance()   # finish typing the line on screen
+		elif scene.has_method("center_camera_on_map") and what == "battle":
+			var ui = scene.get("ui_overlay")
+			while ui.story_dialog_open():
+				ui.advance_story_dialog(true)
+			var uc = scene.get("unit_container")
+			var hero = uc.unit_of_pilot("leon")
+			if hero == null:
+				for u in uc.units:
+					if u.mech_data.pilot_id != "" and u.mech_data.faction == MechData.Faction.PLAYER:
+						hero = u
+						break
+			var foe = null
+			for u in uc.get_faction_units(MechData.Faction.AI):
+				if foe == null or u.mech_data.pilot_id != "":
+					foe = u
+			if hero != null and foe != null:
+				uc.move_unit(hero, foe.mech_data.grid_pos + Vector2i(-1, 0))
+				scene._execute_unit_attack(hero, foe, 0)
+				for i in 10:
+					await process_frame
+				while ui.story_dialog_open():
+					ui.advance_story_dialog(true)
+				for i in 60:
+					await process_frame
+		elif scene.has_method("center_camera_on_map"):
+			scene.get("ui_overlay").advance_story_dialog()   # finish typing the line on screen
+	elif scene != null:
 		if scene.has_method("center_camera_on_map"):
 			var ui = scene.get("ui_overlay")
 			match state:

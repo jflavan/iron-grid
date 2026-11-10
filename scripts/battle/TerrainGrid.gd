@@ -48,7 +48,7 @@ func get_tile_elevation(coords: Vector2i) -> int:
 
 ## Parses the map's terrain / elevation rows and objectives into tiles.
 func load_from_definition(map_def: MapDefinition) -> void:
-	for msg in map_def.validate():
+	for msg in map_def.validate(ChassisCatalog.story_ids()):
 		push_error(msg)
 	_width = map_def.width
 	_height = map_def.height

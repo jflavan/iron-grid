@@ -135,6 +135,14 @@ static func frame(ci: CanvasItem, r: Rect2, border: Color = C_RULE) -> void:
 	ci.draw_rect(Rect2(r.position, Vector2(1, r.size.y)), border)
 	ci.draw_rect(Rect2(r.position + Vector2(r.size.x - 1, 0), Vector2(1, r.size.y)), border)
 
+## A 1px outline only (nothing filled): frames a picture that is already drawn.
+static func frame_outline(ci: CanvasItem, r: Rect2, border: Color = C_RULE) -> void:
+	r = Rect2(r.position.round(), r.size.round())
+	ci.draw_rect(Rect2(r.position, Vector2(r.size.x, 1)), border)
+	ci.draw_rect(Rect2(r.position + Vector2(0, r.size.y - 1), Vector2(r.size.x, 1)), border)
+	ci.draw_rect(Rect2(r.position, Vector2(1, r.size.y)), border)
+	ci.draw_rect(Rect2(r.position + Vector2(r.size.x - 1, 0), Vector2(1, r.size.y)), border)
+
 static func hrule(ci: CanvasItem, x: float, y: float, w: float) -> void:
 	ci.draw_rect(Rect2(roundf(x), roundf(y), roundf(w), 1), C_RULE)
 
@@ -150,8 +158,8 @@ static func gauge(ci: CanvasItem, r: Rect2, ratio: float, col: Color) -> void:
 
 ## Draws a battle sprite's idle frame standing on the bottom edge of cell, centred horizontally.
 ## scale is the CrtUI pixel scale the caller passed to begin(); the transform is restored after.
-static func mech(ci: CanvasItem, chassis: String, faction: int, cell: Rect2, mirrored: bool, t_ms: float, scale: int) -> void:
-	var tex := MechSpriteBank.get_sheet(chassis, faction)
+static func mech(ci: CanvasItem, chassis: String, faction: int, cell: Rect2, mirrored: bool, t_ms: float, scale: int, livery: String = "") -> void:
+	var tex := MechSpriteBank.get_livery_sheet(chassis, faction, livery)
 	if tex == null:
 		return
 	var src := MechSpriteBank.frame_rect(chassis, MechSpriteBank.idle_pose(chassis, t_ms))

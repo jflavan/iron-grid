@@ -21,6 +21,9 @@ SHARED = {
 FACTIONS = {
     "coalition": {"hull": ["#b4c46a", "#6f7f3c", "#434d22"], "trim": ["#f6cc6a", "#e0a030", "#9a6a18"], "glow": "#ffe070"},
     "syndikat": {"hull": ["#d4604c", "#8e2a26", "#541613"], "trim": ["#a8aeb6", "#6d737c", "#3e4248"], "glow": "#ff5040"},
+    # Black Claw livery (Wolfram's Kaiserstuhl); not part of generate.FACTIONS, only emitted per-sheet
+    "blackclaw": {"hull": ["#5a5e68", "#2a2c33", "#121317"], "trim": ["#f0485a", "#c01c30", "#6e0c1a"], "glow": "#ff2030",
+                  "lens": ["#ffc0c0", "#e02030", "#601018"]},
 }
 OUTLINE_HEX = "#16120e"
 SPECULAR_HEX = "#f0f0e8"
@@ -37,7 +40,7 @@ def palette_for(faction):
         "dark": SHARED["dark"],
         "brass": ["#f0c060", "#d8a040", "#8a5a20"],
         "steam": ["#e8ecee", "#c4cacc", "#8e9496"],
-        "lens": ["#d8f0ff", "#68a8d0", "#284860"],
+        "lens": f.get("lens", ["#d8f0ff", "#68a8d0", "#284860"]),
     }
     return {k: [hex_rgb(c) for c in v] for k, v in pal.items()}
 

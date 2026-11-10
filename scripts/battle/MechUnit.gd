@@ -10,7 +10,7 @@ var is_selected: bool = false
 var _anim_time: float = 0.0
 var _is_walking: bool = false
 var _since_redraw: float = 0.0
-# Name plate text and width, fixed per walker (the callsign never changes after setup).
+# Name plate text and width, cached per walker (refresh_plate() after a rename).
 var _plate_name: String = ""
 var _plate_w: float = 48.0
 
@@ -26,6 +26,10 @@ func setup(data: MechData, screen_pos: Vector2) -> void:
 	_anim_time = randf() * 10.0
 	# Spread the walkers' 30 Hz redraws over 8 phases so a big army doesn't all re-record in one frame.
 	_since_redraw = float(get_index() % 8) / 8.0 / AMBIENT_FPS
+	refresh_plate()
+
+## Re-reads the name plate from the callsign (setup, and a story event that renames the walker).
+func refresh_plate() -> void:
 	_plate_name = CrtUI.sanitize(mech_data.callsign.split(" ")[0])
 	_plate_w = maxf(48.0, float(PixelFont.text_width(_plate_name) + 14))
 	queue_redraw()
@@ -56,7 +60,8 @@ static func is_live(u) -> bool:
 	if not is_instance_valid(u):
 		return false
 	var unit: MechUnit = u   # typed from here on: the member reads below are the hot part
-	return unit.mech_data != null and unit.mech_data.is_alive()
+	# A walker a script took off the map is freed at the end of the frame: not live from that moment
+	return unit.mech_data != null and unit.mech_data.is_alive() and not unit.is_queued_for_deletion()
 
 func animate_move_along_screen_points(points: Array[Vector2], on_complete: Callable) -> void:
 	if points.size() <= 1:
@@ -137,7 +142,7 @@ func _draw() -> void:
 	var flip_h: bool = ((mech_data.facing.x - mech_data.facing.y) < 0)
 	if flip_h:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2(-1.0, 1.0))
-	MechSilhouette.draw(self, Vector2(0, 6), mech_data.chassis_id, mech_data.faction, 0.78, _anim_time, dim_factor)
+	MechSilhouette.draw(self, Vector2(0, 6), mech_data.chassis_id, mech_data.faction, 0.78, _anim_time, dim_factor, mech_data.livery)
 	if flip_h:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0, 1.0))
 

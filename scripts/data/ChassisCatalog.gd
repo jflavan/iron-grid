@@ -102,3 +102,27 @@ static func build(ability_catalog: Dictionary) -> Dictionary:
 	]
 	chassis_catalog["moloch"] = moloch
 	return chassis_catalog
+
+## Story-only chassis (not in ORDER: never in the hangar, the rules pages or a skirmish theater).
+const BOSS_ORDER: Array[String] = ["ragnarok"]
+
+static func build_bosses(ability_catalog: Dictionary) -> Dictionary:
+	var bosses: Dictionary = {}
+	var ragnarok := MechData.new(
+		"ragnarok", "Pz.Kpfw-X Ragnarök", "RAGNARÖK", "ragnarok", "Super-Heavy Throne Walker",
+		MechData.Faction.AI, Vector2i.ZERO,
+		240, 46, 47, 10, 1, 4,
+		"Supreme Marshal Grau's personal land-dreadnought: twin siege barrels on a walking fortress. Only one was ever built.",
+		11, 2, 10, 18, 4, "flak_38"
+	)
+	ragnarok.abilities = [
+		ability_catalog["morser_210"].duplicate_ability(),
+		ability_catalog["ferro_bulkhead"].duplicate_ability(),
+		ability_catalog["flak_38"].duplicate_ability()
+	]
+	bosses["ragnarok"] = ragnarok
+	return bosses
+
+## Every chassis id a story map may spawn.
+static func story_ids() -> Array:
+	return ORDER + BOSS_ORDER

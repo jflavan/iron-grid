@@ -14,6 +14,7 @@ signal action_end_turn_requested()
 signal action_center_camera_requested()
 signal action_return_menu_requested()
 signal action_restart_mission_requested()
+signal action_story_continue_requested()
 signal skirmish_modal_closed(result: SkirmishEngine.SkirmishResult)
 ## A modal opened or closed (skirmish, field manual or debrief): Battlefield gates the camera on it.
 signal modal_changed()
@@ -62,6 +63,16 @@ var show_manual_modal: bool = false:
 	set(v): show_manual_modal = v; _mark_dirty(); _manual_cache = []; modal_changed.emit()   # re-read balance values on open
 var show_game_over_modal: bool = false:
 	set(v): show_game_over_modal = v; _mark_dirty(); modal_changed.emit()
+## Story mode: the debrief of a won mission offers CONTINUE (on to the post-mission scene).
+var story_mode: bool = false
+## Story pilots whose loss fails the running mission (the unit panel marks them).
+var story_heroes: Array = []
+# Mid-mission story dialog (a modal): the lines being shown, the one on screen, the typewriter's
+# progress through it, and what to run when the last line is dismissed.
+var _story_lines: Array = []
+var _story_idx: int = 0
+var _story_chars: float = 0.0
+var _story_done: Callable = Callable()
 var _banner_timer: float = 0.0
 var _banner_text: String = ""
 var _anim_time: float = 0.0
@@ -107,6 +118,11 @@ func _process(delta: float) -> void:
 		return
 	_anim_time += delta
 	_since_redraw += delta
+	if story_dialog_open():
+		var before := int(_story_chars)
+		_story_chars += delta * StoryDialog.TYPE_CPS
+		StoryDialog.type_tick(before, int(_story_chars), StoryDialog.char_count(_story_lines[_story_idx], _virtual_size()))
+		_mark_dirty()   # the typewriter and the blinking cursor redraw every frame while a line is up
 	var banner_live: bool = _banner_timer > 0.0   # true for the frame it expires too, to erase it
 	if banner_live:
 		_banner_timer = maxf(0.0, _banner_timer - delta)
@@ -127,6 +143,54 @@ func trigger_phase_banner(text: String) -> void:
 func show_skirmish_session(session: SkirmishEngine.BattleSession) -> void:
 	skirmish_modal.start_session(session)
 
+## Shows portrait dialog `lines` (StoryDialog line dicts) over the map as a modal; `done` runs once
+## when the last line is dismissed (or the dialog is skipped).
+func show_story_dialog(lines: Array, done: Callable) -> void:
+	show_manual_modal = false
+	_story_lines = lines
+	_story_idx = 0
+	_story_chars = 0.0
+	_story_done = done
+	_mark_dirty()
+	modal_changed.emit()
+
+func story_dialog_open() -> bool:
+	return not _story_lines.is_empty()
+
+## Drops the dialog without running its callback (mission restart).
+func close_story_dialog() -> void:
+	if story_dialog_open():
+		_story_lines = []
+		_story_done = Callable()
+		_mark_dirty()
+		modal_changed.emit()
+
+## Space / Enter / click: finish typing the line, or move on to the next one. `skip_all` (Esc)
+## dismisses every remaining line.
+func advance_story_dialog(skip_all: bool = false) -> void:
+	if not story_dialog_open():
+		return
+	var total := StoryDialog.char_count(_story_lines[_story_idx], _virtual_size())
+	if not skip_all and int(_story_chars) < total:
+		_story_chars = float(total)
+		_mark_dirty()
+		return
+	SoundManager.play("ui_click")
+	_story_idx += 1
+	_story_chars = 0.0
+	_mark_dirty()
+	if skip_all or _story_idx >= _story_lines.size():
+		var done := _story_done
+		_story_lines = []
+		_story_done = Callable()
+		modal_changed.emit()
+		if done.is_valid():
+			done.call()
+
+func _virtual_size() -> Vector2:
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	return CrtUI.virtual_size(vp, CrtUI.pixel_scale(vp))
+
 func trigger_game_over() -> void:
 	show_manual_modal = false   # the debrief replaces the manual; leaving it up would hide the debrief's rows
 	show_game_over_modal = true
@@ -135,11 +199,11 @@ func trigger_game_over() -> void:
 
 ## True while any modal (skirmish battle, debrief or field manual) is up.
 func modal_open() -> bool:
-	return skirmish_modal.visible or show_game_over_modal or show_manual_modal
+	return skirmish_modal.visible or show_game_over_modal or show_manual_modal or story_dialog_open()
 
 ## True while a modal that owns ALL input is up (skirmish battle, debrief): the manual still takes H / Esc.
 func modal_blocks_map() -> bool:
-	return skirmish_modal.visible or show_game_over_modal
+	return skirmish_modal.visible or show_game_over_modal or story_dialog_open()
 
 ## Closes the manual silently (Esc); a no-op when it is not open.
 func close_manual() -> void:
@@ -176,6 +240,19 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey or event is InputEventMouseButton:
 		_mark_dirty()
+	if story_dialog_open() and not show_game_over_modal:
+		# The dialog owns the screen: any confirm key or click advances it, Esc skips the scene.
+		if event is InputEventKey and event.pressed and not event.echo:
+			get_viewport().set_input_as_handled()
+			if event.keycode == KEY_ESCAPE:
+				advance_story_dialog(true)
+			elif event.keycode in [KEY_SPACE, KEY_ENTER, KEY_KP_ENTER]:
+				advance_story_dialog()
+		elif event is InputEventMouseButton and event.pressed:
+			get_viewport().set_input_as_handled()
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				advance_story_dialog()
+		return
 	if event is InputEventMouseMotion:
 		var id := root_ctrl.track_pointer(event)
 		if id.begins_with("debrief:"):
@@ -234,8 +311,11 @@ func _activate(id: String) -> void:
 			action_end_turn_requested.emit()
 		"debrief:0":
 			SoundManager.play("ui_confirm")
-			show_game_over_modal = false
-			action_restart_mission_requested.emit()
+			if _story_won():
+				action_story_continue_requested.emit()   # leaves the scene; the modal goes with it
+			else:
+				show_game_over_modal = false
+				action_restart_mission_requested.emit()
 		"debrief:1":
 			SoundManager.play("ui_click")
 			action_return_menu_requested.emit()
@@ -314,10 +394,18 @@ func _on_root_draw() -> void:
 		# Registered after the panel's own blocker (the last hotspot hit wins), so the MANUAL [H]
 		# button still closes the manual even where the panel reaches up over it.
 		root_ctrl.hot.add("manual", manual_rect)
+	if story_dialog_open() and not show_game_over_modal:
+		root_ctrl.hot.clear()
+		root_ctrl.hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
+		StoryDialog.draw(root_ctrl, v, _story_lines[_story_idx], int(_story_chars), int(_anim_time / 0.3) % 2 == 0)
 	if show_game_over_modal:
 		root_ctrl.hot.clear()
 		root_ctrl.hot.add(BLOCKER, Rect2(Vector2.ZERO, v))
 		_draw_game_over_modal(v)
+
+## A story mission that was won: its debrief leads on to the post-mission scene.
+func _story_won() -> bool:
+	return story_mode and GlobalState.last_battle_winner == 0
 
 func _draw_top_bar(v: Vector2) -> void:
 	_panel(Rect2(0, 0, v.x, TOP_H))
@@ -361,7 +449,10 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	var x := rect.position.x + 6
 	var w := rect.size.x - 12
 	var y := rect.position.y + 6
-	_t("8TH IRON DIVISION" if is_player else "KRIEGS-SYNDIKAT", Vector2(x, y), accent)
+	# A named story pilot is shown by name; one the mission cannot lose carries a warning tag
+	_t(CrtUI.fit(StoryCast.roster_name(m.pilot_id), w) if m.pilot_id != "" else ("8TH IRON DIVISION" if is_player else "KRIEGS-SYNDIKAT"), Vector2(x, y), accent)
+	if story_heroes.has(m.pilot_id) and is_player:
+		_tr("MUST LIVE" if m.plot_armor > 0 else "LAST CHANCE", rect.end.x - 6, y, CrtUI.C_CURSOR if m.plot_armor > 0 else CrtUI.C_HOSTILE)
 	y += 10
 	_t(CrtUI.fit(m.callsign, w), Vector2(x, y), CrtUI.C_NAME)
 	y += 10
@@ -373,7 +464,7 @@ func _draw_unit_panel(rect: Rect2, m: MechData) -> void:
 	# Portrait: the battle sprite at 1:1, in its own frame, facing the way it fights.
 	var port := Rect2(x, y, w, cell.y + 8)
 	CrtUI.frame(root_ctrl, port)
-	CrtUI.mech(root_ctrl, m.chassis_id, int(m.faction), Rect2(x, y + 4, w, cell.y), not is_player, _anim_time * 1000.0, root_ctrl.px_scale)
+	CrtUI.mech(root_ctrl, m.chassis_id, int(m.faction), Rect2(x, y + 4, w, cell.y), not is_player, _anim_time * 1000.0, root_ctrl.px_scale, m.livery)
 	_portraits.append(m.chassis_id)
 	y += port.size.y + 4
 	var status_txt := ("ENTRENCHED %+d%% DEF" % Rules.entrench_def_pct(int(m.faction))) if m.is_entrenched else ("READY TO STRIKE" if (m.has_moved and not m.has_attacked) else ("ORDER COMPLETE" if m.is_order_complete() else "SYSTEMS READY"))
@@ -612,7 +703,10 @@ func _draw_game_over_modal(v: Vector2) -> void:
 	_panel(r, col)
 	var cx := r.position.x + w / 2.0
 	var y := r.position.y + 12
-	CrtUI.text_centered(root_ctrl, "OPERATION VICTORY // SECTOR SECURED" if won else "OPERATION FAILED // COALITION ROUTED", cx, y, col)
+	var title: String = "OPERATION VICTORY // SECTOR SECURED" if won else "OPERATION FAILED // COALITION ROUTED"
+	if GlobalState.last_battle_title != "":
+		title = GlobalState.last_battle_title
+	CrtUI.text_centered(root_ctrl, title, cx, y, col)
 	y += 20
 	for l in reason:
 		CrtUI.text_centered(root_ctrl, l, cx, y, CrtUI.C_NUM)
@@ -621,6 +715,8 @@ func _draw_game_over_modal(v: Vector2) -> void:
 	CrtUI.text_centered(root_ctrl, "TURNS ELAPSED: %d" % GlobalState.turn_number, cx, y, CrtUI.C_LABEL_DIM)
 	y += 20
 	var labels := ["REDEPLOY OPERATION", "RETURN TO COMMAND HQ"]
+	if story_mode:
+		labels[0] = "CONTINUE THE STORY" if won else "RETRY MISSION"
 	var row_w := PixelFont.text_width(labels[1]) + 12
 	for i in labels.size():
 		_row("debrief:%d" % i, labels[i], Vector2(roundf(cx - row_w / 2.0), y + i * CrtUI.ROW), row_w, "", _debrief_row == i)

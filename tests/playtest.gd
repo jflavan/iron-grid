@@ -264,6 +264,10 @@ func _play_mission(map_idx: int, policy: String) -> void:
 		if GlobalState.current_phase == GlobalState.TurnPhase.GAME_OVER:
 			break
 
+		if bf.ui_overlay.story_dialog_open():
+			bf.ui_overlay.advance_story_dialog(true)   # story missions: skip the mid-mission dialog
+			continue
+
 		var modal: BattleScreen = bf.ui_overlay.skirmish_modal
 		if modal.visible:
 			if not last_skirmish_shown:

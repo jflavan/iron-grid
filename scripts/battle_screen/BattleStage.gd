@@ -760,12 +760,13 @@ func _draw() -> void:
 		c.call(self)
 	for n in numbers:
 		BattleFX.damage_number(self, int(n["value"]), n["pos"], float(n["age"]), String(n.get("label", "")), bool(n.get("crit", false)))
+	_draw_pilots()
 	_draw_menu()
 	_draw_banner()
 
 func _draw_mech(m: MechView) -> void:
 	var pose := pose_of(m)
-	var tex := MechSpriteBank.get_sheet(sheet_of(m), m.faction)
+	var tex := MechSpriteBank.get_livery_sheet(sheet_of(m), m.faction, m.data.livery)
 	if tex == null:
 		return
 	var src := MechSpriteBank.frame_rect(sheet_of(m), pose)
@@ -813,6 +814,20 @@ func _draw_mech(m: MechView) -> void:
 			BattleFX.exhaust(self, point(m, MechSpriteBank.STACK_NAMES[i] if i < MechSpriteBank.STACK_NAMES.size() else "stacks/%d" % i), clock, i * 0.37 + (0.2 if m.side == "def" else 0.0), m.dir)
 	elif sink > 0.0:
 		BattleFX.exhaust(self, point(m, "hull") + Vector2(0, sink), clock * 0.7, 0.1, m.dir)
+
+## Story pilots: the portrait of a named pilot in the top corner on their walker's side.
+func _draw_pilots() -> void:
+	for m: MechView in _mech_list:
+		if m.data.pilot_id == "":
+			continue
+		var tex := StoryCast.portrait(m.data.pilot_id)
+		if tex == null:
+			continue
+		var s := float(StoryCast.PORTRAIT_SIZE)
+		var pos := Vector2(W - s - 4.0, 34.0) if m.mirrored else Vector2(4.0, 34.0)   # under the top banner
+		var hostile: bool = m.faction == MechData.Faction.AI
+		draw_rect(Rect2(pos - Vector2.ONE, Vector2(s + 2, s + 2)), CrtUI.C_HOSTILE if hostile else CrtUI.C_BORDER)
+		draw_texture_rect(tex, Rect2(pos, Vector2(s, s)), false)
 
 func _begin_mech_xform(m: MechView, pos: Vector2, size: Vector2) -> void:
 	if m.mirrored:

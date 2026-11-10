@@ -5,7 +5,7 @@ extends CrtScreen
 ## the Rules of Engagement page (RulesContent) opened from the header.
 ## Drawn in the battle screen's CRT menu style (CrtUI) at an integer pixel scale.
 ## Controls: Up/Down or 1-3 pick a theater, Left/Right pick a chassis, Enter/Space launch, R opens
-## the rules. On the rules page: Up/Down or 1-7 pick a chapter, Esc/Backspace returns.
+## the rules, S opens Story Mode (StoryScreen). On the rules page: Up/Down or 1-7 pick a chapter, Esc/Backspace returns.
 ## Every menu row is also clickable.
 
 const HANGAR_W := 300       # right column width (virtual px); fits two of the largest sprites side by side
@@ -102,6 +102,8 @@ func _key_action(keycode: int) -> String:
 			return "chassis:%d" % (selected_chassis_idx + 1)
 		KEY_R:
 			return "rules"
+		KEY_S:
+			return "story"
 	if keycode >= KEY_1 and keycode < KEY_1 + GlobalState.maps.size():
 		return "map:%d" % (keycode - KEY_1)
 	return ""
@@ -123,6 +125,11 @@ func _activate(id: String) -> void:
 		_select_chassis(int(id.substr(8)))
 	elif id == "launch":
 		_on_launch_pressed()
+	elif id == "story":
+		SoundManager.play("ui_confirm")
+		GlobalState.story_chapter = -1
+		GlobalState.story_stage = "list"
+		get_tree().change_scene_to_file(GlobalState.STORY_SCENE)
 	elif id == "rules":
 		SoundManager.play("ui_click")
 		show_rules = true
@@ -182,6 +189,10 @@ func _draw() -> void:
 	var rules_right := v.x - 16 - PixelFont.text_width("EXIT") - 24
 	_link("rules", rules_lbl, rules_right, 12, Rect2(rules_right - PixelFont.text_width(rules_lbl) - 12, 9, PixelFont.text_width(rules_lbl) + 16, 12))
 
+	var story_lbl := "STORY MODE [S]"
+	var story_right := rules_right - PixelFont.text_width(rules_lbl) - 24
+	_link("story", story_lbl, story_right, 12, Rect2(story_right - PixelFont.text_width(story_lbl) - 12, 9, PixelFont.text_width(story_lbl) + 16, 12))
+
 	_draw_theaters(Rect2(6, 40, v.x - 16 - HANGAR_W, v.y - 46))
 	_draw_hangar(Rect2(v.x - 6 - HANGAR_W, 40, HANGAR_W, v.y - 46))
 
@@ -209,7 +220,7 @@ func _draw_theaters(p: Rect2) -> void:
 
 	var map_def: MapDefinition = GlobalState.maps[selected_map_idx]
 	var recon := Rect2(right - (map_def.width * RECON_CELL.x + 12), 46, map_def.width * RECON_CELL.x + 12, map_def.height * RECON_CELL.y + 24)
-	_draw_recon(recon, map_def)
+	draw_recon(self, recon, map_def)
 
 	var y := maxf(64 + GlobalState.maps.size() * 14, recon.end.y) + 6
 	CrtUI.hrule(self, x, y, p.size.x - 16)
@@ -235,20 +246,22 @@ func _draw_theaters(p: Rect2) -> void:
 	CrtUI.text(self, "LAUNCH OPERATION [ENTER]", launch.position + Vector2(20, 9), CrtUI.C_CURSOR if hot.hovered == "launch" else CrtUI.C_NAME)
 	hot.add("launch", launch)
 
-func _draw_recon(r: Rect2, map_def: MapDefinition) -> void:
-	CrtUI.frame(self, r)
-	CrtUI.text(self, "RECON %dX%d" % [map_def.width, map_def.height], r.position + Vector2(6, 5), CrtUI.C_LABEL)
+## The satellite recon preview of a map (terrain, elevation shading, both sides' spawns) in frame `r`.
+## Static: the Story screen draws the same preview.
+static func draw_recon(ci: CanvasItem, r: Rect2, map_def: MapDefinition) -> void:
+	CrtUI.frame(ci, r)
+	CrtUI.text(ci, "RECON %dX%d" % [map_def.width, map_def.height], r.position + Vector2(6, 5), CrtUI.C_LABEL)
 	var ox := r.position.x + 6
 	var oy := r.position.y + 18
 	for y in map_def.height:
 		for x in map_def.width:
 			var col: Color = RECON_COLORS[map_def.terrain_at(x, y)].lightened(float(map_def.elevation_at(x, y) - 1) * 0.08)
-			draw_rect(Rect2(ox + x * RECON_CELL.x, oy + y * RECON_CELL.y, RECON_CELL.x - 1, RECON_CELL.y - 1), col)
+			ci.draw_rect(Rect2(ox + x * RECON_CELL.x, oy + y * RECON_CELL.y, RECON_CELL.x - 1, RECON_CELL.y - 1), col)
 	for sp in map_def.spawns:
 		var pos: Vector2i = sp["pos"]
 		var c := Vector2(ox + pos.x * RECON_CELL.x + RECON_CELL.x / 2 - 2, oy + pos.y * RECON_CELL.y + RECON_CELL.y / 2 - 2)
-		draw_rect(Rect2(c, Vector2(4, 4)), Color.BLACK)
-		draw_rect(Rect2(c + Vector2(1, 1), Vector2(2, 2)), CrtUI.C_LABEL if int(sp["faction"]) == 0 else CrtUI.C_HOSTILE)
+		ci.draw_rect(Rect2(c, Vector2(4, 4)), Color.BLACK)
+		ci.draw_rect(Rect2(c + Vector2(1, 1), Vector2(2, 2)), CrtUI.C_LABEL if int(sp["faction"]) == 0 else CrtUI.C_HOSTILE)
 
 func _draw_hangar(p: Rect2) -> void:
 	CrtUI.panel(self, p)

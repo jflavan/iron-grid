@@ -687,8 +687,11 @@ class BattleSession extends RefCounted:
 		is_finished = true
 		turn_queue.clear()
 
-		result.atk_armor_after = maxi(0, atk_state.hp)
-		result.def_armor_after = maxi(0, def_state.hp)
+		# A story pilot the plot still needs keeps a sliver of hull (MechData.plot_armor, 0 elsewhere).
+		# Floored here, before the outcome is read, so the result, its headline and the battle
+		# screen all agree that the walker is still standing.
+		result.atk_armor_after = maxi(result.attacker.plot_armor, atk_state.hp)
+		result.def_armor_after = maxi(result.defender.plot_armor, def_state.hp)
 		result.atk_energy_after = clampi(atk_state.en, 0, atk_state.max_en)
 		result.def_energy_after = clampi(def_state.en, 0, def_state.max_en)
 

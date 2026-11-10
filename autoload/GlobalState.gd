@@ -6,6 +6,7 @@ extends Node
 
 const MAIN_MENU_SCENE := "res://scenes/MainMenu.tscn"
 const BATTLEFIELD_SCENE := "res://scenes/Battlefield.tscn"
+const STORY_SCENE := "res://scenes/Story.tscn"
 
 enum TurnPhase {
 	PLAYER_PHASE = 0,
@@ -22,6 +23,16 @@ var turn_number: int = 1
 var selected_map_index: int = 0
 var last_battle_winner: int = -1 # -1 = None, 0 = Player, 1 = AI
 var last_battle_reason: String = ""
+var last_battle_title: String = ""   # debrief headline override (a scripted story ending); "" = the stock one
+
+## Story mode: index into StoryCampaign.chapters() of the chapter being played, -1 in a skirmish theater.
+var story_chapter: int = -1
+## Where the Story scene resumes: "list" (campaign screen), "pre" (run the chapter) or "post" (debrief after a won mission).
+var story_stage: String = "list"
+## Campaign progress when the running story mission was launched (StoryScreen tells a replay of a
+## cleared chapter from a first win by it).
+var story_cleared_at_launch: int = 0
+var boss_catalog: Dictionary = {}
 
 var ability_catalog: Dictionary = {}
 var chassis_catalog: Dictionary = {}
@@ -41,7 +52,26 @@ func _ready() -> void:
 		set_battle_seed(int(env_seed))
 	ability_catalog = AbilityCatalog.build()
 	chassis_catalog = ChassisCatalog.build(ability_catalog)
+	boss_catalog = ChassisCatalog.build_bosses(ability_catalog)
 	maps = MapCatalog.build()
+
+## The story mission being played ({} in a skirmish theater or on a cutscene chapter).
+func story_mission() -> Dictionary:
+	if story_chapter < 0:
+		return {}
+	var ch: Dictionary = StoryCampaign.chapter(story_chapter)
+	return ch if ch.get("kind", "") == "mission" else {}
+
+## The map Battlefield loads: the story mission's own map, else the selected theater.
+func active_map() -> MapDefinition:
+	var ms := story_mission()
+	if not ms.is_empty():
+		return ms["map"]
+	return maps[clampi(selected_map_index, 0, maps.size() - 1)]
+
+func leave_story() -> void:
+	story_chapter = -1
+	story_stage = "list"
 
 func set_battle_seed(p_seed: int) -> void:
 	battle_seed = p_seed
@@ -60,6 +90,7 @@ func reset_battle_state() -> void:
 	_battle_seed_counter = 0  # every mission replays from its first battle seed
 	last_battle_winner = -1
 	last_battle_reason = ""
+	last_battle_title = ""
 	combat_log.clear()
 	add_log("SYSTEM BOOT // OPERATION: IRON GRID TACTICAL LINK ESTABLISHED.")
 
@@ -88,7 +119,7 @@ func get_phase_name() -> String:
 	return "UNKNOWN"
 
 func create_mech_instance(chassis_id: String, faction: MechData.Faction, callsign: String, pos: Vector2i, unique_suffix: String = "") -> MechData:
-	var template: MechData = chassis_catalog.get(chassis_id, chassis_catalog["vanguard"])
+	var template: MechData = boss_catalog.get(chassis_id, chassis_catalog.get(chassis_id, chassis_catalog["vanguard"]))
 	var inst := template.duplicate_mech()
 	inst.unit_id = "%s_%s_%s" % [chassis_id, "P" if faction == MechData.Faction.PLAYER else "E", unique_suffix]
 	inst.faction = faction

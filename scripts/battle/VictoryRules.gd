@@ -11,13 +11,25 @@ static func evaluate(map_def: MapDefinition, grid_map: IsoGridMap, player_count:
 		player_obj: int, total_obj: int, turn_number: int, end_of_full_turn: bool) -> Dictionary:
 	# 1. Total annihilation
 	if ai_count == 0 and player_count > 0:
+		# A story map words its own victory: its last enemy may have withdrawn rather than been wrecked
+		if map_def != null and map_def.win_text != "":
+			return _result(0, map_def.win_text)
 		return _result(0, "All Kriegs-Syndikat Armored Walkers have been destroyed!")
 	if player_count == 0:
 		return _result(1, "All 8th Iron Division Walkers were lost in action.")
 	if map_def == null or not end_of_full_turn:
 		return {}
 
-	# 2. Strategy-specific objective checks
+	# 2. Strategy-specific objective checks (a story map may reword the outcome)
+	var res := _objective_result(map_def, grid_map, player_count, ai_count, player_obj, total_obj, turn_number)
+	if not res.is_empty():
+		var custom: String = map_def.win_text if res["winner"] == 0 else map_def.lose_text
+		if custom != "":
+			res["reason"] = custom
+	return res
+
+static func _objective_result(map_def: MapDefinition, grid_map: IsoGridMap, player_count: int, ai_count: int,
+		player_obj: int, total_obj: int, turn_number: int) -> Dictionary:
 	var turn_limit_reached: bool = turn_number >= map_def.turn_limit
 	match map_def.strategy_mode:
 		MapDefinition.StrategyMode.OFFENSE:
@@ -47,6 +59,9 @@ static func evaluate(map_def: MapDefinition, grid_map: IsoGridMap, player_count:
 				if player_obj * 2 > total_obj or (player_obj * 2 == total_obj and player_count >= ai_count):
 					return _result(0, "Coalition forces secured strategic superiority across the Rhine-Fulda crossing!")
 				return _result(1, "Syndicate forces held the majority of bridgeheads at Turn limit.")
+		MapDefinition.StrategyMode.ASSAULT:
+			if turn_limit_reached:
+				return _result(1, "The Syndicate line was still standing when Turn %d ended." % map_def.turn_limit)
 	return {}
 
 static func _result(winner: int, reason: String) -> Dictionary:
