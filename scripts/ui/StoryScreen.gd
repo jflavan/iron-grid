@@ -80,6 +80,7 @@ func _process(delta: float) -> void:
 # ---------------------------------------------------------------- flow
 func _show_list() -> void:
 	mode = MODE_LIST
+	MusicManager.play(MusicCues.CAMPAIGN)
 	GlobalState.story_chapter = -1
 	GlobalState.story_stage = "list"
 	sel = clampi(cleared, 0, StoryCampaign.chapters().size() - 1)
@@ -101,6 +102,7 @@ func start_chapter(i: int) -> void:
 	else:
 		_play(ch["pre"], str(ch.get("bg", "briefing_room")), func():
 			mode = MODE_BRIEFING
+			MusicManager.play(MusicCues.CAMPAIGN)
 			dirty = true
 		, card)
 
@@ -127,6 +129,7 @@ func _play(lines: Array, bg: String, then: Callable, card: Dictionary = {}) -> v
 		then.call()
 		return
 	mode = MODE_SCENE
+	MusicManager.play(MusicCues.for_backdrop(bg))
 	_lines = lines
 	_idx = 0
 	_chars = 0.0

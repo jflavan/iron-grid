@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 SoundManager="*res://autoload/SoundManager.gd"
+MusicManager="*res://autoload/MusicManager.gd"
 GlobalState="*res://autoload/GlobalState.gd"
 
 [display]

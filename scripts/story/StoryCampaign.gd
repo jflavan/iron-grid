@@ -51,6 +51,16 @@ static func validate() -> PackedStringArray:
 					errs.append("%s: unknown speaker '%s'" % [id, who])
 				if str(line.get("text", "")) == "":
 					errs.append("%s: empty dialog line" % id)
+		var cues: Array = [ch.get("music", ""), ch.get("end_music", "")]
+		for t: Dictionary in ch.get("triggers", []):
+			for e: Dictionary in t.get("effects", []):
+				cues.append(e.get("music", ""))
+		for cue: String in cues:
+			if cue != "" and not MusicCues.TRACKS.has(cue):
+				errs.append("%s: unknown music track '%s'" % [id, cue])
+		for key: String in ["bg", "post_bg"]:
+			if ch.has(key) and not MusicCues.BACKDROP.has(ch[key]):
+				errs.append("%s: backdrop '%s' has no music cue" % [id, ch[key]])
 		if ch["kind"] != "mission":
 			if (ch.get("lines", []) as Array).is_empty():
 				errs.append("%s: scene has no lines" % id)
@@ -442,6 +452,7 @@ static func _build() -> Array[Dictionary]:
 		"id": "m08", "kind": "mission", "act": ACT_2, "title": "WOLF'S PASS",
 		"synopsis": "Leon finally meets Wolfram on the field.",
 		"map": maps["m08"], "bg": "motor_pool", "post_bg": "snow_pass",
+		"music": "theme_syndikat", "end_music": "defeat",
 		"second_wind": ["leon"],
 		"pre": [
 			_n("03:40. The motor pool. A rebuilt grey Sturmjäger, and a spare ignition key that the General left on his desk in plain sight."),
@@ -540,7 +551,7 @@ static func _build() -> Array[Dictionary]:
 	list.append({
 		"id": "m10", "kind": "mission", "act": ACT_3, "title": "CROWN BOULEVARD",
 		"synopsis": "Street fighting in the capital, and Ilse makes up her mind.",
-		"map": maps["m10"], "bg": "briefing_room", "post_bg": "capital_street",
+		"map": maps["m10"], "bg": "briefing_room", "post_bg": "capital_street", "music": "ilse",
 		"win_requires": "defect",
 		"lose_if_lost": ["leon"],
 		"pre": [
@@ -560,19 +571,19 @@ static func _build() -> Array[Dictionary]:
 				_l("ilse", "No. No, no, no. If the Syndikat wants you dead, then I don't want the Syndikat. It's very simple. I don't know why I didn't see it before."),
 				_l("ilse", "Garrison, this is Commander Rotmann. I am changing my fire mission. To you. Ehehe!"),
 				_l("mira", "She's DEFECTING? For HIM? Oh, come ON!"),
-			], "effects": [{"cancel_skirmish": true}, {"convert": {"pilot": "ilse"}}]},
+			], "effects": [{"cancel_skirmish": true}, {"convert": {"pilot": "ilse"}}, {"music": "battle_act3"}]},
 			{"on": "turn", "turn": 3, "unless_fired": "defect", "id": "defect", "lines": [
 				_l("syndikat", "All units, Marshal's order stands: the grey Sturmjäger is priority one. Rotmann, you have the range. Fire!", "GARRISON COMMANDER"),
 				_l("ilse", "...You want ME to kill him because a grey old man in a big ugly walker said so? He gave my Sturmjäger away like a ration card."),
 				_l("ilse", "No. If the Syndikat wants him dead, then I don't want the Syndikat. It's very simple. I don't know why I didn't see it before."),
 				_l("ilse", "Garrison, this is Commander Rotmann. I am changing my fire mission. To you. Ehehe!"),
 				_l("mira", "She's DEFECTING? For HIM? Oh, come ON!"),
-			], "effects": [{"convert": {"pilot": "ilse"}}]},
+			], "effects": [{"convert": {"pilot": "ilse"}}, {"music": "battle_act3"}]},
 			{"on": "hull", "pilot": "ilse", "below": 50, "unless_fired": "defect", "id": "defect", "lines": [
 				_l("ilse", "You hit me. Your SQUAD hit me. And my own garrison just sat there and let it happen, because the Marshal only cares who kills the Sturmjäger."),
 				_l("ilse", "I don't want to be on a side that gives him away like a ration card. Garrison, this is Commander Rotmann. I am changing my fire mission. To you. Ehehe!"),
 				_l("mira", "She's DEFECTING? For HIM? Oh, come ON!"),
-			], "effects": [{"convert": {"pilot": "ilse"}}]},
+			], "effects": [{"convert": {"pilot": "ilse"}}, {"music": "battle_act3"}]},
 			{"on": "capture", "pos": Vector2i(4, 3), "owner": 0, "lines": [
 				_l("hq", "Signals confirms Coalition colours on Crown Plaza. Hold it!"),
 			]},
@@ -625,6 +636,7 @@ static func _build() -> Array[Dictionary]:
 			], "effects": [
 				{"cancel_skirmish": true},
 				{"spawn": StoryMaps.throne_gate_reinforcements()},
+				{"music": "turncoat"},
 				{"convert": {"group": "claw"}},
 				{"rename": {"pilot": "wolfram", "to": "konrad", "callsign": "KONRAD (Kaiserstuhl)"}},
 				{"plot_armor": {"pilot": "konrad", "value": 1}},   # he has to be standing at the gate when it falls
@@ -641,6 +653,7 @@ static func _build() -> Array[Dictionary]:
 				_l("grau", "Varga. So. Fifteen years, and you open your hand at the last gate. Garde. Kill them all. The traitor first."),
 			], "effects": [
 				{"spawn": StoryMaps.throne_gate_reinforcements()},
+				{"music": "turncoat"},
 				{"convert": {"group": "claw"}},
 				{"rename": {"pilot": "wolfram", "to": "konrad", "callsign": "KONRAD (Kaiserstuhl)"}},
 				{"plot_armor": {"pilot": "konrad", "value": 1}},   # he has to be standing at the gate when it falls
@@ -657,6 +670,7 @@ static func _build() -> Array[Dictionary]:
 				_l("grau", "Varga. So. Fifteen years, and you open your hand at the last gate. Garde. Kill them all. The traitor first."),
 			], "effects": [
 				{"spawn": StoryMaps.throne_gate_reinforcements()},
+				{"music": "turncoat"},
 				{"convert": {"group": "claw"}},
 				{"rename": {"pilot": "wolfram", "to": "konrad", "callsign": "KONRAD (Kaiserstuhl)"}},
 				{"plot_armor": {"pilot": "konrad", "value": 1}},   # he has to be standing at the gate when it falls
@@ -683,7 +697,7 @@ static func _build() -> Array[Dictionary]:
 	list.append({
 		"id": "m12", "kind": "mission", "act": ACT_3, "title": "IRON GHOST",
 		"synopsis": "The Marshal, the Ragnarök, and one last debt.",
-		"map": maps["m12"], "bg": "throne_gate", "post_bg": "parade_court",
+		"map": maps["m12"], "bg": "throne_gate", "post_bg": "parade_court", "music": "boss",
 		"lose_if_lost": ["leon"], "win_if_down": "grau",
 		"win_text": "The Ragnarök is down. Supreme Marshal Grau is dead, and the war is over.",
 		"pre": [

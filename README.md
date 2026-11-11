@@ -165,12 +165,21 @@ The script lives in `scripts/story/` as plain data: `StoryCampaign.gd` (chapters
 
 ---
 
+## Music
+
+Sixteen orchestral tracks in `assets/music/` (OGG Vorbis), generated with Suno and played by the `MusicManager` autoload. It crossfades between tracks, keeps a track running across scene changes that share a mood, and restarts a track underneath its own last seconds, so no piece needs an exact loop point. **M** mutes or unmutes the music.
+
+`scripts/audio/MusicCues.gd` is the one table that says what plays where: the menu, each cutscene backdrop, each act's battles, and the outcome screens. A mission can name its own battle track (`"music"`) or debrief track (`"end_music"`), and a story trigger can change the music mid-mission with a `{"music": id}` effect.
+
+To replace a track, run `tools/music/import_take.sh <downloaded take> <track id>`. It trims silence, sets the level to -20 LUFS and fades the last two seconds.
+
 ## Controls
 
 | Input | Action |
 | :--- | :--- |
 | **Left Mouse Click** | Select walker / Move to highlighted tile / Engage enemy node |
 | **Right / Middle Mouse Drag** | Pan tactical camera |
+| **M** | Mute / unmute the music |
 | **WASD / Arrow Keys** | Pan tactical camera (or navigate battle command menu) |
 | **Mouse Wheel Up / Down** | Zoom camera in / out |
 | **`T`** (battlefield) | Cycle facing direction clockwise (`SE` -> `SW` -> `NW` -> `NE`) |

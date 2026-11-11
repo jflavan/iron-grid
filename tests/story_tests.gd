@@ -17,6 +17,7 @@ func _ready() -> void:
 	_check_campaign_data()
 	_check_progress()
 	_check_director()
+	_check_music_cues()
 	await _check_side_switch()
 	await _check_scripted_ending()
 	await _check_withdrawal_win_text()
@@ -135,12 +136,44 @@ func _story_battlefield(id: String) -> Battlefield:
 		bf.ui_overlay.advance_story_dialog(true)
 	return bf
 
+## The music table: every cue names a real track, every track is used, and the files are all
+## there (or none are: a checkout without the music is silent, not broken).
+func _check_music_cues() -> void:
+	var used: Dictionary = {MusicCues.MENU: true, MusicCues.CAMPAIGN: true, MusicCues.SKIRMISH: true, MusicCues.VICTORY: true, MusicCues.DEFEAT: true}
+	for id: String in MusicCues.BACKDROP.values() + MusicCues.ACT_BATTLE.values():
+		used[id] = true
+	for ch in StoryCampaign.chapters():
+		used[MusicCues.for_backdrop(str(ch.get("bg", "")))] = true
+		if ch["kind"] == "mission":
+			used[MusicCues.for_battle(ch)] = true
+			used[MusicCues.for_outcome(ch, true)] = true
+		for t: Dictionary in ch.get("triggers", []):
+			for e: Dictionary in t.get("effects", []):
+				if e.has("music"):
+					used[e["music"]] = true
+	for id: String in used:
+		_check(MusicCues.TRACKS.has(id), "music: cue '%s' is a known track" % id)
+	var present: int = 0
+	for id: String in MusicCues.TRACKS:
+		_check(used.has(id), "music: track '%s' is used somewhere" % id)
+		if FileAccess.file_exists(MusicCues.path(id)):
+			present += 1
+	_check(present == 0 or present == MusicCues.TRACKS.size(), "music: all %d track files are present, or none (found %d)" % [MusicCues.TRACKS.size(), present])
+	_check(MusicCues.for_battle({}) == MusicCues.SKIRMISH, "music: a skirmish theater plays the skirmish theme")
+	_check(MusicCues.for_battle(StoryCampaign.chapter(StoryCampaign.index_of("m01"))) == "battle_act1", "music: a mission without its own cue plays its act's theme")
+	_check(MusicCues.for_battle(StoryCampaign.chapter(StoryCampaign.index_of("m12"))) == "boss", "music: the last mission plays the boss theme")
+	_check(MusicCues.for_outcome(StoryCampaign.chapter(StoryCampaign.index_of("m08")), true) == MusicCues.DEFEAT, "music: Wolf's Pass ends on the defeat theme though the mission counts as cleared")
+	MusicManager.play("overture")
+	MusicManager.play("")
+	_check(MusicManager.current == "", "music: stopping leaves nothing current")
+
 ## Mission 11's reveal: the Black Claw joins the Coalition, Wolfram becomes Konrad, the Garde arrives.
 func _check_side_switch() -> void:
 	var bf := await _story_battlefield("m11")
 	var uc := bf.unit_container
 	var wolfram := uc.unit_of_pilot("wolfram")
 	_check(wolfram != null and wolfram.mech_data.faction == MechData.Faction.AI and wolfram.mech_data.livery == "blackclaw", "m11: Wolfram starts on the Syndikat side in black")
+	_check(MusicManager.current == "battle_act3", "m11: the battle opens on the act's theme (got '%s')" % MusicManager.current)
 	# The gate cannot be won before the reveal: the debrief and the last mission depend on it
 	for hq in bf.current_map_def.hq_positions:
 		bf.grid_map.get_tile(hq).controlled_by = 0
@@ -156,6 +189,7 @@ func _check_side_switch() -> void:
 	while bf.ui_overlay.story_dialog_open():
 		bf.ui_overlay.advance_story_dialog(true)
 	_check(not bf.ui_overlay.skirmish_modal.visible, "m11: the duel is called off by the reveal")
+	_check(MusicManager.current == "turncoat", "m11: the music turns with the standard (got '%s')" % MusicManager.current)
 	_check(GlobalState.current_phase == GlobalState.TurnPhase.PLAYER_PHASE, "m11: play resumes in the player's phase after the reveal")
 	_check(uc.unit_of_pilot("wolfram") == null and uc.unit_of_pilot("konrad") == wolfram, "m11: Wolfram's walker is now Konrad's")
 	_check(wolfram.mech_data.faction == MechData.Faction.PLAYER and wolfram.mech_data.callsign.begins_with("KONRAD"), "m11: Konrad fights for the Coalition")

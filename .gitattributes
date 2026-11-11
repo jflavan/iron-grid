@@ -8,3 +8,4 @@
 # Generated battle art: the generator writes LF JSON, and `generate.py --check` compares bytes.
 assets/battle/**/*.json text eol=lf
 *.png binary
+*.ogg binary

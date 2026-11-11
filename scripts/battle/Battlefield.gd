@@ -87,6 +87,7 @@ func start_mission(map_idx: int) -> void:
 	else:
 		_story = StoryDirector.new(mission)
 		current_map_def = mission["map"]
+	MusicManager.play(MusicCues.for_battle(mission))
 	_story_down.clear()
 	_story_cancel_skirmish = false
 	ui_overlay.close_story_dialog()
@@ -880,6 +881,7 @@ func _declare_game_over(winner: int, reason: String, title: String = "") -> void
 	if _story != null and winner == 0:
 		# Saved now, not after the debrief scene: leaving from the debrief must not lose the win
 		StoryProgress.mark_cleared(GlobalState.story_chapter)
+	MusicManager.play(MusicCues.for_outcome(GlobalState.story_mission(), winner == 0))
 	GlobalState.set_phase(GlobalState.TurnPhase.GAME_OVER)
 	GlobalState.add_log("OPERATION CONCLUDED: " + reason)
 	ui_overlay.trigger_game_over()
@@ -982,6 +984,7 @@ func _settle_after_story() -> void:
 ##   {"plot_armor": {..sel, "value"}} sets MechData.plot_armor
 ##   {"cancel_skirmish": true}        the battle about to start does not happen
 ##   {"win": reason, "title": text} / {"lose": reason, "title": text}   ends the mission
+##   {"music": track id}              the battle music changes (MusicCues.TRACKS)
 ##   {"log": text}                    a Comms Log line
 func _apply_story_effect(e: Dictionary) -> void:
 	if e.has("spawn"):
@@ -1045,6 +1048,8 @@ func _apply_story_effect(e: Dictionary) -> void:
 		_story.forced = {"winner": 0, "reason": str(e["win"]), "title": str(e.get("title", ""))}
 	if e.has("lose"):
 		_story.forced = {"winner": 1, "reason": str(e["lose"]), "title": str(e.get("title", ""))}
+	if e.has("music"):
+		MusicManager.play(str(e["music"]))
 	if e.has("log"):
 		GlobalState.add_log(str(e["log"]))
 

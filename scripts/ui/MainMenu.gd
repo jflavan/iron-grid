@@ -43,6 +43,7 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	MusicManager.play(MusicCues.MENU)
 	for key in _chassis_keys:
 		var m: MechData = GlobalState.chassis_catalog[key]
 		_stat_max["hull"] = maxi(_stat_max["hull"], m.max_armor)
