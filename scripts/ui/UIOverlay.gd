@@ -120,9 +120,12 @@ func _process(delta: float) -> void:
 	_since_redraw += delta
 	if story_dialog_open():
 		var before := int(_story_chars)
+		var total := StoryDialog.char_count(_story_lines[_story_idx], _virtual_size())
 		_story_chars += delta * StoryDialog.TYPE_CPS
-		StoryDialog.type_tick(before, int(_story_chars), StoryDialog.char_count(_story_lines[_story_idx], _virtual_size()))
-		_mark_dirty()   # the typewriter and the blinking cursor redraw every frame while a line is up
+		StoryDialog.type_tick(before, int(_story_chars), total)
+		# Redraw while the line types; once it is up, only when the "next" cursor blinks
+		if before <= total or int(_anim_time / 0.3) != int((_anim_time - delta) / 0.3):
+			_mark_dirty()
 	var banner_live: bool = _banner_timer > 0.0   # true for the frame it expires too, to erase it
 	if banner_live:
 		_banner_timer = maxf(0.0, _banner_timer - delta)

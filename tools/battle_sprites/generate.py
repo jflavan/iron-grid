@@ -184,8 +184,8 @@ def main():
                     shutil.copytree(src, committed, dirs_exist_ok=True)
                 _strip_imports(committed)
                 ok = _same_tree(fresh, committed) and ok
-            print("assets up to date" if ok else "assets differ from generator output; re-run generate.py")
-            sys.exit(0 if ok else 1)
+        print("assets up to date" if ok else "assets differ from generator output; re-run generate.py")
+        sys.exit(0 if ok else 1)
     for gen, dest in ((generate_all, args.out), (generate_story, args.story_out)):
         with tempfile.TemporaryDirectory() as fresh:
             gen(fresh)

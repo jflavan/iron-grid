@@ -24,18 +24,49 @@ static func box_rect(v: Vector2) -> Rect2:
 static func _text_x(r: Rect2, who: String) -> float:
 	return r.position.x + (10 + StoryCast.PORTRAIT_SIZE * PORTRAIT_SCALE + 12 if who != "" else 16)
 
-## The line's body wrapped for the box at virtual size v.
+static var _memo_text: String = ""
+static var _memo_px: float = -1.0
+static var _memo_lines: PackedStringArray = []
+
+## `text` wrapped at `px` virtual pixels. The last answer is kept: a line on screen is asked for
+## every frame (typewriter count and draw) and only changes when the dialog moves on.
+static func wrap_text(text: String, px: float) -> PackedStringArray:
+	if text != _memo_text or px != _memo_px:
+		_memo_text = text
+		_memo_px = px
+		_memo_lines = CrtUI.wrap_lines(text, px)
+	return _memo_lines
+
+## Characters the typewriter has to reveal for these wrapped lines.
+static func count(lines: PackedStringArray) -> int:
+	var n := 0
+	for l in lines:
+		n += l.length()
+	return n
+
+## The wrapped lines as the typewriter shows them after `shown` characters (-1 = all): one entry
+## per line, "" for a line not reached yet.
+static func reveal(lines: PackedStringArray, shown: int) -> PackedStringArray:
+	var out := PackedStringArray()
+	var left: int = shown if shown >= 0 else (1 << 30)
+	for l in lines:
+		out.append(l.substr(0, maxi(left, 0)))
+		left -= l.length()
+	return out
+
+## True once `shown` characters cover the whole of `lines` (the "next" cursor may blink).
+static func typed(lines: PackedStringArray, shown: int) -> bool:
+	return shown < 0 or shown >= count(lines)
+
+## The line's body wrapped for the HUD box at virtual size v.
 static func wrapped(line: Dictionary, v: Vector2) -> PackedStringArray:
 	var r := box_rect(v)
 	var who: String = str(line.get("who", ""))
-	return CrtUI.wrap_lines(str(line.get("text", "")), r.end.x - 12 - _text_x(r, who))
+	return wrap_text(str(line.get("text", "")), r.end.x - 12 - _text_x(r, who))
 
-## Characters the typewriter has to reveal for this line.
+## Characters the typewriter has to reveal for this line in the HUD box.
 static func char_count(line: Dictionary, v: Vector2) -> int:
-	var n := 0
-	for l in wrapped(line, v):
-		n += l.length()
-	return n
+	return count(wrapped(line, v))
 
 ## Draws the box with the first `shown` characters of the line (-1 = all); `blink` lights the
 ## "next" cursor once the line is fully shown. `hint` is the key help in the bottom-right corner.
@@ -59,15 +90,12 @@ static func draw(ci: CanvasItem, v: Vector2, line: Dictionary, shown: int = -1, 
 		CrtUI.text(ci, str(line.get("as", StoryCast.display_name(who))), Vector2(tx, y), CrtUI.C_HOSTILE if hostile else CrtUI.C_NAME)
 		y += 14
 		CrtUI.hrule(ci, tx, y - 4, r.end.x - 12 - tx)
-	var left: int = shown if shown >= 0 else (1 << 30)
 	var lines := wrapped(line, v)
 	var col: Color = CrtUI.C_NUM if who != "" else CrtUI.C_LABEL
-	for l in lines:
-		if left <= 0:
-			break
-		CrtUI.text(ci, l.substr(0, left), Vector2(tx, y), col)
-		left -= l.length()
+	for l in reveal(lines, shown):
+		if l != "":
+			CrtUI.text(ci, l, Vector2(tx, y), col)
 		y += CrtUI.LINE + 2
 	CrtUI.text_right(ci, hint, r.end.x - 22, r.end.y - 12, CrtUI.C_LABEL_DIM)
-	if left > 0 and blink:
+	if typed(lines, shown) and blink:
 		CrtUI.cursor(ci, Vector2(r.end.x - 16, r.end.y - 12))

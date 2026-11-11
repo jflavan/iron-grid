@@ -33,11 +33,15 @@ func _init(p_mission: Dictionary) -> void:
 func poll(ctx: Dictionary, units: UnitContainer, grid: IsoGridMap) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var triggers: Array = mission.get("triggers", [])
+	# "if_fired" looks at what had fired before this poll: a reaction to a beat waits for the next
+	# poll whichever way the beat was set off. "unless_fired" sees this poll's ids too, so two
+	# alternative triggers for one beat can never both fire.
+	var before: Dictionary = _fired_ids.duplicate()
 	for i in triggers.size():
 		if _fired.has(i):
 			continue
 		var t: Dictionary = triggers[i]
-		if t.has("if_fired") and not _fired_ids.has(t["if_fired"]):
+		if t.has("if_fired") and not before.has(t["if_fired"]):
 			continue
 		if t.has("unless_fired") and _fired_ids.has(t["unless_fired"]):
 			continue

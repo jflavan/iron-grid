@@ -440,7 +440,7 @@ func _on_unit_movement_finished(unit: MechUnit, target_coords: Vector2i, fuel_sp
 		]
 	)
 	_update_all_objective_ownership()
-	_story_poll({}, func(_fired: bool): _after_movement(unit))
+	_story_poll({}, func(_fired: bool): _after_movement(_still_there(unit)))
 
 ## The rest of a finished move, once any story beat it set off has played out.
 func _after_movement(unit: MechUnit) -> void:
@@ -589,7 +589,7 @@ func _trigger_skirmish_resolution(attacker: MechUnit, defender: MechUnit, from_c
 
 	_story_cancel_skirmish = false
 	_story_poll({"skirmish": [attacker.mech_data.pilot_id, defender.mech_data.pilot_id]},
-		func(_fired: bool): _open_skirmish(attacker, defender, from_coords, target_coords))
+		func(_fired: bool): _open_skirmish(_still_there(attacker), _still_there(defender), from_coords, target_coords))
 
 func _open_skirmish(attacker: MechUnit, defender: MechUnit, from_coords: Vector2i, target_coords: Vector2i) -> void:
 	# A story beat may have called the fight off (a side switch, a scripted interception)
@@ -652,7 +652,7 @@ func _on_skirmish_modal_closed(result: SkirmishEngine.SkirmishResult) -> void:
 
 	_update_all_objective_ownership()
 	grid_map.queue_redraw()
-	var after := func(): _story_poll({"down": down}, func(_fired: bool): _resume_after_skirmish(surviving_player_attacker))
+	var after := func(): _story_poll({"down": down}, func(_fired: bool): _resume_after_skirmish(_still_there(surviving_player_attacker)))
 	var wind := _second_wind_lines([_pending_attacker, _pending_defender])
 	if wind.is_empty():
 		after.call()
@@ -862,7 +862,9 @@ func _check_victory_conditions(end_of_full_turn: bool = false) -> bool:
 		# The mission's own rules outrank the map's: a scripted ending, a pilot who must survive,
 		# the target whose fall wins it.
 		result = _story.verdict(_story_down)
-		_story_down.clear()
+		# A win the story is not ready for keeps its wrecks on the list, to count once it is
+		if result.is_empty() or int(result["winner"]) != 0 or _story.win_allowed():
+			_story_down.clear()
 	if result.is_empty():
 		result = VictoryRules.evaluate(current_map_def, grid_map, c["player"], c["ai"],
 			c["player_obj"], c["total_obj"], GlobalState.turn_number, end_of_full_turn)
@@ -925,6 +927,12 @@ func _note_story_down(u: MechUnit, down: Array) -> void:
 ## Asks the story which triggers `ctx` sets off, plays them in order (dialog, then effects), and
 ## calls `then(fired)` when the last one is done; at once, with false, when nothing fires or no
 ## story is running. Everything the caller does after a possible story beat belongs in `then`.
+## `unit`, or null once it has been freed: a story dialog spans frames, and an effect may have taken
+## the walker off the map before the continuation that captured it runs. (A freed instance cannot be
+## passed to a typed parameter.)
+func _still_there(unit: Variant) -> MechUnit:
+	return unit if is_instance_valid(unit) else null
+
 func _story_poll(ctx: Dictionary, then: Callable) -> void:
 	if _story == null:
 		then.call(false)

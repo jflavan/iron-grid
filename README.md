@@ -156,12 +156,12 @@ Press **`S`** in Command HQ. *Iron Ghost* is a linear campaign in three acts wit
 | **Act 3: Iron Ghost** | The Kaiserwall · Crown Boulevard · Gate of the Eisenthron · Iron Ghost |
 
 - **Named pilots** fly fixed walkers (Leon: Sturmjäger, Mira: Spähfalke, Chad: Brenner, Old Iron: Siegebreaker, Ilse: Spinne, Wolfram: a black Kaiserstuhl, Grau: the story-only super-heavy **Ragnarök**). Their portrait shows on the battle screen when they fight. Line-ups are fixed per mission; a named pilot who is shot down bails out and is back for the next one.
-- **Mid-mission events** are triggers in the mission script: turn starts, a named pilot entering a skirmish, a pilot's hull dropping, an objective changing hands. They play dialog over the map and can apply effects: reinforcements, a scripted withdrawal, shelling, a called-off duel, a scripted ending, or a **side switch** that hands a formation to the player mid-battle.
+- **Mid-mission events** are triggers in the mission script: turn starts, a named pilot entering a skirmish, a pilot's hull dropping, an objective changing hands. They play dialog over the map and can apply effects: reinforcements, a scripted withdrawal, shelling, a called-off duel, a change of music, a scripted ending, or a **side switch** that hands a formation to the player mid-battle.
 - **Must-survive pilots**: most missions fail if Leon is shot down (Chad, on the causeway). Such a pilot gets one **second wind** per mission: the first battle that would wreck them leaves the walker crippled at 35% hull instead, and the next killing blow counts.
 - **Bosses stand their ground**: a walker with a hold turn (Wolfram in the pass and at the gate, Grau on the parade court) waits where it is until that turn unless the Coalition closes with it, so the escorts fight first.
 - **Decisive Engagement** is a story-only strategy mode: destroy the enemy force (or the mission's scripted target) inside the turn limit.
 
-The script lives in `scripts/story/` as plain data: `StoryCampaign.gd` (chapters, dialog, triggers), `StoryMaps.gd` (the twelve maps; missions 2–4 reuse the skirmish theaters), `StoryCast.gd` (speakers and portraits). `StoryCampaign.validate()` reports unknown speakers, malformed maps and triggers that name a pilot the mission never fields.
+The script lives in `scripts/story/` as plain data: `StoryCampaign.gd` (chapters, dialog, triggers), `StoryMaps.gd` (the twelve maps; missions 2–4 reuse the skirmish theaters), `StoryCast.gd` (speakers and portraits). `StoryCampaign.validate()` reports unknown speakers, malformed maps, unknown music tracks and triggers that name a pilot the mission never fields.
 
 ---
 
@@ -211,6 +211,7 @@ iron-grid/
 ├── screenshot_story.png            # Story mode briefing dialog screenshot
 ├── autoload/
 │   ├── GlobalState.gd              # Turn/phase state, combat log, battle seed; catalogs filled from scripts/data builders
+│   ├── MusicManager.gd             # Background music: crossfades, overlapping loop restart, M to mute
 │   └── SoundManager.gd             # Procedural retro/dieselpunk WAV audio synthesizer
 ├── assets/battle/                  # Generated pixel art (do not hand-edit; see Battle Art Pipeline)
 │   ├── mechs/                      # <chassis>[_variant]_<faction>.png pose sheets + <chassis>.json anchors
@@ -220,7 +221,9 @@ iron-grid/
 ├── assets/story/                   # Generated story art (same generator)
 │   ├── portraits/                  # 48x48 pilot portraits
 │   └── backdrops/                  # 354x142 cutscene backdrops (briefing room, burning village, memorial, ...)
+├── assets/music/                   # Sixteen orchestral tracks (OGG Vorbis); see Music
 ├── tools/
+│   ├── music/                      # import_take.sh: turns a downloaded take into a game track
 │   ├── battle_sprites/             # Stdlib-only Python generator for everything in assets/battle
 │   └── ui_snapshot/                # snapshot.gd: renders 1440x900 screenshots of any scene/state
 ├── scenes/
@@ -229,12 +232,14 @@ iron-grid/
 │   ├── Story.tscn                  # Story mode: campaign list, cutscenes, mission briefing (StoryScreen)
 │   └── dev/BattlePreview.tscn      # Dev-only battle screen preview (every chassis, ability, terrain)
 └── scripts/
+    ├── audio/
+    │   └── MusicCues.gd            # Which track plays where: menu, backdrops, acts, outcomes
     ├── story/
     │   ├── StoryCampaign.gd        # The campaign script: chapters, dialog lines, mid-mission triggers; validate()
     │   ├── StoryMaps.gd            # The twelve story MapDefinitions and their named line-ups
     │   ├── StoryCast.gd            # Speakers: display names, sides, portraits
     │   ├── StoryDirector.gd        # One mission's script at run time: trigger matching, win / loss overrides
-    │   ├── StoryDialog.gd          # Draws a portrait dialog line (Story screen and tactical HUD)
+    │   ├── StoryDialog.gd          # Dialog text wrap, typewriter reveal and the HUD dialog box
     │   └── StoryProgress.gd        # Campaign progress in user://story_save.json
     ├── data/
     │   ├── AbilityCatalog.gd       # Builds the ability catalog (weapons, armor & tactical TECH)

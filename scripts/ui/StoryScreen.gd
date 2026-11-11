@@ -59,18 +59,23 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_anim_time += delta
 	if mode == MODE_SCENE:
-		dirty = true
 		if not _card.is_empty():
+			dirty = true
 			_card_t += delta
 			if _card_t >= CARD_TIME:
 				_card = {}
 		else:
+			var moving: bool = _scene_t < FADE_TIME or _slide < 1.0   # the fade-in, a bust sliding on
 			_scene_t += delta
 			_slide = minf(1.0, _slide + delta / SLIDE_TIME)
+			var before := int(_chars)
+			var total := _line_total()
 			if _scene_t >= FADE_TIME * 0.5:   # the first line starts typing once the picture is up
-				var before := int(_chars)
 				_chars += delta * StoryDialog.TYPE_CPS
-				StoryDialog.type_tick(before, int(_chars), _line_total())
+				StoryDialog.type_tick(before, int(_chars), total)
+			# Once the picture is still and the line is up, only the "next" cursor's blink redraws
+			if moving or before <= total or int(_anim_time / 0.3) != int((_anim_time - delta) / 0.3):
+				dirty = true
 	elif int(_anim_time / 0.5) != int((_anim_time - delta) / 0.5):
 		dirty = true   # blinking prompts
 	if dirty:
@@ -197,10 +202,7 @@ func _line_wrap_px() -> float:
 
 ## Characters the typewriter has to reveal for the line on screen.
 func _line_total() -> int:
-	var n := 0
-	for l in CrtUI.wrap_lines(str(_lines[_idx].get("text", "")), _line_wrap_px()):
-		n += l.length()
-	return n
+	return StoryDialog.count(StoryDialog.wrap_text(str(_lines[_idx].get("text", "")), _line_wrap_px()))
 
 func _launch() -> void:
 	SoundManager.play("ui_confirm")
@@ -406,7 +408,7 @@ func _draw_roster(pos: Vector2, map: MapDefinition) -> void:
 		if int(sp.get("faction", 0)) != 0:
 			continue
 		var pilot: String = str(sp.get("pilot", ""))
-		var chassis: MechData = GlobalState.boss_catalog.get(sp["chassis"], GlobalState.chassis_catalog.get(sp["chassis"]))
+		var chassis: MechData = GlobalState.chassis_template(str(sp["chassis"]))
 		CrtUI.text(self, StoryCast.roster_name(pilot) if pilot != "" else str(sp["callsign"]).split(" ")[0], Vector2(pos.x, y), CrtUI.C_NAME if pilot != "" else CrtUI.C_NUM)
 		y += 10
 		CrtUI.text(self, chassis.unit_name if chassis != null else str(sp["chassis"]), Vector2(pos.x + 8, y), CrtUI.C_LABEL_DIM)
@@ -504,19 +506,16 @@ func _draw_line_box(r: Rect2, line: Dictionary) -> void:
 		y += 18
 	else:
 		y += 6
-	var left := int(_chars)
-	var total := 0
-	for l in CrtUI.wrap_lines(str(line.get("text", "")), _line_wrap_px()):
-		total += l.length()
-		if left > 0:
+	var body := StoryDialog.wrap_text(str(line.get("text", "")), _line_wrap_px())
+	for l in StoryDialog.reveal(body, int(_chars)):
+		if l != "":
 			if who == "":
-				CrtUI.text_centered(self, l.substr(0, left), r.get_center().x, y, CrtUI.C_LABEL)
+				CrtUI.text_centered(self, l, r.get_center().x, y, CrtUI.C_LABEL)
 			else:
-				CrtUI.text(self, l.substr(0, left), Vector2(x, y), CrtUI.C_NUM)
-		left -= l.length()
+				CrtUI.text(self, l, Vector2(x, y), CrtUI.C_NUM)
 		y += CrtUI.LINE + 2
 	CrtUI.text_right(self, "SPACE: NEXT  ESC: SKIP", r.end.x - 24, r.end.y - 12, CrtUI.C_LABEL_DIM)
-	if int(_chars) >= total and int(_anim_time / 0.3) % 2 == 0:
+	if StoryDialog.typed(body, int(_chars)) and int(_anim_time / 0.3) % 2 == 0:
 		CrtUI.cursor(self, Vector2(r.end.x - 18, r.end.y - 12))
 
 ## A cutscene backdrop by id (assets/story/backdrops, else its battle backdrop stand-in), kept

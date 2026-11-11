@@ -103,6 +103,21 @@ static func _n(text: String) -> Dictionary:
 
 static func _build() -> Array[Dictionary]:
 	var maps: Dictionary = StoryMaps.build()
+	# One beat can be set off several ways (a duel, a hull threshold, a turn count); every way has
+	# the same effects, kept here once. The duel versions also call the duel off.
+	var standard_turns: Array = [   # m11: the Black Claw changes sides
+		{"spawn": StoryMaps.throne_gate_reinforcements()},
+		{"music": "turncoat"},
+		{"convert": {"group": "claw"}},
+		{"rename": {"pilot": "wolfram", "to": "konrad", "callsign": "KONRAD (Kaiserstuhl)"}},
+		{"plot_armor": {"pilot": "konrad", "value": 1}},   # he has to be standing at the gate when it falls
+	]
+	var sacrifice: Array = [   # m12: Konrad takes the shell and breaches the Ragnarök
+		{"destroy": {"pilot": "konrad"}},
+		{"plot_armor": {"pilot": "grau", "value": 0}},   # until now the Ragnarök could not be brought down
+		{"damage": {"pilot": "grau", "amount": 75}},
+		{"plot_armor": {"pilot": "leon", "value": 1}},   # what Konrad bought: Leon's second wind, again
+	]
 	var list: Array[Dictionary] = []
 
 	# ====================================================================== PROLOGUE
@@ -633,14 +648,7 @@ static func _build() -> Array[Dictionary]:
 				_l("konrad", "Because Grau cannot be reached by an army. Only by a man he trusts. I let Varnhalt burn so he would trust me. I let your mother... I have carried one bullet for fifteen years, Leon, and I have been waiting to stand close enough to use it."),
 				_l("konrad", "Black Claw! All units! The standard turns. Our enemy is in that fortress, and he always was. With the grey Sturmjäger: FORWARD!"),
 				_l("grau", "Varga. So. Fifteen years, and you open your hand at the last gate. Garde. Kill them all. The traitor first."),
-			], "effects": [
-				{"cancel_skirmish": true},
-				{"spawn": StoryMaps.throne_gate_reinforcements()},
-				{"music": "turncoat"},
-				{"convert": {"group": "claw"}},
-				{"rename": {"pilot": "wolfram", "to": "konrad", "callsign": "KONRAD (Kaiserstuhl)"}},
-				{"plot_armor": {"pilot": "konrad", "value": 1}},   # he has to be standing at the gate when it falls
-			]},
+			], "effects": [{"cancel_skirmish": true}] + standard_turns},
 			{"on": "hull", "pilot": "wolfram", "below": 55, "unless_fired": "reveal", "id": "reveal", "lines": [
 				_l("wolfram", "Enough. Grey Sturmjäger! Your squad fights like you. Before this ends: who ARE you?"),
 				_l("leon", "The village was called Varnhalt. The house was the third one past the baker's. The roof beam came down on my mother. Her name was Anna. ANNA VARGA."),
@@ -651,13 +659,7 @@ static func _build() -> Array[Dictionary]:
 				_l("konrad", "Because Grau cannot be reached by an army. Only by a man he trusts. I let Varnhalt burn so he would trust me. I have carried one bullet for fifteen years, and I have been waiting to stand close enough to use it."),
 				_l("konrad", "Black Claw! All units! The standard turns. Our enemy is in that fortress, and he always was. With the grey Sturmjäger: FORWARD!"),
 				_l("grau", "Varga. So. Fifteen years, and you open your hand at the last gate. Garde. Kill them all. The traitor first."),
-			], "effects": [
-				{"spawn": StoryMaps.throne_gate_reinforcements()},
-				{"music": "turncoat"},
-				{"convert": {"group": "claw"}},
-				{"rename": {"pilot": "wolfram", "to": "konrad", "callsign": "KONRAD (Kaiserstuhl)"}},
-				{"plot_armor": {"pilot": "konrad", "value": 1}},   # he has to be standing at the gate when it falls
-			]},
+			], "effects": standard_turns},
 			{"on": "turn", "turn": 3, "unless_fired": "reveal", "id": "reveal", "lines": [
 				_l("leon", "Wolfram! Open channel. All of you can hear this. I don't care."),
 				_l("leon", "The village was called Varnhalt. The house was the third one past the baker's. The roof beam came down on my mother. Her name was Anna. ANNA VARGA. I was seven, and I saw your walker on the ridge."),
@@ -668,13 +670,7 @@ static func _build() -> Array[Dictionary]:
 				_l("konrad", "Because Grau cannot be reached by an army. Only by a man he trusts. I let Varnhalt burn so he would trust me. I have carried one bullet for fifteen years, and I have been waiting to stand close enough to use it."),
 				_l("konrad", "Black Claw! All units! The standard turns. Our enemy is in that fortress, and he always was. With the grey Sturmjäger: FORWARD!"),
 				_l("grau", "Varga. So. Fifteen years, and you open your hand at the last gate. Garde. Kill them all. The traitor first."),
-			], "effects": [
-				{"spawn": StoryMaps.throne_gate_reinforcements()},
-				{"music": "turncoat"},
-				{"convert": {"group": "claw"}},
-				{"rename": {"pilot": "wolfram", "to": "konrad", "callsign": "KONRAD (Kaiserstuhl)"}},
-				{"plot_armor": {"pilot": "konrad", "value": 1}},   # he has to be standing at the gate when it falls
-			]},
+			], "effects": standard_turns},
 			{"on": "turn", "turn": 1, "if_fired": "reveal", "lines": [
 				_l("chad", "Wait, wait, wait. Scary mask guy is LEON'S DAD? And he's on OUR side? And he was on our side the WHOLE TIME?"),
 				_l("mira", "He let a village burn to get a seat at a table, Brewster. Don't call that 'our side'. ...Leon. I'm here. Left flank. Like always."),
@@ -725,13 +721,7 @@ static func _build() -> Array[Dictionary]:
 				_l("konrad", "We are talking. ...You have her way of standing. Did I tell you that? Finish it, son. He's open. Go."),
 				_n("The black Kaiserstuhl's lens goes dark."),
 				_l("leon", "...Squad. All walkers. He's breached. BRING IT DOWN."),
-			], "effects": [
-				{"cancel_skirmish": true},
-				{"destroy": {"pilot": "konrad"}},
-				{"plot_armor": {"pilot": "grau", "value": 0}},   # until now the Ragnarök could not be brought down
-				{"damage": {"pilot": "grau", "amount": 75}},
-				{"plot_armor": {"pilot": "leon", "value": 1}},   # what Konrad bought: Leon's second wind, again
-			]},
+			], "effects": [{"cancel_skirmish": true}] + sacrifice},
 			{"on": "turn", "turn": 3, "unless_fired": "sacrifice", "id": "sacrifice", "lines": [
 				_l("grau", "Enough of this. The whelp first. Let the father watch, for once, from close by."),
 				_n("The Ragnarök's siege barrels swing across the court and settle on the grey Sturmjäger's cockpit. There is no time to move. A black shape crosses the court faster than a command walker should be able to."),
@@ -745,12 +735,7 @@ static func _build() -> Array[Dictionary]:
 				_l("konrad", "We are talking. ...You have her way of standing. Did I tell you that? Finish it, son. He's open. Go."),
 				_n("The black Kaiserstuhl's lens goes dark."),
 				_l("leon", "...Squad. All walkers. He's breached. BRING IT DOWN."),
-			], "effects": [
-				{"destroy": {"pilot": "konrad"}},
-				{"plot_armor": {"pilot": "grau", "value": 0}},   # until now the Ragnarök could not be brought down
-				{"damage": {"pilot": "grau", "amount": 75}},
-				{"plot_armor": {"pilot": "leon", "value": 1}},   # what Konrad bought: Leon's second wind, again
-			]},
+			], "effects": sacrifice},
 			{"on": "hull", "pilot": "grau", "below": 35, "lines": [
 				_l("grau", "Impossible. This machine cost more than your entire Division! I am the SYNDIKAT! Without me there is nothing!"),
 				_l("leon", "There was a village. It had a baker. That was something."),

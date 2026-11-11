@@ -108,6 +108,16 @@ func _check_progress() -> void:
 	f.close()
 	_check(StoryProgress.cleared() == 0, "a corrupt save reads as a fresh campaign")
 	StoryProgress.reset()
+	# A save from a newer build is read, never written over
+	var newer := JSON.stringify({"version": StoryProgress.VERSION + 1, "cleared": 2, "extra": "kept"})
+	f = FileAccess.open(StoryProgress.path, FileAccess.WRITE)
+	f.store_string(newer)
+	f.close()
+	_check(StoryProgress.cleared() == 2, "a newer build's save is read for what this build understands")
+	StoryProgress.mark_cleared(5)
+	_check(FileAccess.get_file_as_string(StoryProgress.path) == newer, "a newer build's save is not written over")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(StoryProgress.path))
+	StoryProgress.reset()
 
 func _check_director() -> void:
 	var d := StoryDirector.new({"lose_if_lost": ["leon"], "win_if_down": "grau", "win_text": "done"})
@@ -117,6 +127,16 @@ func _check_director() -> void:
 	_check(d.verdict(["grau"]).get("reason", "") == "done", "director: the target's fall wins with the mission's text")
 	d.forced = {"winner": 0, "reason": "scripted", "title": "T"}
 	_check(d.verdict(["leon"]).get("reason", "") == "scripted", "director: a scripted ending outranks the other rules")
+	# A reaction ("if_fired") waits for the poll after its beat; two ways into one beat fire once
+	var seq := StoryDirector.new({"triggers": [
+		{"on": "turn", "turn": 2, "id": "beat"},
+		{"on": "turn", "turn": 2, "unless_fired": "beat", "id": "beat"},
+		{"on": "turn", "turn": 1, "if_fired": "beat"},
+	]})
+	_check(seq.poll({"turn": 1}, null, null).is_empty(), "director: nothing fires before its turn")
+	_check(seq.poll({"turn": 2}, null, null).size() == 1, "director: a beat fires once, and its reaction not in the same poll")
+	_check(seq.poll({"turn": 2}, null, null).size() == 1, "director: the reaction fires on the next poll")
+	_check(seq.poll({"turn": 3}, null, null).is_empty(), "director: every trigger fires only once")
 	var a := GlobalState.create_mech_instance("vanguard", MechData.Faction.PLAYER, "A", Vector2i.ZERO)
 	var b := GlobalState.create_mech_instance("falke", MechData.Faction.AI, "B", Vector2i(1, 0))
 	b.plot_armor = 1

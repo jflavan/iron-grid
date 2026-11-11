@@ -21,6 +21,7 @@ var _active: int = 0
 var _fades: Array = [null, null]   # one Tween per player
 var _headless: bool = false
 var _missing: Dictionary = {}
+var _sounding: bool = false        # false while the current id has no stream (silence, or a missing file)
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -53,7 +54,7 @@ func play(id: String, fade: float = FADE) -> void:
 	_start(_load(id), fade)
 
 func _process(_delta: float) -> void:
-	if _headless or current == "":
+	if _headless or not _sounding:
 		return
 	var p := _players[_active]
 	if p.playing and p.stream != null:
@@ -66,6 +67,7 @@ func _process(_delta: float) -> void:
 ## Fades the active player out and brings `stream` in on the other one.
 func _start(stream: AudioStream, fade: float) -> void:
 	_fade(_active, SILENT_DB, fade, true)
+	_sounding = stream != null
 	if stream == null:
 		return
 	_active = 1 - _active

@@ -62,13 +62,6 @@ func story_mission() -> Dictionary:
 	var ch: Dictionary = StoryCampaign.chapter(story_chapter)
 	return ch if ch.get("kind", "") == "mission" else {}
 
-## The map Battlefield loads: the story mission's own map, else the selected theater.
-func active_map() -> MapDefinition:
-	var ms := story_mission()
-	if not ms.is_empty():
-		return ms["map"]
-	return maps[clampi(selected_map_index, 0, maps.size() - 1)]
-
 func leave_story() -> void:
 	story_chapter = -1
 	story_stage = "list"
@@ -118,8 +111,14 @@ func get_phase_name() -> String:
 			return "OPERATION CONCLUDED"
 	return "UNKNOWN"
 
+## The chassis `chassis_id` names, story-only bosses included; null when there is none.
+func chassis_template(chassis_id: String) -> MechData:
+	return boss_catalog.get(chassis_id, chassis_catalog.get(chassis_id))
+
 func create_mech_instance(chassis_id: String, faction: MechData.Faction, callsign: String, pos: Vector2i, unique_suffix: String = "") -> MechData:
-	var template: MechData = boss_catalog.get(chassis_id, chassis_catalog.get(chassis_id, chassis_catalog["vanguard"]))
+	var template: MechData = chassis_template(chassis_id)
+	if template == null:
+		template = chassis_catalog["vanguard"]
 	var inst := template.duplicate_mech()
 	inst.unit_id = "%s_%s_%s" % [chassis_id, "P" if faction == MechData.Faction.PLAYER else "E", unique_suffix]
 	inst.faction = faction
